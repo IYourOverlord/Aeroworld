@@ -1,0 +1,35 @@
+{
+  "layer2": {
+    "spawn_chance": 0.20,
+    "grid_chunks": 20,
+    "min_radius": 50.0,
+    "max_radius": 110.0,
+    "max_height": 60,
+    "y_variance": 15,
+    "bridge_chance": 0.35
+  },
+  "layer3": {
+    "spawn_chance": 0.10,
+    "grid_chunks": 26,
+    "min_radius": 18.0,
+    "max_radius": 50.0,
+    "max_height": 50,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "layer4": {
+    "spawn_chance": 0.10,
+    "grid_chunks": 20,
+    "min_radius": 15.0,
+    "max_radius": 20.0,
+    "max_height": 15,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "structure_support": {
+    "surface_threshold": 0.70,
+    "island_threshold": 0.65,
+    "underground_threshold": 0.80,
+    "sample_step": 8
+  }
+}

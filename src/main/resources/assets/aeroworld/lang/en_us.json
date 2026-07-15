@@ -1,0 +1,7 @@
+{
+  "generator.aeroworld.aeroworld": "AeroWorld",
+  "worldPreset.aeroworld.aeroworld": "AeroWorld",
+  "createWorld.customize.aeroworld.title": "AeroWorld Settings",
+  "dimension.aeroworld.aeroworld": "AeroWorld",
+  "death.attack.void_fall": "%1$s fell into the void between layers"
+}

@@ -1,0 +1,36 @@
+{
+  "_description": "Классический skyblock — только нижние острова, один стартовый",
+  "layer2": {
+    "spawn_chance": 0.04,
+    "grid_chunks": 42,
+    "min_radius": 12.0,
+    "max_radius": 30.0,
+    "max_height": 20,
+    "y_variance": 5,
+    "bridge_chance": 0.0
+  },
+  "layer3": {
+    "spawn_chance": 0.02,
+    "grid_chunks": 60,
+    "min_radius": 8.0,
+    "max_radius": 15.0,
+    "max_height": 15,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "layer4": {
+    "spawn_chance": 0.01,
+    "grid_chunks": 80,
+    "min_radius": 6.0,
+    "max_radius": 10.0,
+    "max_height": 10,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "structure_support": {
+    "surface_threshold": 0.90,
+    "island_threshold": 0.85,
+    "underground_threshold": 0.90,
+    "sample_step": 4
+  }
+}

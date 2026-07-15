@@ -1,0 +1,50 @@
+{
+  "type": "aeroworld:aeroworld",
+  "generator": {
+    "type": "aeroworld:aero_generator",
+    "biome_source": {
+      "type": "aeroworld:aero_biome_source",
+      "preset": "minecraft:overworld"
+    },
+    "vanilla_generator": {
+      "type": "minecraft:noise",
+      "biome_source": {
+        "type": "minecraft:multi_noise",
+        "preset": "minecraft:overworld"
+      },
+      "settings": "minecraft:overworld"
+    },
+    "aero_settings": {
+      "layer2": {
+        "spawn_chance": 0.20,
+        "grid_chunks": 20,
+        "min_radius": 50.0,
+        "max_radius": 110.0,
+        "max_height": 60,
+        "y_variance": 15,
+        "bridge_chance": 0.35,
+        "bridge_max_range": 80
+      },
+      "layer3": {
+        "spawn_chance": 0.10,
+        "grid_chunks": 26,
+        "min_radius": 18.0,
+        "max_radius": 50.0,
+        "max_height": 50,
+        "noise_deform": 6.0
+      },
+      "layer4": {
+        "spawn_chance": 0.10,
+        "grid_chunks": 20,
+        "min_radius": 15.0,
+        "max_radius": 20.0,
+        "min_height": 10,
+        "max_height": 15,
+        "tentacle_count": 10,
+        "tentacle_min_len": 90,
+        "tentacle_max_len": 120,
+        "tentacle_bend": 42.0
+      }
+    }
+  }
+}

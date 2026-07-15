@@ -1,0 +1,36 @@
+{
+  "_description": "Бескрайняя пустота — острова редкие, огромные, без мостов",
+  "layer2": {
+    "spawn_chance": 0.07,
+    "grid_chunks": 36,
+    "min_radius": 90.0,
+    "max_radius": 200.0,
+    "max_height": 90,
+    "y_variance": 20,
+    "bridge_chance": 0.05
+  },
+  "layer3": {
+    "spawn_chance": 0.04,
+    "grid_chunks": 40,
+    "min_radius": 40.0,
+    "max_radius": 100.0,
+    "max_height": 80,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "layer4": {
+    "spawn_chance": 0.04,
+    "grid_chunks": 35,
+    "min_radius": 25.0,
+    "max_radius": 40.0,
+    "max_height": 20,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "structure_support": {
+    "surface_threshold": 0.80,
+    "island_threshold": 0.75,
+    "underground_threshold": 0.85,
+    "sample_step": 8
+  }
+}

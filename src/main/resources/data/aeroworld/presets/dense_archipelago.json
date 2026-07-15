@@ -1,0 +1,36 @@
+{
+  "_description": "Плотный архипелаг — острова часто, маленькие, много мостов",
+  "layer2": {
+    "spawn_chance": 0.55,
+    "grid_chunks": 10,
+    "min_radius": 25.0,
+    "max_radius": 60.0,
+    "max_height": 35,
+    "y_variance": 8,
+    "bridge_chance": 0.70
+  },
+  "layer3": {
+    "spawn_chance": 0.30,
+    "grid_chunks": 14,
+    "min_radius": 10.0,
+    "max_radius": 30.0,
+    "max_height": 30,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "layer4": {
+    "spawn_chance": 0.25,
+    "grid_chunks": 12,
+    "min_radius": 8.0,
+    "max_radius": 14.0,
+    "max_height": 12,
+    "y_variance": 0,
+    "bridge_chance": 0.0
+  },
+  "structure_support": {
+    "surface_threshold": 0.55,
+    "island_threshold": 0.50,
+    "underground_threshold": 0.75,
+    "sample_step": 8
+  }
+}

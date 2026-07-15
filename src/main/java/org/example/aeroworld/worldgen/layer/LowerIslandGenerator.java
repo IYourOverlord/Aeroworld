@@ -1,0 +1,493 @@
+package org.example.aeroworld.worldgen.layer;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.WorldGenLevel;
+import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.IslandCache;
+import org.example.aeroworld.worldgen.cache.IslandData;
+import org.example.aeroworld.worldgen.noise.AeroNoise;
+import org.example.aeroworld.worldgen.noise.IslandPlacer;
+import org.example.aeroworld.worldgen.noise.IslandShape;
+import org.example.aeroworld.config.Layer2Settings;
+
+import java.util.ArrayList;
+import java.util.List;
+
+
+public class LowerIslandGenerator {
+
+    public static final int LAYER_MIN_Y   = 400;
+    public static final int LAYER_MAX_Y   = 500;
+
+    /** Идентификатор слоя для общего ChunkIslandCache. */
+    public static final int LAYER_ID = 0;
+
+    private static final double NOISE_DEFORM  = 18.0;
+
+    /**
+     * Деревья растут только в кольце у края острова: normDist ∈ [EDGE_BAND_START, 1.0],
+     * где normDist = sqrt(distSq) / radius (0 = центр, 1 = край).
+     * Например 0.6 означает, что внутренние 60% радиуса — без деревьев.
+     */
+    private static final double TREE_EDGE_BAND_START = 0.6;
+
+    // ── Кэшированные BlockState ────────────────────────────────────────────────
+    private static final BlockState BS_GRASS_BLOCK  = Blocks.GRASS_BLOCK    .defaultBlockState();
+    private static final BlockState BS_DIRT         = Blocks.DIRT           .defaultBlockState();
+    private static final BlockState BS_STONE        = Blocks.STONE          .defaultBlockState();
+    private static final BlockState BS_OAK_LOG      = Blocks.OAK_LOG        .defaultBlockState();
+    private static final BlockState BS_BIRCH_LOG    = Blocks.BIRCH_LOG      .defaultBlockState();
+    private static final BlockState BS_OAK_LEAVES   = Blocks.OAK_LEAVES     .defaultBlockState();
+    private static final BlockState BS_BIRCH_LEAVES = Blocks.BIRCH_LEAVES   .defaultBlockState();
+    private static final BlockState BS_MANGROVE     = Blocks.MANGROVE_ROOTS .defaultBlockState();
+
+    // ── Настройки (из пресета) ────────────────────────────────────────────────
+    private final int    maxHeight;
+    private final double maxRadius;
+    private final double minRadius;
+    private final int    gridChunks;
+    private final double spawnChance;
+    private final int    yVariance;
+    private final int    bridgeMaxRange;
+    private final double bridgeChance;
+
+    // ── Шумы и помощники ──────────────────────────────────────────────────────
+    private final IslandPlacer placer;
+    private final IslandShape  shape;
+    private final AeroNoise    heightVariance;
+    private final AeroNoise    bridgeNoise;
+    private final AeroNoise    treeNoise;
+    private final long         seed;
+
+    /**
+     * Минимальный радиус поиска ячеек, гарантирующий захват всех островов,
+     * чей физический радиус может достигать текущего чанка.
+     * Вычисляется из конфига: ceil(maxRadius / (gridChunks * 16)) + 1.
+     * +1 — запас на смещение центра острова внутри ячейки сетки.
+     */
+    private final int searchRadius;
+
+    // ── Кэши ──────────────────────────────────────────────────────────────────
+    /**
+     * Кэш свойств островов: yBounds + radius.
+     * Вычисляется один раз на (cx,cz), затем переиспользуется
+     * всеми 256 блоками чанка и повторным вызовом из applyCarvers.
+     */
+    private final IslandCache islandCache = new IslandCache();
+
+    /**
+     * Кэш списка центров островов для чанка.
+     * Устраняет повторный обход ячеек сетки при втором вызове fillChunk
+     * из restoreIslandsInChunk.
+     */
+    private final ChunkIslandCache chunkCache;
+
+    public LowerIslandGenerator(long worldSeed, Layer2Settings cfg, ChunkIslandCache sharedChunkCache) {
+        this.seed           = worldSeed;
+        this.maxHeight      = cfg.maxHeight();
+        this.maxRadius      = cfg.maxRadius();
+        this.minRadius      = cfg.minRadius();
+        this.gridChunks     = cfg.gridChunks();
+        this.spawnChance    = cfg.spawnChance();
+        this.yVariance      = cfg.yVariance();
+        this.bridgeMaxRange = 80;
+        this.bridgeChance   = cfg.bridgeChance();
+        this.searchRadius   = Math.max(2, (int) Math.ceil(cfg.maxRadius() / (gridChunks * 16.0)) + 1);
+        this.chunkCache     = sharedChunkCache;
+        this.placer         = new IslandPlacer(worldSeed ^ 0x2L, gridChunks, spawnChance);
+        this.shape          = new IslandShape(worldSeed ^ 0x3L);
+        this.heightVariance = new AeroNoise(worldSeed ^ 0x4L);
+        this.bridgeNoise    = new AeroNoise(worldSeed ^ 0x5L);
+        this.treeNoise      = new AeroNoise(worldSeed ^ 0x6L);
+    }
+
+    /** Конструктор с дефолтными настройками для тестов (создаёт собственный ChunkIslandCache). */
+    public LowerIslandGenerator(long worldSeed) {
+        this(worldSeed, Layer2Settings.DEFAULT, new ChunkIslandCache());
+    }
+
+    // ── Получение данных острова через кэш ────────────────────────────────────
+
+    /**
+     * Возвращает закэшированные данные острова.
+     * Все вычисления (noise2D, Math.round) выполняются ровно один раз на (cx,cz).
+     */
+    /** Публичный доступ к кэшированным данным острова. Используется TerrainColumnSampler. */
+    public IslandData getIslandData(int cx, int cz) {
+        return islandCache.get(cx, cz, key -> computeIslandData(cx, cz));
+    }
+
+    private IslandData computeIslandData(int cx, int cz) {
+        double nOff  = heightVariance.noise2D(cx * 0.0015 + 9999, cz * 0.0015 + 9999);
+        int yOffset  = (int) Math.round(nOff * yVariance);
+
+        int layerMid = (LAYER_MIN_Y + LAYER_MAX_Y) / 2;
+        int centreY  = layerMid + yOffset;
+
+        double hFrac = 0.4 + (heightVariance.noise2D(cx * 0.007, cz * 0.007) + 1.0) * 0.5 * 0.6;
+        int islandH  = (int)(maxHeight * hFrac);
+
+        int bottomY  = centreY - islandH / 2;
+        int topY     = bottomY + islandH;
+
+        if (bottomY < LAYER_MIN_Y) { bottomY = LAYER_MIN_Y; topY = bottomY + islandH; }
+        if (topY    > LAYER_MAX_Y) { topY    = LAYER_MAX_Y; bottomY = topY - islandH; }
+        bottomY = Math.max(bottomY, LAYER_MIN_Y);
+
+        double v      = (heightVariance.noise2D(cx * 0.004, cz * 0.004) + 1.0) * 0.5;
+        double radius = minRadius + v * (maxRadius - minRadius);
+
+        // Вычисляем один раз — profile и noiseIntensity зависят только от центра острова.
+        // Без кэширования они пересчитывались для каждой из 256 XZ-колонок чанка (пункт R).
+        int    profile        = IslandShape.computeProfile(cx, cz);
+        double noiseIntensity = shape.computeNoiseIntensity(cx, cz);
+
+        return new IslandData(cx, cz, bottomY, topY, radius, profile, noiseIntensity);
+    }
+
+    // ── Публичные методы (обратная совместимость) ─────────────────────────────
+
+    public int[] getIslandYBounds(int cx, int cz) {
+        IslandData d = getIslandData(cx, cz);
+        return new int[]{d.bottomY, d.topY};
+    }
+
+    public double getIslandRadius(int cx, int cz) {
+        return getIslandData(cx, cz).radius;
+    }
+
+    // ── Заполнение чанка ──────────────────────────────────────────────────────
+
+    public void fillChunk(ChunkAccess chunk, int chunkX, int chunkZ) {
+        int baseX = chunkX << 4;
+        int baseZ = chunkZ << 4;
+
+        // Список центров — из кэша (при повторном вызове из applyCarvers — бесплатно)
+        List<int[]> centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+                key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
+
+        if (centres.isEmpty()) return;
+
+        // Предвычисляем данные всех островов ДО вложенного цикла по блокам.
+        // Это гарантирует, что внутри цикла обращения к islandCache — только хиты.
+        IslandData[] islandData = new IslandData[centres.size()];
+        for (int i = 0; i < centres.size(); i++) {
+            int[] c = centres.get(i);
+            islandData[i] = getIslandData(c[0], c[1]);
+        }
+
+        // Precompute active bridge pairs: dist/roll/bridgeY depend only on island centers.
+        // Without this, fillBridges recomputed Math.sqrt + hash for every XZ-column (256×).
+        List<BridgePair> bridgePairs = new ArrayList<>();
+        for (IslandData src : islandData) {
+            for (IslandData other : islandData) {
+                if (other.cx == src.cx && other.cz == src.cz) continue;
+                double distSq = (double)(src.cx - other.cx) * (src.cx - other.cx)
+                              + (double)(src.cz - other.cz) * (src.cz - other.cz);
+                if (distSq > (double) bridgeMaxRange * bridgeMaxRange) continue;
+                long bridgeHash = hash(src.cx, src.cz, other.cx, other.cz);
+                double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
+                if (roll > bridgeChance) continue;
+                bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1));
+            }
+        }
+
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                int wx = baseX + lx;
+                int wz = baseZ + lz;
+
+                for (IslandData d : islandData) {
+                    // Precompute XZ-deformation once per column per island (outside Y-loop).
+                    // Eliminates 9 noise calls × (topY - bottomY) per column.
+                    // Горячий путь: передаём profile + noiseIntensity из IslandData.
+                    // computeNoiseIntensity() и computeProfile() не вызываются.
+                    IslandShape.XZCache xz = shape.precomputeXZ(
+                            wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                            d.shapeNoiseIntensity, d.shapeProfile);
+
+                    // Terrain blocks — top-down pass so we know surface/subsurface without
+                    // re-calling isSolid. prevSolid=false means current block is exposed at top
+                    // → surface; depthFromSurface tracks subsurface depth (1–3 = DIRT).
+                    boolean prevSolid = false; // solid state of the block one step ABOVE
+                    int depthFromSurface = 0;
+                    int surfaceY = -1;
+                    for (int wy = d.topY; wy >= d.bottomY; wy--) {
+                        boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
+                        if (solid) {
+                            BlockState block;
+                            if (!prevSolid) {
+                                // Top exposed face → surface
+                                block = BS_GRASS_BLOCK;
+                                depthFromSurface = 0;
+                                surfaceY = wy;
+                            } else {
+                                depthFromSurface++;
+                                block = depthFromSurface <= 3
+                                        ? BS_DIRT
+                                        : BS_STONE;
+                            }
+                            pos.set(wx, wy, wz);
+                            chunk.setBlockState(pos, block, false);
+                        }
+                        prevSolid = solid;
+                    }
+
+                    // Стволы пишем здесь (1 блок в ширину — не вылезают за чанк).
+                    // Листья (±2 блока) пишутся в placeTreesInRegion через WorldGenLevel.
+                    if (isInTreeEdgeBand(xz.distSq, d.radius)) {
+                        placeTrunk(chunk, wx, wz, surfaceY, pos);
+                    }
+
+                    // Bridges
+                    fillBridges(chunk, wx, wz, d, bridgePairs, pos);
+                }
+            }
+        }
+
+        // Освобождаем запись в chunkCache после полной обработки чанка.
+        // fillChunk вызывается из fillFromNoise, а затем может быть вызван
+        // повторно из restoreIslandsInChunk (applyCarvers).
+        // Освобождаем только при втором вызове — проверяем это косвенно через
+        // наличие в кэше: release вызывается из AeroWorldChunkGenerator
+        // после applyCarvers.
+    }
+
+    /**
+     * Вызывается из AeroWorldChunkGenerator.applyCarvers после восстановления
+     * островов. Освобождает запись чанка из ChunkIslandCache.
+     */
+    public void releaseChunkCache(int chunkX, int chunkZ) {
+        chunkCache.release(LAYER_ID, chunkX, chunkZ);
+    }
+
+    /** Доступ к IslandPlacer для TerrainColumnSampler. */
+    public IslandPlacer getPlacer() { return placer; }
+
+    /** Радиус поиска ячеек для этого слоя. Используется TerrainColumnSampler. */
+    public int getSearchRadius() { return searchRadius; }
+
+    // ── Деревья ───────────────────────────────────────────────────────────────
+
+    /**
+     * Проверяет, находится ли XZ-точка в кольце у края острова, где разрешён рост деревьев.
+     * normDist = sqrt(distSq) / radius ∈ [0,1]: 0 — центр острова, 1 — край.
+     * Сравнение возведено в квадрат, чтобы избежать sqrt в горячем пути.
+     */
+    private static boolean isInTreeEdgeBand(double distSq, double radius) {
+        double bandStartSq = (TREE_EDGE_BAND_START * radius) * (TREE_EDGE_BAND_START * radius);
+        return distSq >= bandStartSq;
+    }
+
+    /**
+     * Ствол дерева (1×1 по XZ) — безопасно писать в ChunkAccess: никогда не
+     * выходит за границы чанка. Возвращает высоту верхнего блока ствола или -1
+     * если дерево здесь не растёт.
+     */
+    private int placeTrunk(ChunkAccess chunk, int wx, int wz,
+                            int surfaceY, BlockPos.MutableBlockPos pos) {
+        if (surfaceY < 0) return -1;
+        double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
+        if (tn < 0.55) return -1;
+
+        double typeSample = treeNoise.noise2D(wx * 0.07 + 500, wz * 0.07 + 500);
+        boolean isBirch = typeSample > 0.3;
+        int trunkHeight = 4 + (int)((treeNoise.noise2D(wx * 0.31, wz * 0.31) + 1.0) * 0.5 * 3);
+
+        BlockState log = isBirch
+                ? BS_BIRCH_LOG
+                : BS_OAK_LOG;
+        for (int dy = 1; dy <= trunkHeight; dy++) {
+            pos.set(wx, surfaceY + dy, wz);
+            if (chunk.getBlockState(pos).isAir()) chunk.setBlockState(pos, log, false);
+        }
+        return surfaceY + trunkHeight;
+    }
+
+    /**
+     * Размещает листья для всех деревьев чанка через WorldGenLevel (регион 3×3 чанка).
+     * Вызывается из AeroWorldChunkGenerator.applyBiomeDecoration — фаза populate,
+     * где запись в соседние чанки корректна (как у ванильного TreeFeature).
+     *
+     * <p>surfaceY пересчитывается через shape.isSolid() — та же детерминированная
+     * математика что в fillChunk, без обращения к ChunkIslandCache.
+     */
+    public void placeTreesInRegion(WorldGenLevel region, ChunkAccess chunk) {
+        int chunkX = chunk.getPos().x;
+        int chunkZ = chunk.getPos().z;
+        int baseX  = chunkX << 4;
+        int baseZ  = chunkZ << 4;
+
+        List<int[]> centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+                key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
+        if (centres.isEmpty()) return;
+
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
+        for (int[] c : centres) {
+            IslandData d = getIslandData(c[0], c[1]);
+
+            for (int lx = 0; lx < 16; lx++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    int wx = baseX + lx;
+                    int wz = baseZ + lz;
+
+                    // precomputeXZ — та же функция что в fillChunk, без sqrt.
+                    // Горячий путь: передаём profile + noiseIntensity из IslandData.
+                    // computeNoiseIntensity() и computeProfile() не вызываются.
+                    IslandShape.XZCache xz = shape.precomputeXZ(
+                            wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                            d.shapeNoiseIntensity, d.shapeProfile);
+                    // Быстрый XZ-reject: если точка вне острова — пропускаем.
+                    if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) continue;
+
+                    // Деревья только у края острова (см. TREE_EDGE_BAND_START).
+                    if (!isInTreeEdgeBand(xz.distSq, d.radius)) continue;
+
+                    // Пересчитываем surfaceY (детерминированная математика, нет side-эффектов)
+                    int surfaceY = -1;
+                    for (int wy = d.topY; wy >= d.bottomY; wy--) {
+                        if (shape.isSolid(wy, d.bottomY, d.topY, xz)
+                                && !shape.isSolid(wy + 1, d.bottomY, d.topY, xz)) {
+                            surfaceY = wy;
+                            break;
+                        }
+                    }
+                    if (surfaceY < 0) continue;
+
+                    double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
+                    if (tn < 0.55) continue;
+
+                    double typeSample = treeNoise.noise2D(wx * 0.07 + 500, wz * 0.07 + 500);
+                    boolean isBirch = typeSample > 0.3;
+                    int trunkHeight = 4 + (int)((treeNoise.noise2D(wx * 0.31, wz * 0.31) + 1.0) * 0.5 * 3);
+
+                    BlockState leaves = isBirch
+                            ? BS_BIRCH_LEAVES
+                            : BS_OAK_LEAVES;
+                    int topLog = surfaceY + trunkHeight;
+                    int leafRadius = 2;
+                    for (int dlx = -leafRadius; dlx <= leafRadius; dlx++) {
+                        for (int dlz = -leafRadius; dlz <= leafRadius; dlz++) {
+                            for (int dly = -1; dly <= leafRadius; dly++) {
+                                if (Math.abs(dlx) == leafRadius && Math.abs(dlz) == leafRadius) continue;
+                                pos.set(wx + dlx, topLog + dly, wz + dlz);
+                                if (region.getBlockState(pos).isAir()) {
+                                    region.setBlock(pos, leaves, 2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Мосты ─────────────────────────────────────────────────────────────────
+
+    private void fillBridges(ChunkAccess chunk, int wx, int wz,
+                             IslandData src, List<BridgePair> pairs,
+                             BlockPos.MutableBlockPos pos) {
+        for (BridgePair bp : pairs) {
+            if (bp.src().cx != src.cx || bp.src().cz != src.cz) continue;
+
+            double t = projectPointOntoSegment(wx, wz, bp.src().cx, bp.src().cz, bp.other().cx, bp.other().cz);
+            if (t < 0.05 || t > 0.95) continue;
+
+            double lineX = bp.src().cx + t * (bp.other().cx - bp.src().cx);
+            double lineZ = bp.src().cz + t * (bp.other().cz - bp.src().cz);
+            double perpDistSq = (wx - lineX) * (wx - lineX) + (wz - lineZ) * (wz - lineZ);
+
+            double bridgeWidth = 2.5 + bridgeNoise.noise2D(wx * 0.1, wz * 0.1) * 1.0;
+            if (perpDistSq > bridgeWidth * bridgeWidth) continue;
+
+            for (int dy = 0; dy <= 1; dy++) {
+                pos.set(wx, bp.bridgeY() + dy, wz);
+                BlockState bridgeBlock = (dy == 0)
+                        ? BS_OAK_LOG
+                        : BS_MANGROVE;
+                if (chunk.getBlockState(pos).isAir()) chunk.setBlockState(pos, bridgeBlock, false);
+            }
+        }
+    }
+
+    // ── Утилиты ───────────────────────────────────────────────────────────────
+
+    private double projectPointOntoSegment(int px, int pz, int ax, int az, int bx, int bz) {
+        double dx = bx - ax, dz = bz - az;
+        double len2 = dx * dx + dz * dz;
+        if (len2 == 0) return 0;
+        return ((px - ax) * dx + (pz - az) * dz) / len2;
+    }
+
+    private long hash(int ax, int az, int bx, int bz) {
+        long h = seed
+                ^ ((long)(ax + bx) * 341873128712L)
+                ^ ((long)(az + bz) * 132897987541L)
+                ^ ((long)(ax * bz) * 998244353L);
+        h = h ^ (h >>> 30);
+        h *= 0xBF58476D1CE4E5B9L;
+        return h ^ (h >>> 31);
+    }
+
+    private record BridgePair(IslandData src, IslandData other, int bridgeY) {}
+    /**
+     * Возвращает реальный Y верхней поверхности острова в точке (wx, wz)
+     * с учётом шумовой деформации — для корректного LOD-рендеринга.
+     *
+     * <p>Используется в {@code AeroWorldDhWorldGenerator} вместо плоского
+     * {@code d.topY}. Это даёт деформированный край острова вместо цилиндра.
+     *
+     * <p>Алгоритм: precomputeXZ один раз (кэш для всего Y-диапазона), затем
+     * бинарный поиск по Y — O(log(topY-bottomY)) вместо O(topY-bottomY).
+     *
+     * @return Y верхней поверхности, или {@code d.bottomY - 1} если точка вне острова
+     */
+    public int getDeformedTopY(int wx, int wz, IslandData d) {
+        IslandShape.XZCache xz = shape.precomputeXZ(
+                wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                d.shapeNoiseIntensity, d.shapeProfile);
+
+        // Быстрая XZ-проверка: если точка вне острова даже на topY — выходим
+        if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) return d.bottomY - 1;
+
+        // Бинарный поиск верхней поверхности: ищем наибольший Y где solid=true и solid(Y+1)=false
+        int lo = d.bottomY, hi = d.topY;
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (shape.isSolid(mid, d.bottomY, d.topY, xz)) lo = mid;
+            else hi = mid - 1;
+        }
+        // lo = наивысший solid Y. Проверяем что это реально поверхность (над ним воздух)
+        if (shape.isSolid(lo + 1, d.bottomY, d.topY, xz)) return d.bottomY - 1; // внутри
+        return lo;
+    }
+
+    /**
+     * Возвращает нижний Y острова в точке (wx, wz) с учётом деформации.
+     * Бинарный поиск снизу вверх.
+     *
+     * @return Y нижней поверхности, или {@code d.topY + 1} если точка вне острова
+     */
+    public int getDeformedBottomY(int wx, int wz, IslandData d) {
+        IslandShape.XZCache xz = shape.precomputeXZ(
+                wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                d.shapeNoiseIntensity, d.shapeProfile);
+
+        if (!shape.isSolid(d.bottomY, d.bottomY, d.topY, xz)) return d.topY + 1;
+
+        int lo = d.bottomY, hi = d.topY;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (shape.isSolid(mid, d.bottomY, d.topY, xz)) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
+    }
+
+}

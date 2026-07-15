@@ -1,0 +1,33 @@
+{
+  "_comment": "Большое одиночество — редкие огромные острова, далеко друг от друга, нет мостов",
+  "layer2": {
+    "spawn_chance": 0.08,
+    "grid_chunks": 40,
+    "min_radius": 100.0,
+    "max_radius": 200.0,
+    "max_height": 90,
+    "y_variance": 20,
+    "bridge_chance": 0.0,
+    "bridge_max_range": 0
+  },
+  "layer3": {
+    "spawn_chance": 0.05,
+    "grid_chunks": 50,
+    "min_radius": 40.0,
+    "max_radius": 90.0,
+    "max_height": 80,
+    "noise_deform": 12.0
+  },
+  "layer4": {
+    "spawn_chance": 0.04,
+    "grid_chunks": 45,
+    "min_radius": 25.0,
+    "max_radius": 40.0,
+    "min_height": 15,
+    "max_height": 25,
+    "tentacle_count": 12,
+    "tentacle_min_len": 130,
+    "tentacle_max_len": 180,
+    "tentacle_bend": 60.0
+  }
+}
