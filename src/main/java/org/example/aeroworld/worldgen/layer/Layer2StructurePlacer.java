@@ -18,7 +18,7 @@ public final class Layer2StructurePlacer {
 
     /** Id структуры-танка в PhysicalStructures. Без суффикса .nbt и без пути structures/. */
     private static final ResourceLocation TANK_ID =
-            ResourceLocation.fromNamespaceAndPath("physical_structures", "tank_11");
+            ResourceLocation.fromNamespaceAndPath("physical_structures", "tank21");
 
     private final ChunkIslandCache sharedChunkCache;
 

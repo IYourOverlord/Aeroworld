@@ -394,8 +394,7 @@ public final class ProximityTriggerHandler {
     private static ResourceLocation toNbtLocation(ResourceLocation id) {
         String path = id.getPath();
         if (path.endsWith(".nbt")) {
-            // Старый формат: physical_structures:tank_11.nbt
-            // → physical_structures:structures/tank_11.nbt
+
             if (!path.contains("/")) {
                 path = "structures/" + path;
             }

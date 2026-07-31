@@ -90,8 +90,8 @@ public class AeroWorld {
     private static void registerAeroStructures() {
         // tank_11 — бронетанк на островах Layer 2 (обычная vanilla NBT-структура)
         safeRegister(new PhysicalStructureDefinition(
-                ResourceLocation.fromNamespaceAndPath("physical_structures", "tank_11"),
-                ResourceLocation.fromNamespaceAndPath("physical_structures", "structures/tank16.nbt"),
+                ResourceLocation.fromNamespaceAndPath("physical_structures", "tank21"),
+                ResourceLocation.fromNamespaceAndPath("physical_structures", "structures/tank21.nbt"),
                 Rotation.NONE,
                 20 // 1 секунда задержки перед Sable-сборкой
         ));
