@@ -84,6 +84,9 @@ public class IslandPlacer {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /** Размер ячейки сетки в чанках. Нужен внешнему коду (напр. debug-командам) для спирального поиска. */
+    public int gridSizeChunks() { return gridSizeChunks; }
+
     /** Fast integer hash combining cell coords and world seed. */
     private long hash(int cellX, int cellZ) {
         long h = worldSeed

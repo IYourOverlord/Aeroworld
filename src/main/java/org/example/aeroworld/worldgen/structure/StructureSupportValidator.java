@@ -6,6 +6,7 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
+import org.example.aeroworld.worldgen.layer.Layer1FlatGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.slf4j.Logger;
@@ -31,7 +32,7 @@ import java.util.List;
  *   <li><b>DENY</b> — отклонить сразу.</li>
  *   <li><b>WATER</b> — отклонить (нет океана в AeroWorld).</li>
  *   <li><b>VOID_GAP</b> — структура в пустоте между слоями → отклонить.</li>
- *   <li><b>SURFACE</b> — проверить что ≥70% точек сетки имеют опору на Layer 1 (Y≤50).</li>
+ *   <li><b>SURFACE</b> — проверить что ≥70% точек сетки имеют опору на Layer 1 (Y ≤ LAYER_MAX_Y, с горами).</li>
  *   <li><b>ISLAND</b> — проверить что ≥65% точек имеют остров снизу (Layer 2–4).</li>
  *   <li><b>UNDERGROUND</b> — проверить что ≥80% точек внутри твёрдого рельефа.</li>
  *   <li><b>SKY_FLOATING</b> — минимум 1 остров в радиусе 96 блоков + нет коллизий.</li>
@@ -63,15 +64,18 @@ public final class StructureSupportValidator {
     private static final boolean LOG_ACCEPTED  = false; // включить для отладки
     private static final boolean LOG_REJECTED  = true;
 
+    private final Layer1FlatGenerator  layer1;
     private final LowerIslandGenerator layer2;
     private final HighIslandGenerator  layer3;
     private final UpperIslandGenerator layer4;
     private final ChunkIslandCache     sharedChunkCache;
 
-    public StructureSupportValidator(LowerIslandGenerator layer2,
+    public StructureSupportValidator(Layer1FlatGenerator  layer1,
+                                     LowerIslandGenerator layer2,
                                      HighIslandGenerator  layer3,
                                      UpperIslandGenerator layer4,
                                      ChunkIslandCache     sharedChunkCache) {
+        this.layer1             = layer1;
         this.layer2            = layer2;
         this.layer3            = layer3;
         this.layer4            = layer4;
@@ -117,7 +121,7 @@ public final class StructureSupportValidator {
         }
 
         // ── 4. Специфичная логика по категории ────────────────────────────────
-        TerrainColumnSampler sampler = new TerrainColumnSampler(layer2, layer3, layer4, sharedChunkCache);
+        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache);
 
         ValidationResult result = switch (category) {
             case SURFACE      -> validateSurface(structureId, bounds, sampler);
@@ -156,7 +160,7 @@ public final class StructureSupportValidator {
     // ── Валидация SURFACE ─────────────────────────────────────────────────────
 
     /**
-     * Проверяет наземные структуры (Layer 1, Y ≤ 50).
+     * Проверяет наземные структуры (Layer 1, Y ≤ Layer1FlatGenerator.LAYER_MAX_Y).
      * Требует твёрдую землю под подошвой структуры.
      */
     private ValidationResult validateSurface(ResourceLocation id, BoundingBox bounds,
@@ -189,9 +193,9 @@ public final class StructureSupportValidator {
         // Для подземных структур сканируем от середины по высоте
         int scanY = (bounds.minY() + bounds.maxY()) / 2;
 
-        // Используем Layer 1 — подземные структуры только там (Y ≤ 50)
+        // Используем Layer 1 — подземные структуры только там
         // Проверка: scanY должен быть внутри слоя 1
-        if (scanY > 50) {
+        if (scanY > Layer1FlatGenerator.LAYER_MAX_Y) {
             logRejection(id, bounds,
                     String.format("подземная структура выше Layer 1 (Y=%d)", scanY));
             return ValidationResult.insufficientSupport(id, StructureCategory.UNDERGROUND,

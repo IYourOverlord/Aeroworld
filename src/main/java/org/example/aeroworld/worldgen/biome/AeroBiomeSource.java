@@ -54,6 +54,26 @@ public class AeroBiomeSource extends BiomeSource {
 
     private static final double RARE_THRESHOLD = 0.65;
 
+    /**
+     * ПОЛНЫЙ список склонированных под aeroworld:* overworld-биомов (53 шт. —
+     * все ванильные биомы, кроме незера/энда/void). Нужен для collectPossibleBiomes,
+     * т.к. слои-острова (y > 12, через delegateWithSafety) могут вернуть любой
+     * из них — не только те 30, что фигурируют в BIOME_TABLE/RARE_TABLE.
+     */
+    private static final String[] ALL_CLONED_BIOMES = {
+            "badlands", "bamboo_jungle", "beach", "birch_forest", "cherry_grove",
+            "cold_ocean", "dark_forest", "deep_cold_ocean", "deep_dark", "deep_frozen_ocean",
+            "deep_lukewarm_ocean", "deep_ocean", "desert", "dripstone_caves", "eroded_badlands",
+            "flower_forest", "forest", "frozen_ocean", "frozen_peaks", "frozen_river",
+            "grove", "ice_spikes", "jagged_peaks", "jungle", "lukewarm_ocean",
+            "lush_caves", "mangrove_swamp", "meadow", "mushroom_fields", "ocean",
+            "old_growth_birch_forest", "old_growth_pine_taiga", "old_growth_spruce_taiga", "plains", "river",
+            "savanna", "savanna_plateau", "snowy_beach", "snowy_plains", "snowy_slopes",
+            "snowy_taiga", "sparse_jungle", "stony_peaks", "stony_shore", "sunflower_plains",
+            "swamp", "taiga", "warm_ocean", "windswept_forest", "windswept_gravelly_hills",
+            "windswept_hills", "windswept_savanna", "wooded_badlands"
+    };
+
     // ── Состояние ─────────────────────────────────────────────────────────────
     private final MultiNoiseBiomeSource delegate;
     private final long seed;
@@ -91,25 +111,21 @@ public class AeroBiomeSource extends BiomeSource {
 
     @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
-        Stream<Holder<Biome>> vanillaIslandBiomes = delegate.possibleBiomes().stream()
-                .filter(h -> h.unwrapKey()
-                        .map(k -> !isExcluded(k.location()))
-                        .orElse(true));
-
-        Stream<Holder<Biome>> aeroClones = allTableBiomeNames()
+        Stream<Holder<Biome>> aeroClones = java.util.Arrays.stream(ALL_CLONED_BIOMES)
                 .map(name -> AeroBiomeRegistryCache.get(ResourceLocation.fromNamespaceAndPath("aeroworld", name)))
                 .filter(Optional::isPresent)
                 .map(Optional::get);
 
-        return Stream.concat(vanillaIslandBiomes, aeroClones);
-    }
+        // Ванильные minecraft:* биомы больше не нужны в качестве отдельной ветки:
+        // delegateWithSafety теперь всегда подменяет их на клон aeroworld:*.
+        // Оставляем как последний fallback на случай, если реестр ещё не
+        // прогрелся (AeroBiomeRegistryCache пуст) в момент вызова.
+        Stream<Holder<Biome>> vanillaFallback = delegate.possibleBiomes().stream()
+                .filter(h -> h.unwrapKey()
+                        .map(k -> !isExcluded(k.location()))
+                        .orElse(true));
 
-    /** Все уникальные имена биомов из BIOME_TABLE и RARE_TABLE. */
-    private static Stream<String> allTableBiomeNames() {
-        return Stream.concat(
-                java.util.Arrays.stream(BIOME_TABLE).flatMap(java.util.Arrays::stream),
-                java.util.Arrays.stream(RARE_TABLE).flatMap(java.util.Arrays::stream)
-        ).distinct();
+        return Stream.concat(aeroClones, vanillaFallback);
     }
 
     @Override
@@ -156,11 +172,30 @@ public class AeroBiomeSource extends BiomeSource {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler) {
-        Holder<Biome> b = delegate.getNoiseBiome(x, y, z, sampler);
-        if (b.unwrapKey().map(k -> isExcluded(k.location())).orElse(false)) {
-            return findBiome(ResourceLocation.withDefaultNamespace("plains")).orElse(b);
+        // Реальный ванильный делегат используется ТОЛЬКО как климатический
+        // семплер — чтобы понять, какой биом "подошёл бы" по температуре/
+        // влажности/континентальности в этой точке. Сам Holder<Biome>,
+        // который он возвращает, указывает на настоящий minecraft:* биом
+        // из общего реестра (со всей ванильной рудой) — использовать его
+        // напрямую для генерации на островах нельзя, иначе получаем ровно
+        // тот баг, что был найден (уголь на острове слоя 2).
+        Holder<Biome> vanilla = delegate.getNoiseBiome(x, y, z, sampler);
+        ResourceLocation vanillaId = vanilla.unwrapKey()
+                .map(k -> k.location())
+                .orElse(ResourceLocation.withDefaultNamespace("plains"));
+
+        if (isExcluded(vanillaId)) {
+            return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains")).orElse(vanilla);
         }
-        return b;
+
+        // Подменяем на наш клон aeroworld:<то же имя> — он либо уже один из
+        // 30 биомов основной/редкой таблицы, либо один из остальных 23
+        // (океаны/пляжи/пещерные и т.д.), склонированных в рамках полного
+        // набора overworld-биомов специально для этого случая — чтобы у
+        // ЛЮБОГО биома, который может прийти с островов, была версия без руды.
+        return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", vanillaId.getPath()))
+                .orElseGet(() -> findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains"))
+                        .orElse(vanilla));
     }
 
     private Optional<Holder<Biome>> findBiome(ResourceLocation id) {

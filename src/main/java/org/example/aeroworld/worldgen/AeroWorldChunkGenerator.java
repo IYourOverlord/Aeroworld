@@ -86,6 +86,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private final Layer2OreGenerator layer2Ores = new Layer2OreGenerator();
     private final Layer3OreGenerator layer3Ores = new Layer3OreGenerator();
     private final Layer4OreGenerator layer4Ores = new Layer4OreGenerator();
+    private Layer1SinkholeCarver sinkholeCarver;
 
     private long    worldSeed       = 12345L;
     private boolean seedInitialized = false;
@@ -158,8 +159,9 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         lowerIslands = new LowerIslandGenerator(seed, settings.layer2(), sharedChunkIslandCache);
         highIslands  = new HighIslandGenerator(seed, settings.layer3(), sharedChunkIslandCache);
         upperIslands = new UpperIslandGenerator(seed, settings.layer4(), sharedChunkIslandCache);
+        sinkholeCarver = new Layer1SinkholeCarver(seed, lowerIslands, highIslands, upperIslands);
 
-        structureValidator = new StructureSupportValidator(lowerIslands, highIslands, upperIslands, sharedChunkIslandCache);
+        structureValidator = new StructureSupportValidator(layer1, lowerIslands, highIslands, upperIslands, sharedChunkIslandCache);
 
         // ── Инициализируем placers с актуальным seed ──────────────────────────
         structurePlacer       = new Layer2StructurePlacer(seed, sharedChunkIslandCache);
@@ -197,6 +199,13 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     @Override
     public int getBaseHeight(int x, int z, Heightmap.Types type,
                              LevelHeightAccessor level, RandomState random) {
+        // Structure-система может дёрнуть getBaseHeight ДО fillFromNoise/
+        // applyCarvers этого чанка (см. createStructures → findGenerationPoint
+        // у ShipwreckStructure/MineshaftStructure и т.д.) — тогда layer1 и
+        // прочие генераторы слоёв ещё не созданы. init() — дешёвый fast-path
+        // при повторном randomState, поэтому вызываем его на каждый вход.
+        init(random);
+
         int levelMax = level.getMinBuildHeight() + level.getHeight() - 1;
         int chunkX = x >> 4, chunkZ = z >> 4;
 
@@ -225,8 +234,9 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                 if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
             }
         }
-        // Layer 1 (поверхность)
-        return Layer1FlatGenerator.SURFACE_Y + 1;
+        // Layer 1 (поверхность) — реальная высота по колонке (горы/холмы),
+        // а не фиксированная константа.
+        return layer1.surfaceHeight(x, z) + 1;
     }
 
     /**
@@ -239,6 +249,9 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level,
                                      RandomState random) {
+        // См. комментарий в getBaseHeight — тот же риск вызова до fillFromNoise.
+        init(random);
+
         // Берём наибольший диапазон из переданного level и FULL_HEIGHT —
         // гарантирует корректное отображение всех слоёв AeroWorld.
         int minY   = Math.min(level.getMinBuildHeight(), FULL_HEIGHT.getMinBuildHeight());
@@ -249,10 +262,11 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
         BlockState[] states = new BlockState[height];
 
-        // ── Layer 1: поверхность -64..50 ─────────────────────────────────
+        // ── Layer 1: поверхность -64..surfY (реальная высота по колонке) ────
+        int surfY = layer1.surfaceHeight(x, z);
         for (int i = 0; i < height; i++) {
             int y = minY + i;
-            if (y >= Layer1FlatGenerator.LAYER_MIN_Y && y <= Layer1FlatGenerator.SURFACE_Y) {
+            if (y >= Layer1FlatGenerator.LAYER_MIN_Y && y <= surfY) {
                 states[i] = (y < 0) ? BS_DEEPSLATE : BS_STONE;
             } else {
                 states[i] = BS_AIR_SENTINEL;
@@ -329,7 +343,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     @Override
     public void addDebugScreenInfo(List<String> info, RandomState random, BlockPos pos) {
         int y = pos.getY();
-        String layer = y <= 50   ? "Layer 1 (Flat Base)"
+        String layer = y <= Layer1FlatGenerator.LAYER_MAX_Y ? "Layer 1 (Mountains/Base)"
                 : y < 500  ? "Layer 2 (Lower Islands)"
                 : y < 1500 ? "Layer 3 (High Islands)"
                 :            "Layer 4 (Upper Islands)";
@@ -356,6 +370,13 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         if (chunkMinY <= Layer1FlatGenerator.LAYER_MAX_Y
                 && chunkMaxY >= Layer1FlatGenerator.LAYER_MIN_Y) {
             layer1.fillChunk(chunk, chunkX, chunkZ, biomeResolver);
+
+            // Карстовые воронки под островами слоёв 2/3/4 — карвятся ПОСЛЕ
+            // основного рельефа слоя 1, чтобы "прорезать" уже готовую землю,
+            // а не пытаться предсказать её заранее.
+            if (sinkholeCarver != null) {
+                sinkholeCarver.carveChunk(chunk, chunkX, chunkZ);
+            }
         }
 
         // Layer 2 (Lower Islands): Y 300..400
@@ -416,9 +437,6 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     }
 
     private void applyLayer1Surface(ChunkAccess chunk, Layer1FlatGenerator.BiomeResolver biomeResolver) {
-        final int SURFACE_Y   = Layer1FlatGenerator.SURFACE_Y;
-        final int SUBSURFACE  = SURFACE_Y - 1;
-
         int baseX = chunk.getPos().x << 4;
         int baseZ = chunk.getPos().z << 4;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -432,6 +450,12 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                 // обращения к шуму. Тот же объект уже использован в fillFromNoise.
                 ResourceLocation biomeKey = biomeResolver.get(wx, wz);
 
+                // Высота поверхности ЭТОЙ конкретной колонки — обязательно та же
+                // функция, что использовалась в fillFromNoise/Layer1FlatGenerator,
+                // иначе покраска "уедет" от фактического рельефа.
+                int surfaceY = layer1.surfaceHeight(wx, wz);
+                int subsurfaceY = surfaceY - 1;
+
                 String path = biomeKey.getPath();
                 boolean isSandy    = path.equals("desert")
                         || path.equals("beach") || path.equals("snowy_beach");
@@ -439,14 +463,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                         || path.equals("wooded_badlands") || path.equals("eroded_badlands");
 
                 if (isSandy) {
-                    chunk.setBlockState(pos.set(wx, SURFACE_Y,  wz), BS_SAND,       false);
-                    chunk.setBlockState(pos.set(wx, SUBSURFACE, wz), BS_SAND,       false);
+                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_SAND,       false);
+                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_SAND,       false);
                 } else if (isBadlands) {
-                    chunk.setBlockState(pos.set(wx, SURFACE_Y,  wz), BS_RED_SAND,   false);
-                    chunk.setBlockState(pos.set(wx, SUBSURFACE, wz), BS_TERRACOTTA,  false);
+                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_RED_SAND,   false);
+                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_TERRACOTTA,  false);
                 } else {
-                    chunk.setBlockState(pos.set(wx, SURFACE_Y,  wz), BS_GRASS, false);
-                    chunk.setBlockState(pos.set(wx, SUBSURFACE, wz), BS_DIRT,        false);
+                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_GRASS, false);
+                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_DIRT,        false);
                 }
             }
         }

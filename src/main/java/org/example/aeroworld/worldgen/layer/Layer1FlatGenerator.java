@@ -13,9 +13,23 @@ public class Layer1FlatGenerator {
 
     // ── Границы слоя ──────────────────────────────────────────────────────────
     public static final int LAYER_MIN_Y  = -64;
-    public static final int LAYER_MAX_Y  = 50;
-    public static final int SURFACE_Y    = 48;
-    private static final int DIRT_MIN_Y  = 45;
+    // Поднято с 50 до 300 по просьбе: слой 1 должен генерироваться близко
+    // к ванильным значениям высоты (горы/холмы), а не быть обрезанным на 50.
+    public static final int LAYER_MAX_Y  = 300;
+
+    // Базовая высота равнин (старое фиксированное значение SURFACE_Y) —
+    // теперь это лишь ОТПРАВНАЯ точка шумовой heightmap, а не потолок.
+    private static final int BASE_SURFACE_Y   = 48;
+    // Насколько высоко шум может поднять рельеф над базовой высотой равнин.
+    // 48 + 180 = 228 в самых высоких точках, плюс запас неба до LAYER_MAX_Y.
+    private static final int MAX_EXTRA_HEIGHT = 180;
+    // Не даём пикам подходить ближе чем на 30 блоков к потолку слоя —
+    // чтобы оставался запас неба над самой высокой горой.
+    private static final int PEAK_SKY_BUFFER  = 30;
+    // Толщина grass/dirt (или sand/sandstone, terracotta) под поверхностью,
+    // которую buildSurface красит поверх (2 верхних блока) — как раньше.
+    private static final int SURFACE_SKIN     = 3;
+
     private static final int DEEPSLATE_TOP = 0;
 
     // ── Параметры пещеры ──────────────────────────────────────────────────────
@@ -75,6 +89,7 @@ public class Layer1FlatGenerator {
     private static final long SEED_STAG  = 0x5714_6717_9999L;
     private static final long SEED_STAC  = 0x4C71_1234_ABCDL;
     private static final long SEED_ORE   = 0xAA02L;
+    private static final long SEED_HEIGHT = 0x4E1687_71ADL;
 
     // ── Шумовые генераторы ────────────────────────────────────────────────────
     private final AeroNoise stoneVariance;
@@ -83,6 +98,7 @@ public class Layer1FlatGenerator {
     private final AeroNoise ceilNoise;
     private final AeroNoise stalagNoise;
     private final AeroNoise stalacNoise;
+    private final AeroNoise heightNoise;
 
     private final long seed;
 
@@ -94,6 +110,51 @@ public class Layer1FlatGenerator {
         ceilNoise     = new AeroNoise(worldSeed ^ SEED_CEIL);
         stalagNoise   = new AeroNoise(worldSeed ^ SEED_STAG);
         stalacNoise   = new AeroNoise(worldSeed ^ SEED_STAC);
+        heightNoise   = new AeroNoise(worldSeed ^ SEED_HEIGHT);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Высота поверхности (горы/холмы) — многооктавный шум
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Высота поверхности (верхний твёрдый блок) в колонке (wx, wz).
+     *
+     * <p>Раньше это была константа {@code SURFACE_Y=48} — плоский мир.
+     * Теперь — настоящая шумовая heightmap, похожая по духу на ванильную:
+     * широкие горные массивы (continent), заострённые хребты (ridge,
+     * {@code 1 - |noise|}) и мелкие холмы (detail) смешиваются в общую форму.
+     * Значение ТОЛЬКО поднимается над базовым уровнем равнин
+     * ({@link #BASE_SURFACE_Y}) — вниз не проседает, чтобы не залезать
+     * в пещерную систему (потолок пещеры максимум ~{@code CEIL_BASE_Y+CEIL_VAR}).
+     *
+     * <p>ВАЖНО: этот метод — источник истины для высоты поверхности.
+     * {@code AeroWorldChunkGenerator} (getBaseHeight/getBaseColumn/
+     * applyLayer1Surface) и {@code TerrainColumnSampler} обязаны вызывать
+     * именно его, а не полагаться на старую константу SURFACE_Y — иначе
+     * height-map запросы, покраска поверхности и валидация структур разъедутся
+     * с фактическим рельефом, который рисует {@link #fillChunk}.
+     */
+    public int surfaceHeight(int wx, int wz) {
+        // Широкие горные массивы (континентальный масштаб)
+        double continent = Math.max(0.0,
+                heightNoise.fbm2D(wx * 0.0012, wz * 0.0012, 5, 2.0, 0.5));
+
+        // Заострённые хребты: 1 - |noise| даёт "пик" там, где noise≈0
+        double ridgeRaw = heightNoise.fbm2D(wx * 0.004 + 9000, wz * 0.004 + 9000, 4, 2.0, 0.5);
+        double ridge    = Math.pow(Math.max(0.0, 1.0 - Math.abs(ridgeRaw)), 2.2);
+
+        // Мелкие холмы поверх всего
+        double hills = Math.max(0.0,
+                heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5));
+
+        double shape = continent * 0.55 + ridge * 0.55 + hills * 0.20;
+
+        int extra = (int) Math.round(shape * MAX_EXTRA_HEIGHT);
+        int h = BASE_SURFACE_Y + Math.max(0, extra);
+
+        // Запас неба над самым высоким пиком
+        return Math.min(h, LAYER_MAX_Y - PEAK_SKY_BUFFER);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -241,12 +302,16 @@ public class Layer1FlatGenerator {
                 }
                 boolean inColumnBase = colBaseRv > 0;
 
+                // ── Высота поверхности этой колонки (горы/холмы) ────────────────
+                int surfY    = surfaceHeight(wx, wz);
+                int dirtMinY = surfY - SURFACE_SKIN;
+
                 // ── Bedrock ───────────────────────────────────────────────────
                 pos.set(wx, LAYER_MIN_Y, wz);
                 chunk.setBlockState(pos, BS_BEDROCK, false);
 
                 // ── Основная колонка Y ────────────────────────────────────────
-                for (int y = LAYER_MIN_Y + 1; y < DIRT_MIN_Y; y++) {
+                for (int y = LAYER_MIN_Y + 1; y < dirtMinY; y++) {
                     pos.set(wx, y, wz);
                     chunk.setBlockState(pos,
                             resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
@@ -255,10 +320,10 @@ public class Layer1FlatGenerator {
                 }
 
                 // ── Dirt / Sand / Terracotta подслой ─────────────────────────
-                // SURFACE_Y (48) и SURFACE_Y-1 (47) принадлежат buildSurface:
-                // он определяет биом через region.getBiome() и пишет финальные блоки.
-                // Заглушки здесь не нужны — пишем только до SURFACE_Y - 2.
-                for (int y = DIRT_MIN_Y; y < SURFACE_Y - 1; y++) {
+                // surfY и surfY-1 принадлежат buildSurface: он определяет биом
+                // через region.getBiome() и пишет финальные блоки.
+                // Заглушки здесь не нужны — пишем только до surfY - 2.
+                for (int y = dirtMinY; y < surfY - 1; y++) {
                     pos.set(wx, y, wz);
                     BlockState fill;
                     if (isSandy) {
@@ -272,7 +337,12 @@ public class Layer1FlatGenerator {
                 }
 
                 // ── Воздух выше поверхности ───────────────────────────────────
-                for (int y = SURFACE_Y + 1; y <= LAYER_MAX_Y; y++) {
+                // Ограничиваем зачистку небольшим запасом над surfY, а не до
+                // самого LAYER_MAX_Y (300) — иначе на каждую колонку пришлось бы
+                // до ~250 лишних чтений/записей блоков впустую (ProtoChunk и так
+                // изначально заполнен воздухом там, где мы ничего не писали).
+                int airClearTop = Math.min(LAYER_MAX_Y, surfY + 16);
+                for (int y = surfY + 1; y <= airClearTop; y++) {
                     pos.set(wx, y, wz);
                     if (!chunk.getBlockState(pos).isAir()) {
                         chunk.setBlockState(pos, BS_AIR, false);

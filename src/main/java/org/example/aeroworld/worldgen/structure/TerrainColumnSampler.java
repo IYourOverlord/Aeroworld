@@ -62,6 +62,7 @@ public final class TerrainColumnSampler {
     // Минимальный зазор для SKY_FLOATING (структура не должна касаться рельефа)
     private static final int SKY_MIN_CLEARANCE = 8;
 
+    private final Layer1FlatGenerator  layer1;
     private final LowerIslandGenerator layer2;
     private final HighIslandGenerator  layer3;
     private final UpperIslandGenerator layer4;
@@ -79,10 +80,12 @@ public final class TerrainColumnSampler {
     // Кэш: key = packKey(x,z,0) → Y верхней поверхности острова (или -1)
     private final Map<Long, Integer> topYCache    = new HashMap<>();
 
-    public TerrainColumnSampler(LowerIslandGenerator layer2,
+    public TerrainColumnSampler(Layer1FlatGenerator  layer1,
+                                LowerIslandGenerator layer2,
                                 HighIslandGenerator  layer3,
                                 UpperIslandGenerator layer4,
                                 ChunkIslandCache     sharedChunkCache) {
+        this.layer1            = layer1;
         this.layer2           = layer2;
         this.layer3           = layer3;
         this.layer4           = layer4;
@@ -209,9 +212,10 @@ public final class TerrainColumnSampler {
             }
         }
 
-        // ── Layer 1: фиксированная поверхность ────────────────────────────────
-        if (isSolidAt(wx, Layer1FlatGenerator.SURFACE_Y, wz, 1)) {
-            return Layer1FlatGenerator.SURFACE_Y;
+        // ── Layer 1: реальная высота по колонке (горы/холмы), не константа ────
+        int surfY = layer1.surfaceHeight(wx, wz);
+        if (isSolidAt(wx, surfY, wz, 1)) {
+            return surfY;
         }
 
         return -1;
@@ -228,7 +232,7 @@ public final class TerrainColumnSampler {
      */
     private boolean isSolidAt(int wx, int y, int wz, int layer) {
         switch (layer) {
-            case 1: return y <= Layer1FlatGenerator.SURFACE_Y && y >= Layer1FlatGenerator.LAYER_MIN_Y;
+            case 1: return y <= layer1.surfaceHeight(wx, wz) && y >= Layer1FlatGenerator.LAYER_MIN_Y;
             case 2: return isLayer2Solid(wx, y, wz);
             case 3: return isLayer3Solid(wx, y, wz);
             case 4: return isLayer4Solid(wx, y, wz);
@@ -313,7 +317,7 @@ public final class TerrainColumnSampler {
     }
 
     private static int getLayerForY(int y) {
-        if (y <= 50)   return 1;
+        if (y <= Layer1FlatGenerator.LAYER_MAX_Y) return 1;
         if (y <= 420)  return 2;
         if (y <= 1120) return 3;
         return 4;

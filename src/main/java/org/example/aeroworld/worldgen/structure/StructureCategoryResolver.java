@@ -1,6 +1,10 @@
 package org.example.aeroworld.worldgen.structure;
 
 import net.minecraft.resources.ResourceLocation;
+import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
+import org.example.aeroworld.worldgen.layer.Layer1FlatGenerator;
+import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
+import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 
 import java.util.Locale;
 import java.util.Set;
@@ -110,22 +114,40 @@ public final class StructureCategoryResolver {
         return base;
     }
 
+    // Запас (в блоках) вокруг фактического диапазона острова, в пределах
+    // которого структура ещё считается "относящейся к этому слою".
+    private static final int LAYER_MARGIN = 20;
+
     /**
      * Попадает ли Y в диапазон одного из небесных слоёв (2, 3, 4)?
+     *
+     * <p>Границы взяты НАПРЯМУЮ из констант генераторов островов (не
+     * магические числа), с запасом {@link #LAYER_MARGIN} блоков с каждой
+     * стороны — так это не разъедется при изменении высоты слоёв.
      */
     public static boolean isIslandLayerY(int y) {
-        return (y >= 280 && y <= 420)   // Layer 2 ± запас
-            || (y >= 980 && y <= 1120)  // Layer 3 ± запас
-            || (y >= 1880 && y <= 2031);// Layer 4
+        return (y >= LowerIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
+                && y <= LowerIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN)   // Layer 2 ± запас
+            || (y >= HighIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
+                && y <= HighIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN)   // Layer 3 ± запас
+            || (y >= UpperIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
+                && y <= UpperIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN); // Layer 4 ± запас
     }
 
     /**
      * Попадает ли Y в пустое пространство между слоями?
      * Если да — структура гарантированно висит в воздухе.
+     *
+     * <p>Нижняя граница первого промежутка теперь {@link Layer1FlatGenerator#LAYER_MAX_Y}
+     * (300, с горами), а не устаревшая константа 50 — иначе после появления
+     * гор их вершины (до Y≈270) ошибочно считались бы "пустотой между слоями".
      */
     public static boolean isVoidGapY(int y) {
-        return (y > 50  && y < 280)    // между Layer1 и Layer2
-            || (y > 420 && y < 980)    // между Layer2 и Layer3
-            || (y > 1120 && y < 1880); // между Layer3 и Layer4
+        return (y > Layer1FlatGenerator.LAYER_MAX_Y
+                && y < LowerIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN)    // между Layer1 и Layer2
+            || (y > LowerIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
+                && y < HighIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN)    // между Layer2 и Layer3
+            || (y > HighIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
+                && y < UpperIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN);  // между Layer3 и Layer4
     }
 }
