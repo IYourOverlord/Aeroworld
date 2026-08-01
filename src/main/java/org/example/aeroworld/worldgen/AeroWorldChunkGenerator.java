@@ -450,10 +450,12 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                 // обращения к шуму. Тот же объект уже использован в fillFromNoise.
                 ResourceLocation biomeKey = biomeResolver.get(wx, wz);
 
-                // Высота поверхности ЭТОЙ конкретной колонки — обязательно та же
-                // функция, что использовалась в fillFromNoise/Layer1FlatGenerator,
-                // иначе покраска "уедет" от фактического рельефа.
-                int surfaceY = layer1.surfaceHeight(wx, wz);
+                // Профиль колонки — если это русло реки/озера, fillChunk уже
+                // покрасил дно песком и залил воду; красить поверх грассом не нужно.
+                Layer1FlatGenerator.ColumnProfile profile = layer1.columnProfile(wx, wz);
+                if (profile.waterY != -1) continue;
+
+                int surfaceY = profile.groundY;
                 int subsurfaceY = surfaceY - 1;
 
                 String path = biomeKey.getPath();

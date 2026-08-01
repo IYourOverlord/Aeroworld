@@ -26,6 +26,33 @@ public class Layer1FlatGenerator {
     // Не даём пикам подходить ближе чем на 30 блоков к потолку слоя —
     // чтобы оставался запас неба над самой высокой горой.
     private static final int PEAK_SKY_BUFFER  = 30;
+    // Амплитуда лёгкой холмистости на равнинах (там, где mountainMask≈0) —
+    // равнины не идеально плоские, но и не похожи на горы.
+    private static final int FLATLAND_BUMP    = 6;
+
+    // ── Реки / озёра ──────────────────────────────────────────────────────────
+    // Фиксированный уровень воды — чуть ниже базовой равнины (48), чтобы вода
+    // естественно скапливалась в низинах, а не резала склоны гор.
+    private static final int    WATER_LEVEL       = BASE_SURFACE_Y - 4; // 44
+    private static final double RIVER_HALF_WIDTH  = 0.045; // ширина полосы |noise|<X — река
+    private static final double LAKE_THRESHOLD    = 0.55;  // порог по шуму — озеро
+    private static final int    RIVER_BED_DEPTH   = 3;
+    private static final int    LAKE_BED_DEPTH    = 6;
+    // Реки/озёра карвятся только в низинах — там, где горная маска почти не
+    // подняла рельеф. Не резать русло сквозь склон горы.
+    private static final int    WATER_MAX_LAND_Y  = BASE_SURFACE_Y + 12;
+    // Ширина плавного перехода (в единицах шума) между сушей и водой —
+    // формирует пологий пляж/склон дна вместо резкого вертикального среза.
+    private static final double SHORE_BLEND       = 0.05;
+
+    // ── Океаны ────────────────────────────────────────────────────────────────
+    // Отдельный, гораздо более широкий шум (масштаб материков), чем
+    // реки/озёра. Ниже порога — открытый океан; глубина растёт по мере
+    // удаления от условного "берега" (порога), а не одинакова везде.
+    private static final double OCEAN_THRESHOLD  = -0.10; // ниже — океан
+    private static final double OCEAN_DEEP_AT    = -0.60; // тут уже максимальная глубина
+    private static final int    OCEAN_MIN_DEPTH  = 8;      // глубина у "берега"
+    private static final int    OCEAN_MAX_DEPTH  = 24;     // глубина в открытом океане
     // Толщина grass/dirt (или sand/sandstone, terracotta) под поверхностью,
     // которую buildSurface красит поверх (2 верхних блока) — как раньше.
     private static final int SURFACE_SKIN     = 3;
@@ -71,6 +98,8 @@ public class Layer1FlatGenerator {
     private static final BlockState BS_GRAVEL          = Blocks.GRAVEL         .defaultBlockState();
     private static final BlockState BS_DIRT            = Blocks.DIRT           .defaultBlockState();
     private static final BlockState BS_SANDSTONE       = Blocks.SANDSTONE      .defaultBlockState();
+    private static final BlockState BS_SAND            = Blocks.SAND           .defaultBlockState();
+    private static final BlockState BS_WATER           = Blocks.WATER          .defaultBlockState();
     private static final BlockState BS_TERRACOTTA      = Blocks.TERRACOTTA     .defaultBlockState();
     private static final BlockState BS_COAL_ORE        = Blocks.COAL_ORE       .defaultBlockState();
     private static final BlockState BS_IRON_ORE        = Blocks.IRON_ORE       .defaultBlockState();
@@ -121,10 +150,24 @@ public class Layer1FlatGenerator {
      * Высота поверхности (верхний твёрдый блок) в колонке (wx, wz).
      *
      * <p>Раньше это была константа {@code SURFACE_Y=48} — плоский мир.
-     * Теперь — настоящая шумовая heightmap, похожая по духу на ванильную:
-     * широкие горные массивы (continent), заострённые хребты (ridge,
-     * {@code 1 - |noise|}) и мелкие холмы (detail) смешиваются в общую форму.
-     * Значение ТОЛЬКО поднимается над базовым уровнем равнин
+     * Теперь — настоящая шумовая heightmap, ближе по духу к ванильной:
+     *
+     * <ol>
+     *   <li><b>mountainMask</b> — очень широкий (континентальный) шум,
+     *       пропущенный через smoothstep-порог. У большей части карты
+     *       он равен 0 (равнины/холмы), и только в отдельных РЕГИОНАХ
+     *       плавно поднимается к 1 (горный хребет). Это ключевое отличие
+     *       от первой версии: раньше хребты примешивались почти ВЕЗДЕ,
+     *       из-за чего весь мир выглядел одинаково зубчатым и скрывал
+     *       разницу между биомами.</li>
+     *   <li><b>ridge</b> — форма самого хребта ({@code 1-|noise|}), но
+     *       используется только там, где mountainMask > 0.</li>
+     *   <li><b>hills</b> — мелкая холмистость, применяется ВЕЗДЕ (и на
+     *       равнинах тоже) — небольшая амплитуда, чтобы равнины не были
+     *       идеально плоским столом, но горами не выглядели.</li>
+     * </ol>
+     *
+     * <p>Значение только поднимается над базовым уровнем равнин
      * ({@link #BASE_SURFACE_Y}) — вниз не проседает, чтобы не залезать
      * в пещерную систему (потолок пещеры максимум ~{@code CEIL_BASE_Y+CEIL_VAR}).
      *
@@ -135,26 +178,139 @@ public class Layer1FlatGenerator {
      * height-map запросы, покраска поверхности и валидация структур разъедутся
      * с фактическим рельефом, который рисует {@link #fillChunk}.
      */
-    public int surfaceHeight(int wx, int wz) {
-        // Широкие горные массивы (континентальный масштаб)
-        double continent = Math.max(0.0,
-                heightNoise.fbm2D(wx * 0.0012, wz * 0.0012, 5, 2.0, 0.5));
+    private int computeLandHeight(int wx, int wz) {
+        // ── Маска горных регионов ────────────────────────────────────────────
+        // Очень широкий масштаб (период ~4500 блоков) — горные хребты как
+        // отдельные "острова" на карте, а не примесь повсюду.
+        double maskRaw = heightNoise.fbm2D(wx * 0.00045, wz * 0.00045, 4, 2.0, 0.5);
+        // smoothstep(0.20, 0.62): ниже 0.20 → 0 (чистые равнины),
+        // выше 0.62 → 1 (полноценный хребет), плавный переход между ними.
+        double mountainMask = smoothstep(0.20, 0.62, maskRaw);
 
-        // Заострённые хребты: 1 - |noise| даёт "пик" там, где noise≈0
-        double ridgeRaw = heightNoise.fbm2D(wx * 0.004 + 9000, wz * 0.004 + 9000, 4, 2.0, 0.5);
-        double ridge    = Math.pow(Math.max(0.0, 1.0 - Math.abs(ridgeRaw)), 2.2);
+        // ── Форма хребта (используется только внутри горных регионов) ───────
+        double ridgeRaw = heightNoise.fbm2D(wx * 0.006 + 9000, wz * 0.006 + 9000, 4, 2.0, 0.5);
+        double ridge     = Math.pow(Math.max(0.0, 1.0 - Math.abs(ridgeRaw)), 2.0);
 
-        // Мелкие холмы поверх всего
-        double hills = Math.max(0.0,
-                heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5));
+        // ── Мелкая холмистость — везде, но с малой амплитудой ────────────────
+        double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
+        double hills01  = Math.max(0.0, hillsRaw); // 0..1
 
-        double shape = continent * 0.55 + ridge * 0.55 + hills * 0.20;
+        // Горная часть: полный размах MAX_EXTRA_HEIGHT, включена только
+        // пропорционально mountainMask.
+        int mountainExtra = (int) Math.round(mountainMask * ridge * MAX_EXTRA_HEIGHT);
 
-        int extra = (int) Math.round(shape * MAX_EXTRA_HEIGHT);
-        int h = BASE_SURFACE_Y + Math.max(0, extra);
+        // Равнинная холмистость: скромные ±FLATLAND_BUMP блоков, гасится
+        // внутри горных регионов (там рельеф и так задран хребтом).
+        int flatExtra = (int) Math.round(hills01 * FLATLAND_BUMP * (1.0 - mountainMask));
+
+        int h = BASE_SURFACE_Y + Math.max(0, mountainExtra) + flatExtra;
 
         // Запас неба над самым высоким пиком
         return Math.min(h, LAYER_MAX_Y - PEAK_SKY_BUFFER);
+    }
+
+    /** Классический smoothstep: 0 ниже edge0, 1 выше edge1, плавный переход между ними. */
+    private static double smoothstep(double edge0, double edge1, double x) {
+        double t = Math.max(0.0, Math.min(1.0, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */
+    public static final class ColumnProfile {
+        /** Верхний твёрдый блок (дно реки/озера, если waterY != -1; иначе сама поверхность). */
+        public final int groundY;
+        /** Y поверхности воды, или -1 если это суша. */
+        public final int waterY;
+
+        ColumnProfile(int groundY, int waterY) {
+            this.groundY = groundY;
+            this.waterY  = waterY;
+        }
+    }
+
+    /**
+     * Полный профиль колонки (wx, wz): высота дна + есть ли вода сверху.
+     *
+     * <p>Порядок проверки (первое совпадение побеждает):
+     * <ol>
+     *   <li><b>Океан</b> — самый широкий шум (масштаб материков). Ниже порога
+     *       {@link #OCEAN_THRESHOLD} — открытая вода, глубина растёт по мере
+     *       удаления от условного "берега" (не одинаковая яма везде).</li>
+     *   <li><b>Река</b> — полоса вдоль контура {@code |noise| < RIVER_HALF_WIDTH}
+     *       (тот же приём, что в дошумовых версиях ванили: горизонтали шума
+     *       как русло).</li>
+     *   <li><b>Озеро</b> — отдельный шум, где значение выше порога считается
+     *       "впадиной" и заливается водой.</li>
+     * </ol>
+     * Все три режутся ТОЛЬКО в низинах (mountainMask ≈ 0, {@code landHeight
+     * <= WATER_MAX_LAND_Y}) — ни один водоём не прорезает склон горы.
+     */
+    public ColumnProfile columnProfile(int wx, int wz) {
+        int landHeight = computeLandHeight(wx, wz);
+        if (landHeight > WATER_MAX_LAND_Y) {
+            return new ColumnProfile(landHeight, -1); // горы/холмы — суша всегда
+        }
+
+        // ── Океан (проверяется первым — самый широкий водоём) ────────────────
+        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+        // 0 на суше, 1 в открытом океане — плавный переход шириной SHORE_BLEND
+        // формирует пологий пляж/склон дна вместо резкого среза.
+        double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
+        if (oceanW > 0.0) {
+            double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
+            int bedDepth = OCEAN_MIN_DEPTH
+                    + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
+            int oceanFloorY = WATER_LEVEL - bedDepth;
+            int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
+            landHeight = blendedY; // пологий пляж выше уровня воды — суша чуть ниже
+        }
+
+        // ── Река ──────────────────────────────────────────────────────────────
+        double riverN    = heightNoise.fbm2D(wx * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
+        double riverDist = Math.abs(riverN);
+        // 1 в самом русле (riverDist≈0), 0 за пределами ширины+блендинга.
+        double riverW = smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDist);
+        if (riverW > 0.0) {
+            int riverFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
+            int blendedY = (int) Math.round(landHeight + (riverFloorY - landHeight) * riverW);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
+            landHeight = blendedY;
+        }
+
+        // ── Озеро ────────────────────────────────────────────────────────────
+        double lakeN = heightNoise.fbm2D(wx * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
+        double lakeW = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeN);
+        if (lakeW > 0.0) {
+            int lakeFloorY = Math.min(landHeight, WATER_LEVEL) - LAKE_BED_DEPTH;
+            int blendedY = (int) Math.round(landHeight + (lakeFloorY - landHeight) * lakeW);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
+            landHeight = blendedY;
+        }
+
+        return new ColumnProfile(landHeight, -1);
+    }
+
+    /**
+     * Высота дна (твёрдой поверхности) в колонке — для рек/озёр это дно
+     * ПОД водой, не уровень воды. См. {@link #columnProfile} за полным профилем.
+     *
+     * <p>ВАЖНО: этот метод — источник истины для высоты поверхности.
+     * {@code AeroWorldChunkGenerator} (getBaseHeight/getBaseColumn/
+     * applyLayer1Surface) и {@code TerrainColumnSampler} обязаны вызывать
+     * именно его (или {@link #columnProfile}), а не полагаться на старую
+     * константу SURFACE_Y — иначе height-map запросы, покраска поверхности
+     * и валидация структур разъедутся с фактическим рельефом, который рисует
+     * {@link #fillChunk}.
+     */
+    public int surfaceHeight(int wx, int wz) {
+        return columnProfile(wx, wz).groundY;
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -302,31 +458,49 @@ public class Layer1FlatGenerator {
                 }
                 boolean inColumnBase = colBaseRv > 0;
 
-                // ── Высота поверхности этой колонки (горы/холмы) ────────────────
-                int surfY    = surfaceHeight(wx, wz);
-                int dirtMinY = surfY - SURFACE_SKIN;
+                // ── Профиль колонки: дно + есть ли вода сверху (реки/озёра) ─────
+                ColumnProfile profile = columnProfile(wx, wz);
+                int groundY  = profile.groundY;
+                int waterY   = profile.waterY;   // -1 = суша
+                boolean isWaterCol = waterY != -1;
+                int dirtMinY = groundY - SURFACE_SKIN;
 
                 // ── Bedrock ───────────────────────────────────────────────────
                 pos.set(wx, LAYER_MIN_Y, wz);
                 chunk.setBlockState(pos, BS_BEDROCK, false);
 
                 // ── Основная колонка Y ────────────────────────────────────────
+                // ВАЖНО: для водных колонок (океан/озеро/река) используем
+                // СПЛОШНОЙ камень, а не resolveBlock. resolveBlock оставляет
+                // воздух внутри пещерной пустоты (между fY и cY), а дно
+                // водоёма часто попадает как раз в этот диапазон высот —
+                // без этой развилки песчаное дно повисало бы прямо над
+                // пещерой без опоры, и достаточно было сломать один блок,
+                // чтобы весь песок посыпался вниз (гравитационный каскад).
                 for (int y = LAYER_MIN_Y + 1; y < dirtMinY; y++) {
                     pos.set(wx, y, wz);
-                    chunk.setBlockState(pos,
-                            resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
-                                    inColumnBase, colTSq, colBaseRv),
-                            false);
+                    BlockState rock = isWaterCol
+                            ? (y < DEEPSLATE_TOP ? BS_DEEPSLATE : BS_STONE)
+                            : resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
+                                    inColumnBase, colTSq, colBaseRv);
+                    chunk.setBlockState(pos, rock, false);
                 }
 
                 // ── Dirt / Sand / Terracotta подслой ─────────────────────────
-                // surfY и surfY-1 принадлежат buildSurface: он определяет биом
-                // через region.getBiome() и пишет финальные блоки.
-                // Заглушки здесь не нужны — пишем только до surfY - 2.
-                for (int y = dirtMinY; y < surfY - 1; y++) {
+                // Русло реки/озера — всегда песчаное дно (как в ванили),
+                // независимо от биома. На суше — grass/dirt и т.п. по биому.
+                // groundY и groundY-1 (последние 2 блока перед поверхностью)
+                // для СУШИ принадлежат buildSurface (см. applyLayer1Surface) —
+                // заглушки здесь не нужны, пишем только до groundY - 2.
+                // Для ВОДЫ applyLayer1Surface этот столбец пропускает целиком,
+                // поэтому дно (включая последние 2 блока) кладём прямо тут.
+                int dirtLoopTop = isWaterCol ? groundY + 1 : groundY - 1;
+                for (int y = dirtMinY; y < dirtLoopTop; y++) {
                     pos.set(wx, y, wz);
                     BlockState fill;
-                    if (isSandy) {
+                    if (isWaterCol) {
+                        fill = BS_SAND;
+                    } else if (isSandy) {
                         fill = BS_SANDSTONE;
                     } else if (isBadlands) {
                         fill = BS_TERRACOTTA;
@@ -336,13 +510,22 @@ public class Layer1FlatGenerator {
                     chunk.setBlockState(pos, fill, false);
                 }
 
-                // ── Воздух выше поверхности ───────────────────────────────────
-                // Ограничиваем зачистку небольшим запасом над surfY, а не до
-                // самого LAYER_MAX_Y (300) — иначе на каждую колонку пришлось бы
-                // до ~250 лишних чтений/записей блоков впустую (ProtoChunk и так
+                // ── Вода поверх дна (реки/озёра) ─────────────────────────────
+                if (isWaterCol) {
+                    for (int y = groundY + 1; y <= waterY; y++) {
+                        pos.set(wx, y, wz);
+                        chunk.setBlockState(pos, BS_WATER, false);
+                    }
+                }
+
+                // ── Воздух выше поверхности/воды ─────────────────────────────
+                // Ограничиваем зачистку небольшим запасом, а не до самого
+                // LAYER_MAX_Y (300) — иначе на каждую колонку пришлось бы до
+                // ~250 лишних чтений/записей блоков впустую (ProtoChunk и так
                 // изначально заполнен воздухом там, где мы ничего не писали).
-                int airClearTop = Math.min(LAYER_MAX_Y, surfY + 16);
-                for (int y = surfY + 1; y <= airClearTop; y++) {
+                int topOfColumn = isWaterCol ? waterY : groundY;
+                int airClearTop = Math.min(LAYER_MAX_Y, topOfColumn + 16);
+                for (int y = topOfColumn + 1; y <= airClearTop; y++) {
                     pos.set(wx, y, wz);
                     if (!chunk.getBlockState(pos).isAir()) {
                         chunk.setBlockState(pos, BS_AIR, false);
