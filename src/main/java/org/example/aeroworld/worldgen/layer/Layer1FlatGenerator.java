@@ -282,8 +282,9 @@ public class Layer1FlatGenerator {
         }
 
         // ── Руды ──────────────────────────────────────────────────────────────
-        long base = seed ^ ((long)chunkX * 341873128712L + (long)chunkZ * 132897987541L);
-        generateOres(chunk, RandomSource.create(base ^ 0xCC01L), chunkX, chunkZ);
+        // Генерация руды отключена полностью.
+        // long base = seed ^ ((long)chunkX * 341873128712L + (long)chunkZ * 132897987541L);
+        // generateOres(chunk, RandomSource.create(base ^ 0xCC01L), chunkX, chunkZ);
     }
 
     // ══════════════════════════════════════════════════════════════════════════

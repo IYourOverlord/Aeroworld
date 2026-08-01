@@ -91,10 +91,25 @@ public class AeroBiomeSource extends BiomeSource {
 
     @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
-        return delegate.possibleBiomes().stream()
+        Stream<Holder<Biome>> vanillaIslandBiomes = delegate.possibleBiomes().stream()
                 .filter(h -> h.unwrapKey()
                         .map(k -> !isExcluded(k.location()))
                         .orElse(true));
+
+        Stream<Holder<Biome>> aeroClones = allTableBiomeNames()
+                .map(name -> AeroBiomeRegistryCache.get(ResourceLocation.fromNamespaceAndPath("aeroworld", name)))
+                .filter(Optional::isPresent)
+                .map(Optional::get);
+
+        return Stream.concat(vanillaIslandBiomes, aeroClones);
+    }
+
+    /** Все уникальные имена биомов из BIOME_TABLE и RARE_TABLE. */
+    private static Stream<String> allTableBiomeNames() {
+        return Stream.concat(
+                java.util.Arrays.stream(BIOME_TABLE).flatMap(java.util.Arrays::stream),
+                java.util.Arrays.stream(RARE_TABLE).flatMap(java.util.Arrays::stream)
+        ).distinct();
     }
 
     @Override
@@ -125,8 +140,17 @@ public class AeroBiomeSource extends BiomeSource {
 
         String biomeName = (r > RARE_THRESHOLD) ? RARE_TABLE[ti][hi] : BIOME_TABLE[ti][hi];
 
-        return findBiome(ResourceLocation.withDefaultNamespace(biomeName))
-                .orElseGet(() -> delegateWithSafety(x, 20, z, sampler));
+        // ВАЖНО: слой 1 (поверхность) теперь резолвится в наши клоны aeroworld:*,
+        // а НЕ в ванильные minecraft:*. У клонов NeoForge biome modifier
+        // (data/aeroworld/neoforge/biome_modifier/remove_ores.json) вырезал
+        // все placed_feature руды из generation settings ещё на этапе загрузки
+        // датапака — то есть руда физически не значится в списке фич биома
+        // и просто не пытается разместиться, а не "спавнится и потом чистится".
+        // Реальный minecraft:plains (используемый настоящим Overworld) при этом
+        // не тронут — модификатор целится только в тег #aeroworld:aero_biomes.
+        return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", biomeName))
+                .orElseGet(() -> findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains"))
+                        .orElseGet(() -> delegateWithSafety(x, 20, z, sampler)));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -140,6 +164,13 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     private Optional<Holder<Biome>> findBiome(ResourceLocation id) {
+        // Сначала — полный реестр биомов (единственное место, где видны
+        // наши клоны aeroworld:*, т.к. их нет в possibleBiomes() пресета).
+        Optional<Holder<Biome>> cached = AeroBiomeRegistryCache.get(id);
+        if (cached.isPresent()) return cached;
+
+        // Фолбэк — набор биомов ванильного multi-noise делегата
+        // (нужен для minecraft:* биомов островных слоёв, y > 12).
         return delegate.possibleBiomes().stream()
                 .filter(h -> h.unwrapKey().map(k -> k.location().equals(id)).orElse(false))
                 .findFirst();

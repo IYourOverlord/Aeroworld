@@ -16,6 +16,7 @@ import org.example.aeroworld.event.ProximityTriggerHandler;
 import org.example.aeroworld.registry.AeroRegistries;
 import org.example.aeroworld.structure.IslandStructureScheduler;
 import org.example.aeroworld.structure.StructureSizeCache;
+import org.example.aeroworld.worldgen.biome.AeroBiomeRegistryCache;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Rotation;
 import org.slf4j.Logger;
@@ -56,6 +57,11 @@ public class AeroWorld {
 
         // Инвалидация size-кеша при /reload (смена датапаков)
         NeoForge.EVENT_BUS.addListener(this::onAddReloadListeners);
+
+        // Заполняет AeroBiomeRegistryCache полным реестром биомов (включая
+        // клоны aeroworld:* без руды) сразу после старта сервера — до того,
+        // как начнётся генерация хотя бы одного чанка.
+        NeoForge.EVENT_BUS.addListener(AeroBiomeRegistryCache::onServerAboutToStart);
 
         // Game-bus слушатели
         NeoForge.EVENT_BUS.register(new ProximityTriggerHandler());

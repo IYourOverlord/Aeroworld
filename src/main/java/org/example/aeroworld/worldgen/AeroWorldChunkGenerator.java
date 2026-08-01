@@ -532,14 +532,15 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // В fillChunk через ChunkAccess запись за границы чанка некорректна.
         if (lowerIslands != null) lowerIslands.placeTreesInRegion(region, chunk);
 
-        layer1Ores.generateOres(chunk, RandomSource.create(base ^ 0x5555L), chunkX, chunkZ);
-        layer2Ores.generateOres(chunk, RandomSource.create(base ^ 0x2222L), chunkX, chunkZ);
-        layer3Ores.generateOres(chunk, RandomSource.create(base ^ 0x3333L), chunkX, chunkZ);
-        layer4Ores.generateOres(chunk, RandomSource.create(base ^ 0x4444L), chunkX, chunkZ);
+        // Генерация руды во всех слоях отключена полностью.
+        // layer1Ores.generateOres(chunk, RandomSource.create(base ^ 0x5555L), chunkX, chunkZ);
+        // layer2Ores.generateOres(chunk, RandomSource.create(base ^ 0x2222L), chunkX, chunkZ);
+        // layer3Ores.generateOres(chunk, RandomSource.create(base ^ 0x3333L), chunkX, chunkZ);
+        // layer4Ores.generateOres(chunk, RandomSource.create(base ^ 0x4444L), chunkX, chunkZ);
 
-        // Фильтр вызывается ТОЛЬКО для текущего чанка, без сканирования соседей.
-        // OreVeinHelper гарантирует что жилы не выходят за XZ-границу чанка,
-        // поэтому каждый чанк несёт ответственность только за себя.
+        // Фильтр теперь зачищает ВЕСЬ чанк по всей высоте от любой руды —
+        // как от кастомных генераторов (отключены выше), так и от ванильной
+        // руды, которую могла разместить super.applyBiomeDecoration().
         Layer1OreFilter.applyToChunk(chunk);
     }
 
