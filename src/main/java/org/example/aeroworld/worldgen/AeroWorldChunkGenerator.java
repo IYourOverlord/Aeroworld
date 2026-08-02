@@ -87,6 +87,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private final Layer3OreGenerator layer3Ores = new Layer3OreGenerator();
     private final Layer4OreGenerator layer4Ores = new Layer4OreGenerator();
     private Layer1SinkholeCarver sinkholeCarver;
+    private Layer1CoralScatter coralScatter;
 
     private long    worldSeed       = 12345L;
     private boolean seedInitialized = false;
@@ -160,6 +161,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         highIslands  = new HighIslandGenerator(seed, settings.layer3(), sharedChunkIslandCache);
         upperIslands = new UpperIslandGenerator(seed, settings.layer4(), sharedChunkIslandCache);
         sinkholeCarver = new Layer1SinkholeCarver(seed, lowerIslands, highIslands, upperIslands);
+        coralScatter   = new Layer1CoralScatter(seed);
 
         structureValidator = new StructureSupportValidator(layer1, lowerIslands, highIslands, upperIslands, sharedChunkIslandCache);
 
@@ -172,7 +174,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
         // oreFilteredChunks removed — no per-world state to reset here.
 
-        AeroBiomeSource updated = aeroSource.get().withSeed(seed);
+        AeroBiomeSource updated = aeroSource.get().withSeed(seed).withRingChecker(layer1);
         aeroSource.set(updated);
     }
 
@@ -376,6 +378,12 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
             // а не пытаться предсказать её заранее.
             if (sinkholeCarver != null) {
                 sinkholeCarver.carveChunk(chunk, chunkX, chunkZ);
+            }
+
+            // Кораллы на пляжном песке у кромки воды — тоже после основного
+            // рельефа, т.к. зависит от финальной раскладки песка/суши.
+            if (coralScatter != null) {
+                coralScatter.scatter(chunk, chunkX, chunkZ, layer1);
             }
         }
 

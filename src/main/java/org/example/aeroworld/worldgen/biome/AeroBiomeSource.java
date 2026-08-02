@@ -77,6 +77,11 @@ public class AeroBiomeSource extends BiomeSource {
     // ── Состояние ─────────────────────────────────────────────────────────────
     private final MultiNoiseBiomeSource delegate;
     private final long seed;
+    // Ссылка на Layer1FlatGenerator — нужна ТОЛЬКО чтобы узнать, находится ли
+    // точка внутри кольцевой горной долины (см. isInsideRingValley), и в этом
+    // случае гарантированно поставить туда forest/cherry_grove вместо обычной
+    // климатической таблицы. Может быть null до первого initializeWithSeed().
+    private final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
 
     // Шумовые генераторы — инициализируются один раз по seed
     private final AeroNoise tempNoise;
@@ -85,8 +90,14 @@ public class AeroBiomeSource extends BiomeSource {
 
     // ── Конструктор ───────────────────────────────────────────────────────────
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed) {
+        this(delegate, seed, null);
+    }
+
+    public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed,
+                           org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
         this.delegate  = delegate;
         this.seed      = seed;
+        this.layer1    = layer1;
         this.tempNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
         this.humNoise  = new AeroNoise(seed ^ 0x3E7F8A5BL);
         this.rareNoise = new AeroNoise(seed ^ 0xC1D2E3F4L);
@@ -103,7 +114,18 @@ public class AeroBiomeSource extends BiomeSource {
      */
     public AeroBiomeSource withSeed(long newSeed) {
         if (newSeed == this.seed) return this;
-        return new AeroBiomeSource(delegate, newSeed);
+        return new AeroBiomeSource(delegate, newSeed, this.layer1);
+    }
+
+    /**
+     * Привязывает Layer1FlatGenerator этого мира — после этого кольцевые
+     * горные долины гарантированно получают forest/cherry_grove.
+     * Вызывается из AeroWorldChunkGenerator.initializeWithSeed() сразу после
+     * создания layer1.
+     */
+    public AeroBiomeSource withRingChecker(org.example.aeroworld.worldgen.layer.Layer1FlatGenerator newLayer1) {
+        if (newLayer1 == this.layer1) return this;
+        return new AeroBiomeSource(delegate, this.seed, newLayer1);
     }
 
     @Override
@@ -138,6 +160,24 @@ public class AeroBiomeSource extends BiomeSource {
         // Слой 1: 2D-шум по seed мира (больше не зависим от sampler)
         double wx = x * 4.0;
         double wz = z * 4.0;
+
+        // Кольцевые горные долины (см. Layer1FlatGenerator) гарантированно
+        // получают forest/cherry_grove — независимо от того, что выпало бы
+        // по обычной климатической таблице ниже.
+        if (layer1 != null) {
+            int bwx = (int) wx;
+            int bwz = (int) wz;
+            if (layer1.isInsideRingValley(bwx, bwz)) {
+                String forced = layer1.ringValleyBiome(bwx, bwz);
+                Optional<Holder<Biome>> forcedBiome =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", forced));
+                if (forcedBiome.isPresent()) return forcedBiome.get();
+            } else if (layer1.isBeachColumn(bwx, bwz)) {
+                Optional<Holder<Biome>> beach =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "beach"));
+                if (beach.isPresent()) return beach.get();
+            }
+        }
 
         double temp = tempNoise.fbm2D(wx * TEMP_SCALE, wz * TEMP_SCALE, 4, 2.0, 0.5);
         double hum  = humNoise .fbm2D(wx * HUM_SCALE,  wz * HUM_SCALE,  4, 2.0, 0.5);

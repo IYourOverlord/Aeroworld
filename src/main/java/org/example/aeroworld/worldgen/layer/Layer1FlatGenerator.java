@@ -28,13 +28,35 @@ public class Layer1FlatGenerator {
     private static final int PEAK_SKY_BUFFER  = 30;
     // Амплитуда лёгкой холмистости на равнинах (там, где mountainMask≈0) —
     // равнины не идеально плоские, но и не похожи на горы.
-    private static final int FLATLAND_BUMP    = 6;
+    // Было 6 — почти незаметно с высоты полёта, подняли до 14.
+    private static final int FLATLAND_BUMP    = 14;
+
+    // ── Региональная структура хребтов (Terralith-подобная драма + WWOO-подобная
+    //    мягкость переходов) ──────────────────────────────────────────────────
+    // Мир поделён на крупные регионы CELL_SIZE×CELL_SIZE блоков. Каждый регион
+    // детерминированно (по хэшу от координат региона + seed) получает СВОЙ
+    // стиль хребта: либо параллельные гряды под случайным углом (через них
+    // хочется наводить мосты), либо кольцевой массив-кальдера (внутри — тихая
+    // низина под лес/вишнёвую рощу), плюс шанс на гигантское ущелье, режущее
+    // хребет насквозь. Сама ГРАНИЦА "гора/не гора" по-прежнему берётся из
+    // mountainMask (широкий fbm) — она отвечает за мягкость переходов;
+    // региональная система отвечает только за ФОРМУ хребта внутри горной зоны.
+    private static final double CELL_SIZE         = 640.0; // размер региона (блоков)
+    private static final double RIDGE_SPACING     = 140.0; // расстояние между параллельными гребнями
+    private static final double RIDGE_WARP_AMPL   = 55.0;  // "волнистость" линии гребня (блоков)
+    private static final double RING_WIDTH        = 45.0;  // толщина кольцевого хребта
+    private static final double RING_RADIUS_MIN   = 90.0;
+    private static final double RING_RADIUS_MAX   = 210.0;
+    private static final double RING_CHANCE       = 0.28;  // доля горных регионов — кольцевые кальдеры
+    private static final double CANYON_CHANCE     = 0.35;  // доля горных регионов — с гигантским ущельем
+    private static final double CANYON_HALF_WIDTH = 26.0;  // блоков от центра ущелья до края
+    private static final int    CANYON_FLOOR      = BASE_SURFACE_Y + 6; // дно ущелья — безопасно выше пещеры
 
     // ── Реки / озёра ──────────────────────────────────────────────────────────
     // Фиксированный уровень воды — чуть ниже базовой равнины (48), чтобы вода
     // естественно скапливалась в низинах, а не резала склоны гор.
     private static final int    WATER_LEVEL       = BASE_SURFACE_Y - 4; // 44
-    private static final double RIVER_HALF_WIDTH  = 0.045; // ширина полосы |noise|<X — река
+    private static final double RIVER_HALF_WIDTH  = 0.075; // ширина полосы |noise|<X — река (было 0.045, толще на ~3 блока с каждой стороны)
     private static final double LAKE_THRESHOLD    = 0.55;  // порог по шуму — озеро
     private static final int    RIVER_BED_DEPTH   = 3;
     private static final int    LAKE_BED_DEPTH    = 6;
@@ -43,7 +65,9 @@ public class Layer1FlatGenerator {
     private static final int    WATER_MAX_LAND_Y  = BASE_SURFACE_Y + 12;
     // Ширина плавного перехода (в единицах шума) между сушей и водой —
     // формирует пологий пляж/склон дна вместо резкого вертикального среза.
-    private static final double SHORE_BLEND       = 0.05;
+    // Было 0.05 — на небольших островах переход укладывался в 1-3 блока и
+    // выглядел как обрыв. Расширили втрое.
+    private static final double SHORE_BLEND       = 0.14;
 
     // ── Океаны ────────────────────────────────────────────────────────────────
     // Отдельный, гораздо более широкий шум (масштаб материков), чем
@@ -143,6 +167,102 @@ public class Layer1FlatGenerator {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Региональные параметры хребтов (детерминированный хэш от координат региона)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private static final class RegionParams {
+        final double angle;        // ориентация параллельных гряд, радианы
+        final boolean isRing;      // кольцевая кальдера вместо параллельных гряд
+        final double ringCx, ringCz, ringRadius;
+        final boolean hasCanyon;
+        final double canyonAngle, canyonOffset;
+        final boolean cherryGrove; // внутри кольца: вишнёвая роща вместо обычного леса
+
+        RegionParams(double angle, boolean isRing, double ringCx, double ringCz, double ringRadius,
+                     boolean hasCanyon, double canyonAngle, double canyonOffset, boolean cherryGrove) {
+            this.angle = angle;
+            this.isRing = isRing;
+            this.ringCx = ringCx;
+            this.ringCz = ringCz;
+            this.ringRadius = ringRadius;
+            this.hasCanyon = hasCanyon;
+            this.canyonAngle = canyonAngle;
+            this.canyonOffset = canyonOffset;
+            this.cherryGrove = cherryGrove;
+        }
+    }
+
+    /** Детерминированный 64-битный хэш от координат региона + мировой seed. */
+    private long cellHash(int cellX, int cellZ) {
+        long h = seed;
+        h = h * 6364136223846793005L + cellX * 1442695040888963407L + 0x9E3779B97F4A7C15L;
+        h = h * 6364136223846793005L + cellZ * 1442695040888963407L + 0x85EBCA6B_C2B2AE35L;
+        h ^= (h >>> 33);
+        h *= 0xFF51AFD7ED558CCDL;
+        h ^= (h >>> 33);
+        return h;
+    }
+
+    /** Псевдослучайное число 0..1 из хэша региона + "соль" (разные значения из одного региона). */
+    private static double hashDouble(long regionHash, int salt) {
+        long v = regionHash * 1000003L + salt * 0xC2B2AE3D27D4EB4FL;
+        v ^= (v >>> 29);
+        v *= 0xBF58476D1CE4E5B9L;
+        v ^= (v >>> 32);
+        return ((v >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
+    }
+
+    private RegionParams regionParams(int cellX, int cellZ) {
+        long h = cellHash(cellX, cellZ);
+        double angle = hashDouble(h, 1) * Math.PI;
+        boolean isRing = hashDouble(h, 2) < RING_CHANCE;
+        double ringCx = (cellX + 0.25 + hashDouble(h, 3) * 0.5) * CELL_SIZE;
+        double ringCz = (cellZ + 0.25 + hashDouble(h, 4) * 0.5) * CELL_SIZE;
+        double ringRadius = RING_RADIUS_MIN + hashDouble(h, 5) * (RING_RADIUS_MAX - RING_RADIUS_MIN);
+        boolean hasCanyon = hashDouble(h, 6) < CANYON_CHANCE;
+        double canyonAngle = hashDouble(h, 7) * Math.PI;
+        double canyonOffset = (hashDouble(h, 8) - 0.5) * CELL_SIZE * 0.5;
+        boolean cherryGrove = hashDouble(h, 9) < 0.5;
+        return new RegionParams(angle, isRing, ringCx, ringCz, ringRadius,
+                hasCanyon, canyonAngle, canyonOffset, cherryGrove);
+    }
+
+    /**
+     * true, если (wx, wz) находится ВНУТРИ низины кольцевой кальдеры (не на
+     * самом хребте, а в защищённой долине внутри него). Используется
+     * {@code AeroBiomeSource}, чтобы гарантированно поставить туда лес или
+     * вишнёвую рощу вместо того, что выпадет по обычной климатической таблице.
+     *
+     * <p>Повторяет ту же формулу (включая warp), что и {@link #computeLandHeight},
+     * чтобы граница биома совпадала с фактической границей низины в рельефе.
+     */
+    public boolean isInsideRingValley(int wx, int wz) {
+        int cellX = (int) Math.floor(wx / CELL_SIZE);
+        int cellZ = (int) Math.floor(wz / CELL_SIZE);
+        RegionParams p = regionParams(cellX, cellZ);
+        if (!p.isRing) return false;
+
+        double warp = heightNoise.fbm2D(wx * 0.003 + 41000, wz * 0.003 + 41000, 3, 2.0, 0.5)
+                * RIDGE_WARP_AMPL;
+        double dx = wx - p.ringCx + warp;
+        double dz = wz - p.ringCz + warp;
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        return dist < p.ringRadius - RING_WIDTH;
+    }
+
+    /**
+     * Какой биом должен быть внутри кольцевой долины в этой точке — "forest"
+     * или "cherry_grove". Вызывать только после {@link #isInsideRingValley}
+     * вернувшего true (иначе результат не имеет смысла — точка не в кольце).
+     * Один и тот же выбор для всей долины целиком (не покольонный микс).
+     */
+    public String ringValleyBiome(int wx, int wz) {
+        int cellX = (int) Math.floor(wx / CELL_SIZE);
+        int cellZ = (int) Math.floor(wz / CELL_SIZE);
+        return regionParams(cellX, cellZ).cherryGrove ? "cherry_grove" : "forest";
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Высота поверхности (горы/холмы) — многооктавный шум
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -183,27 +303,73 @@ public class Layer1FlatGenerator {
         // Очень широкий масштаб (период ~4500 блоков) — горные хребты как
         // отдельные "острова" на карте, а не примесь повсюду.
         double maskRaw = heightNoise.fbm2D(wx * 0.00045, wz * 0.00045, 4, 2.0, 0.5);
-        // smoothstep(0.20, 0.62): ниже 0.20 → 0 (чистые равнины),
-        // выше 0.62 → 1 (полноценный хребет), плавный переход между ними.
-        double mountainMask = smoothstep(0.20, 0.62, maskRaw);
+        // Было smoothstep(0.20, 0.62, ...) — при реальном разбросе fbm-шума
+        // порог почти никогда не пробивался, и горы практически не появлялись
+        // (весь мир выглядел одноуровневым). Понизили порог входа в переход.
+        // Диапазон чуть шире прежнего — мягче переход (WWOO-подобно).
+        double mountainMask = smoothstep(-0.20, 0.35, maskRaw);
 
-        // ── Форма хребта (используется только внутри горных регионов) ───────
-        double ridgeRaw = heightNoise.fbm2D(wx * 0.006 + 9000, wz * 0.006 + 9000, 4, 2.0, 0.5);
-        double ridge     = Math.pow(Math.max(0.0, 1.0 - Math.abs(ridgeRaw)), 2.0);
+        // ── Региональные параметры (какой у ЭТОГО хребта стиль) ─────────────
+        int cellX = (int) Math.floor(wx / CELL_SIZE);
+        int cellZ = (int) Math.floor(wz / CELL_SIZE);
+        RegionParams p = regionParams(cellX, cellZ);
+
+        // "Волнистость" линии гребня — гряды не идеально прямые, а натурально
+        // изгибаются, оставаясь при этом параллельными друг другу.
+        double warp = heightNoise.fbm2D(wx * 0.003 + 41000, wz * 0.003 + 41000, 3, 2.0, 0.5)
+                * RIDGE_WARP_AMPL;
+
+        double ridge;
+        boolean insideRingValley = false;
+        if (p.isRing) {
+            // ── Кольцевая кальдера: хребет по окружности радиуса ringRadius,
+            //    внутри — низина (место под лес/вишнёвую рощу), снаружи —
+            //    обычная горная местность.
+            double dx = wx - p.ringCx + warp;
+            double dz = wz - p.ringCz + warp;
+            double dist = Math.sqrt(dx * dx + dz * dz);
+            ridge = Math.max(0.0, 1.0 - Math.abs(dist - p.ringRadius) / RING_WIDTH);
+            ridge = Math.pow(ridge, 1.6);
+            insideRingValley = dist < p.ringRadius - RING_WIDTH;
+        } else {
+            // ── Параллельные гряды: проекция координат на ось, перпендикулярную
+            //    направлению хребтов (angle), даёт периодическую волну —
+            //    гребень/долина/гребень/долина, все параллельны друг другу.
+            double u = wx * Math.cos(p.angle) + wz * Math.sin(p.angle) + warp;
+            double band = Math.cos(u * (2.0 * Math.PI / RIDGE_SPACING));
+            ridge = Math.pow(Math.max(0.0, band), 1.8);
+        }
+
+        // Внутри кольцевой низины гор почти нет — там должна быть тихая
+        // долина, а не подножие кольцевого хребта.
+        double localMountainMask = insideRingValley ? mountainMask * 0.12 : mountainMask;
 
         // ── Мелкая холмистость — везде, но с малой амплитудой ────────────────
         double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
         double hills01  = Math.max(0.0, hillsRaw); // 0..1
 
         // Горная часть: полный размах MAX_EXTRA_HEIGHT, включена только
-        // пропорционально mountainMask.
-        int mountainExtra = (int) Math.round(mountainMask * ridge * MAX_EXTRA_HEIGHT);
+        // пропорционально localMountainMask.
+        int mountainExtra = (int) Math.round(localMountainMask * ridge * MAX_EXTRA_HEIGHT);
 
         // Равнинная холмистость: скромные ±FLATLAND_BUMP блоков, гасится
         // внутри горных регионов (там рельеф и так задран хребтом).
-        int flatExtra = (int) Math.round(hills01 * FLATLAND_BUMP * (1.0 - mountainMask));
+        int flatExtra = (int) Math.round(hills01 * FLATLAND_BUMP * (1.0 - localMountainMask));
 
         int h = BASE_SURFACE_Y + Math.max(0, mountainExtra) + flatExtra;
+
+        // ── Гигантское ущелье, режущее хребет насквозь ───────────────────────
+        // Только в регионах с hasCanyon, и только там, где реально есть гора
+        // (mountainMask масштабирует эффект — на равнине каньон невидим).
+        if (p.hasCanyon && mountainMask > 0.05) {
+            double cu = wx * Math.cos(p.canyonAngle) + wz * Math.sin(p.canyonAngle) - p.canyonOffset + warp;
+            double canyonDist = Math.abs(cu);
+            if (canyonDist < CANYON_HALF_WIDTH) {
+                double t = 1.0 - canyonDist / CANYON_HALF_WIDTH; // 1 в центре, 0 на краях
+                double carve = Math.pow(t, 1.4) * mountainMask;
+                h = (int) Math.round(h - (h - CANYON_FLOOR) * carve);
+            }
+        }
 
         // Запас неба над самым высоким пиком
         return Math.min(h, LAYER_MAX_Y - PEAK_SKY_BUFFER);
@@ -213,6 +379,31 @@ public class Layer1FlatGenerator {
     private static double smoothstep(double edge0, double edge1, double x) {
         double t = Math.max(0.0, Math.min(1.0, (x - edge0) / (edge1 - edge0)));
         return t * t * (3.0 - 2.0 * t);
+    }
+
+    /**
+     * true, если (wx, wz) — часть переходной пляжной полосы у океана: суша,
+     * которая уже находится в зоне блендинга с океаном (см. columnProfile),
+     * но ещё не ушла под воду. Использует ТОЧНО ту же формулу, что и
+     * океанская ветка columnProfile, чтобы граница биома "aeroworld:beach"
+     * (см. AeroBiomeSource) совпадала с фактической полосой песка в рельефе.
+     */
+    public boolean isBeachColumn(int wx, int wz) {
+        int landHeight = computeLandHeight(wx, wz);
+        if (landHeight > WATER_MAX_LAND_Y) return false; // горы — пляжа не бывает
+
+        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+        double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
+        if (oceanW <= 0.15) return false; // далеко от океана вообще
+
+        double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
+        int bedDepth = OCEAN_MIN_DEPTH + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
+        int oceanFloorY = WATER_LEVEL - bedDepth;
+        int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
+
+        // Ещё суша (не ушла под уровень воды) — значит именно пляжная кромка,
+        // а не сам океан (тот уже отдельно обрабатывается в columnProfile).
+        return blendedY >= WATER_LEVEL;
     }
 
     /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */
