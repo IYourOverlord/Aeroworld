@@ -22,7 +22,9 @@ public class Layer1FlatGenerator {
     private static final int BASE_SURFACE_Y   = 48;
     // Насколько высоко шум может поднять рельеф над базовой высотой равнин.
     // 48 + 180 = 228 в самых высоких точках, плюс запас неба до LAYER_MAX_Y.
-    private static final int MAX_EXTRA_HEIGHT = 180;
+    // Было 180 — в сочетании с узкими крутыми гребнями давало "лезвия" вместо
+    // массивов. Понизили для более сдержанного профиля.
+    private static final int MAX_EXTRA_HEIGHT = 130;
     // Не даём пикам подходить ближе чем на 30 блоков к потолку слоя —
     // чтобы оставался запас неба над самой высокой горой.
     private static final int PEAK_SKY_BUFFER  = 30;
@@ -42,7 +44,7 @@ public class Layer1FlatGenerator {
     // mountainMask (широкий fbm) — она отвечает за мягкость переходов;
     // региональная система отвечает только за ФОРМУ хребта внутри горной зоны.
     private static final double CELL_SIZE         = 640.0; // размер региона (блоков)
-    private static final double RIDGE_SPACING     = 140.0; // расстояние между параллельными гребнями
+    private static final double RIDGE_SPACING     = 340.0; // расстояние между параллельными гребнями (было 200 — всё ещё слишком часто)
     private static final double RIDGE_WARP_AMPL   = 55.0;  // "волнистость" линии гребня (блоков)
     private static final double RING_WIDTH        = 45.0;  // толщина кольцевого хребта
     private static final double RING_RADIUS_MIN   = 90.0;
@@ -300,49 +302,75 @@ public class Layer1FlatGenerator {
      */
     private int computeLandHeight(int wx, int wz) {
         // ── Маска горных регионов ────────────────────────────────────────────
-        // Очень широкий масштаб (период ~4500 блоков) — горные хребты как
-        // отдельные "острова" на карте, а не примесь повсюду.
-        double maskRaw = heightNoise.fbm2D(wx * 0.00045, wz * 0.00045, 4, 2.0, 0.5);
-        // Было smoothstep(0.20, 0.62, ...) — при реальном разбросе fbm-шума
-        // порог почти никогда не пробивался, и горы практически не появлялись
-        // (весь мир выглядел одноуровневым). Понизили порог входа в переход.
-        // Диапазон чуть шире прежнего — мягче переход (WWOO-подобно).
-        double mountainMask = smoothstep(-0.20, 0.35, maskRaw);
+        // ВАЖНО: тут было 4 октавы шума — высокочастотные октавы добавляют
+        // мелкую рябь ПОВЕРХ широкой формы, и из-за неё порог smoothstep
+        // мог пересекаться очень быстро в пространстве (за 20-40 блоков),
+        // даже когда общая структура шума широкая. Математически переход
+        // гладкий (непрерывная производная), но ФИЗИЧЕСКИ узкий — именно
+        // это и выглядело как отвесная стена на стыке горы/равнины.
+        // Убрали октавы (осталось 2 — только базовая широкая форма) и сильно
+        // расширили сам диапазон smoothstep, чтобы переход растягивался на
+        // многие сотни блоков, а не десятки.
+        double maskRaw = heightNoise.fbm2D(wx * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
+        // Доп. страховка: усредняем маску с несколькими точками вокруг
+        // (дешёвый box-blur, всего 2 октавы на каждый сэмпл) — это ЖЁСТКО
+        // ограничивает, насколько быстро маска может измениться в пространстве,
+        // независимо от того, что делает сам шум локально.
+        double blurR = 40.0;
+        double maskN = heightNoise.fbm2D(wx * 0.00035, (wz + blurR) * 0.00035, 2, 2.0, 0.5);
+        double maskS = heightNoise.fbm2D(wx * 0.00035, (wz - blurR) * 0.00035, 2, 2.0, 0.5);
+        double maskE = heightNoise.fbm2D((wx + blurR) * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
+        double maskW = heightNoise.fbm2D((wx - blurR) * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
+        double maskBlurred = (maskRaw + maskN + maskS + maskE + maskW) / 5.0;
+        double mountainMask = smoothstep(-0.45, 0.65, maskBlurred);
 
-        // ── Региональные параметры (какой у ЭТОГО хребта стиль) ─────────────
-        int cellX = (int) Math.floor(wx / CELL_SIZE);
-        int cellZ = (int) Math.floor(wz / CELL_SIZE);
-        RegionParams p = regionParams(cellX, cellZ);
+        // ── "Волнистость" линии гребня — ДВА масштаба искажения вместо одного:
+        //    крупный (плавные извивы всей линии) + мелкий (рваность, ломает
+        //    ощущение "идеальной параболы"). Складываются вместе.
+        double warpBig = heightNoise.fbm2D(wx * 0.0012 + 41000, wz * 0.0012 + 41000, 3, 2.0, 0.5)
+                * (RIDGE_WARP_AMPL * 1.6);
+        double warpSmall = heightNoise.fbm2D(wx * 0.008 + 61000, wz * 0.008 + 61000, 3, 2.0, 0.5)
+                * (RIDGE_WARP_AMPL * 0.35);
+        double warp = warpBig + warpSmall;
 
-        // "Волнистость" линии гребня — гряды не идеально прямые, а натурально
-        // изгибаются, оставаясь при этом параллельными друг другу.
-        double warp = heightNoise.fbm2D(wx * 0.003 + 41000, wz * 0.003 + 41000, 3, 2.0, 0.5)
-                * RIDGE_WARP_AMPL;
+        // ── Форма гребня — билинейный бленд 4 СОСЕДНИХ региональных ячеек
+        //    (а не жёсткий выбор одной ближайшей). Раньше на границе двух
+        //    ячеек стиль хребта (угол/тип) менялся МГНОВЕННО — визуально это
+        //    и был тот самый "обрезанный" перепад высот. Теперь между углами
+        //    ячейки идёт плавный smoothstep-переход по обеим осям.
+        double cellFx = frac(wx / CELL_SIZE);
+        double cellFz = frac(wz / CELL_SIZE);
+        double fadeX = smoothstep(0.0, 1.0, cellFx);
+        double fadeZ = smoothstep(0.0, 1.0, cellFz);
 
-        double ridge;
-        boolean insideRingValley = false;
-        if (p.isRing) {
-            // ── Кольцевая кальдера: хребет по окружности радиуса ringRadius,
-            //    внутри — низина (место под лес/вишнёвую рощу), снаружи —
-            //    обычная горная местность.
-            double dx = wx - p.ringCx + warp;
-            double dz = wz - p.ringCz + warp;
-            double dist = Math.sqrt(dx * dx + dz * dz);
-            ridge = Math.max(0.0, 1.0 - Math.abs(dist - p.ringRadius) / RING_WIDTH);
-            ridge = Math.pow(ridge, 1.6);
-            insideRingValley = dist < p.ringRadius - RING_WIDTH;
-        } else {
-            // ── Параллельные гряды: проекция координат на ось, перпендикулярную
-            //    направлению хребтов (angle), даёт периодическую волну —
-            //    гребень/долина/гребень/долина, все параллельны друг другу.
-            double u = wx * Math.cos(p.angle) + wz * Math.sin(p.angle) + warp;
-            double band = Math.cos(u * (2.0 * Math.PI / RIDGE_SPACING));
-            ridge = Math.pow(Math.max(0.0, band), 1.8);
-        }
+        int cx0 = (int) Math.floor(wx / CELL_SIZE);
+        int cz0 = (int) Math.floor(wz / CELL_SIZE);
+        int cx1 = cx0 + 1;
+        int cz1 = cz0 + 1;
 
-        // Внутри кольцевой низины гор почти нет — там должна быть тихая
-        // долина, а не подножие кольцевого хребта.
-        double localMountainMask = insideRingValley ? mountainMask * 0.12 : mountainMask;
+        RidgeSample s00 = sampleRidge(cx0, cz0, wx, wz, warp);
+        RidgeSample s10 = sampleRidge(cx1, cz0, wx, wz, warp);
+        RidgeSample s01 = sampleRidge(cx0, cz1, wx, wz, warp);
+        RidgeSample s11 = sampleRidge(cx1, cz1, wx, wz, warp);
+
+        double ridgeTop    = lerp(s00.ridge, s10.ridge, fadeX);
+        double ridgeBottom = lerp(s01.ridge, s11.ridge, fadeX);
+        double ridge = lerp(ridgeTop, ridgeBottom, fadeZ);
+
+        double ringTop    = lerp(s00.insideRing ? 1.0 : 0.0, s10.insideRing ? 1.0 : 0.0, fadeX);
+        double ringBottom = lerp(s01.insideRing ? 1.0 : 0.0, s11.insideRing ? 1.0 : 0.0, fadeX);
+        double insideRingFactor = lerp(ringTop, ringBottom, fadeZ); // 0..1
+
+        // ── Неровность гребня вдоль его длины — отдельный шум, ломает
+        //    идеально гладкую симметричную "параболу". Часть гребня выше
+        //    и острее, часть — размыта и почти сходит на нет, как в природе.
+        double roughRaw = heightNoise.fbm2D(wx * 0.006 + 81000, wz * 0.006 + 81000, 2, 2.0, 0.5);
+        double roughFactor = 0.5 + 0.5 * Math.max(0.0, roughRaw); // 0.5..1.0
+        ridge *= roughFactor;
+
+        // Внутри кольцевой низины гор почти нет (пропорционально степени
+        // "внутренности" — тоже плавно, без резкой границы).
+        double localMountainMask = mountainMask * (1.0 - insideRingFactor * 0.88);
 
         // ── Мелкая холмистость — везде, но с малой амплитудой ────────────────
         double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
@@ -361,8 +389,14 @@ public class Layer1FlatGenerator {
         // ── Гигантское ущелье, режущее хребет насквозь ───────────────────────
         // Только в регионах с hasCanyon, и только там, где реально есть гора
         // (mountainMask масштабирует эффект — на равнине каньон невидим).
-        if (p.hasCanyon && mountainMask > 0.05) {
-            double cu = wx * Math.cos(p.canyonAngle) + wz * Math.sin(p.canyonAngle) - p.canyonOffset + warp;
+        // Каньон не блендится между ячейками (это единичная резкая структура,
+        // не форма гребня) — берём параметры БЛИЖАЙШЕЙ ячейки (round, не floor).
+        int nearCellX = (int) Math.round(wx / CELL_SIZE);
+        int nearCellZ = (int) Math.round(wz / CELL_SIZE);
+        RegionParams nearest = regionParams(nearCellX, nearCellZ);
+        if (nearest.hasCanyon && mountainMask > 0.05) {
+            double cu = wx * Math.cos(nearest.canyonAngle) + wz * Math.sin(nearest.canyonAngle)
+                    - nearest.canyonOffset + warp;
             double canyonDist = Math.abs(cu);
             if (canyonDist < CANYON_HALF_WIDTH) {
                 double t = 1.0 - canyonDist / CANYON_HALF_WIDTH; // 1 в центре, 0 на краях
@@ -379,6 +413,45 @@ public class Layer1FlatGenerator {
     private static double smoothstep(double edge0, double edge1, double x) {
         double t = Math.max(0.0, Math.min(1.0, (x - edge0) / (edge1 - edge0)));
         return t * t * (3.0 - 2.0 * t);
+    }
+
+    private static double frac(double x) {
+        return x - Math.floor(x);
+    }
+
+    private static double lerp(double a, double b, double t) {
+        return a + (b - a) * t;
+    }
+
+    /** Результат расчёта формы гребня ОДНОЙ региональной ячейки в точке (wx, wz). */
+    private record RidgeSample(double ridge, boolean insideRing) {}
+
+    /**
+     * Форма гребня, КАК ЕСЛИ БЫ вся карта использовала стиль ячейки
+     * (cellX, cellZ) — используется как один из 4 углов билинейного бленда
+     * в {@link #computeLandHeight}, а не как самостоятельное значение.
+     */
+    private RidgeSample sampleRidge(int cellX, int cellZ, int wx, int wz, double warp) {
+        RegionParams p = regionParams(cellX, cellZ);
+        if (p.isRing) {
+            // ── Кольцевая кальдера: хребет по окружности радиуса ringRadius,
+            //    внутри — низина (место под лес/вишнёвую рощу).
+            double dx = wx - p.ringCx + warp;
+            double dz = wz - p.ringCz + warp;
+            double dist = Math.sqrt(dx * dx + dz * dz);
+            double ridge = Math.max(0.0, 1.0 - Math.abs(dist - p.ringRadius) / RING_WIDTH);
+            ridge = Math.pow(ridge, 1.1);
+            boolean insideRing = dist < p.ringRadius - RING_WIDTH;
+            return new RidgeSample(ridge, insideRing);
+        } else {
+            // ── Параллельные гряды: проекция координат на ось, перпендикулярную
+            //    направлению хребтов (angle), даёт периодическую волну —
+            //    гребень/долина/гребень/долина, все параллельны друг другу.
+            double u = wx * Math.cos(p.angle) + wz * Math.sin(p.angle) + warp;
+            double band = Math.cos(u * (2.0 * Math.PI / RIDGE_SPACING));
+            double ridge = Math.pow(Math.max(0.0, band), 1.15);
+            return new RidgeSample(ridge, false);
+        }
     }
 
     /**
