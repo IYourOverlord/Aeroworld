@@ -75,6 +75,31 @@ public class Layer1FlatGenerator {
     // выглядел как обрыв. Расширили втрое.
     private static final double SHORE_BLEND       = 0.14;
 
+    // ── Ступенчатый пляжный карниз ───────────────────────────────────────────
+    // Раньше высота суши у самой кромки воды бралась прямо из landHeight
+    // (с обычной микрохолмистостью FLATLAND_BUMP) и просто линейно
+    // сводилась к уровню дна океана через oceanW/SHORE_BLEND. У холмистого
+    // landHeight рядом с водой уже сами по себе есть перепады высоты в
+    // 1-3 блока — на песке они читаются как ступеньки прямо на пляже.
+    //
+    // Промежуточные версии держали весь карниз ровно на WATER_LEVEL — но
+    // это визуально читается как береговая линия, просто отодвинутая на
+    // несколько блоков вглубь суши (тот же уровень воды, просто дальше),
+    // а не как настоящее понижение рельефа. Нужен трёхступенчатый профиль:
+    //   1) BEACH_EDGE_WIDTH  (1 блок)  — вровень с водой, касается воды.
+    //   2) BEACH_LEDGE_WIDTH (6 блоков) — на 1 блок НИЖЕ, чем п.1 —
+    //      то есть уже под уровнем воды на 1 блок. Здесь вода, вытесняющая
+    //      песок, может растекаться по нижнему слою, не упираясь в стену.
+    //   3) BEACH_LEDGE_BLEND (плавный подъём) — от уровня п.2 обратно к
+    //      обычной высоте суши.
+    private static final double BEACH_EDGE_WIDTH   = 1.0;  // блоков — первая линия, вровень с водой
+    private static final double BEACH_LEDGE_WIDTH  = 6.0;  // блоков — карниз на 1 блок ниже первой линии
+    private static final double BEACH_LEDGE_BLEND  = 3.0;  // блоков дальше — переход от карниза к обычному рельефу
+    // Высота первой линии — вровень с водой (соприкасается с ней).
+    private static final int    BEACH_EDGE_Y       = WATER_LEVEL;
+    // Высота карниза — на 1 блок НИЖЕ первой линии, то есть уже под водой.
+    private static final int    BEACH_LEDGE_Y      = WATER_LEVEL - 1;
+
     // ── Океаны ────────────────────────────────────────────────────────────────
     // Отдельный, гораздо более широкий шум (масштаб материков), чем
     // реки/озёра. Ниже порога — открытый океан; глубина растёт по мере
@@ -767,6 +792,76 @@ public class Layer1FlatGenerator {
     }
 
     /**
+     * Прижимает высоту суши рядом с кромкой воды к ступенчатому профилю —
+     * см. константы BEACH_EDGE_ BEACH_LEDGE_*. Вызывать сразу после
+     * вычисления blendedY (суша, ещё выше уровня воды) в океан/река/озеро
+     * ветках {@link #columnProfile}.
+     *
+     * <p>Расстояние до уреза воды оценивается ГЕОМЕТРИЧЕСКИ (в блоках по
+     * XZ), а не по перепаду высоты — иначе на крутом берегу высотная
+     * эвристика недооценивала бы расстояние. Оценка через локальный
+     * градиент weight: если между точкой (wx,wz) и точкой в 1 блоке в
+     * сторону суши weight падает на Δw, то grad = Δw / 1, и полный переход
+     * (Δw=1) занимает примерно 1/grad блоков — линеаризация плавного
+     * smoothstep-порога.
+     *
+     * <p>Профиль по расстоянию от уреза, три зоны подряд:
+     * <ol>
+     *   <li>0..BEACH_EDGE_WIDTH (1 блок) — высота ЖЁСТКО BEACH_EDGE_Y,
+     *       вровень с водой, касается её.</li>
+     *   <li>BEACH_EDGE_WIDTH..+BEACH_LEDGE_WIDTH (6 блоков) — высота
+     *       ЖЁСТКО BEACH_LEDGE_Y, на 1 блок ниже первой линии (уже под
+     *       уровнем воды) — сюда вода может растекаться, если займёт
+     *       место песка, не упираясь в стену.</li>
+     *   <li>дальше, на протяжении BEACH_LEDGE_BLEND — плавный (smoothstep)
+     *       подъём от BEACH_LEDGE_Y обратно к обычной высоте суши.</li>
+     * </ol>
+     *
+     * @param blendedY  высота суши, уже посчитанная обычным способом
+     * @param weight    вес воды в этой точке (0..1) — oceanW/riverW/lakeW
+     * @param gradX     |d(weight)/dx| — конечная разность на 1 блок по X
+     * @param gradZ     |d(weight)/dz| — конечная разность на 1 блок по Z.
+     *                  Берём ПОЛНУЮ 2D-норму градиента, а не только вдоль
+     *                  X — если береговая линия идёт по диагонали, градиент
+     *                  вдоль одной оси занижен относительно истинного
+     *                  градиента по нормали к берегу, и оценка расстояния
+     *                  через него завышается (карниз "растягивается" на
+     *                  местности сильнее заданных 6 блоков — именно это
+     *                  было видно на скриншоте: широкая плоская зона у
+     *                  воды без чёткой ступени).
+     **/
+    private int applyBeachFlat(int blendedY, double weight, double gradX, double gradZ) {
+        double gradPerBlock = Math.sqrt(gradX * gradX + gradZ * gradZ);
+        if (weight <= 0.0 || gradPerBlock <= 1e-6) return blendedY;
+
+        // Расстояние вглубь суши от точки, где weight пересекает "линию
+        // уреза" — см. подробное объяснение в javadoc выше.
+        double distanceBlocks = weight / gradPerBlock;
+
+        if (distanceBlocks <= BEACH_EDGE_WIDTH) {
+            // Первая линия — вровень с водой, касается её напрямую.
+            return Math.min(blendedY, BEACH_EDGE_Y);
+        }
+
+        double ledgeEnd = BEACH_EDGE_WIDTH + BEACH_LEDGE_WIDTH;
+        if (distanceBlocks <= ledgeEnd) {
+            // Карниз — жёстко на 1 блок ниже первой линии, никакого
+            // смешивания с исходной blendedY. Это и даёт видимое
+            // понижение рельефа сразу после береговой кромки, а не просто
+            // отодвинутую вглубь линию воды.
+            return Math.min(blendedY, BEACH_LEDGE_Y);
+        }
+
+        double blendDist = distanceBlocks - ledgeEnd; // 0 сразу после карниза
+        if (blendDist >= BEACH_LEDGE_BLEND) return blendedY; // уже обычный рельеф
+
+        // Плавный подъём от карниза к обычной высоте суши.
+        double riseT = smoothstep(0.0, BEACH_LEDGE_BLEND, blendDist);
+        int blended = (int) Math.round(lerp(BEACH_LEDGE_Y, blendedY, riseT));
+        return Math.min(blendedY, blended);
+    }
+
+    /**
      * Полный профиль колонки (wx, wz): высота дна + есть ли вода сверху.
      *
      * <p>Порядок проверки (первое совпадение побеждает):
@@ -803,6 +898,21 @@ public class Layer1FlatGenerator {
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
+            // Оцениваем полный 2D-градиент |∇oceanW| конечными разностями
+            // на 1 блок по X и по Z — линеаризация плавного smoothstep-
+            // порога. Только X было недостаточно: на диагональной
+            // береговой линии это занижало градиент и растягивало карниз
+            // сильнее заданной ширины (см. правку от предыдущего теста).
+            double oceanNdx = heightNoise.fbm2D((wx + 1) * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+            double oceanWdx = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanNdx);
+            double oceanGradX = Math.abs(oceanW - oceanWdx);
+            double oceanNdz = heightNoise.fbm2D(wx * 0.0009 + 90000, (wz + 1) * 0.0009 + 90000, 5, 2.0, 0.5);
+            double oceanWdz = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanNdz);
+            double oceanGradZ = Math.abs(oceanW - oceanWdz);
+            blendedY = applyBeachFlat(blendedY, oceanW, oceanGradX, oceanGradZ);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
             landHeight = blendedY; // пологий пляж выше уровня воды — суша чуть ниже
         }
 
@@ -817,6 +927,18 @@ public class Layer1FlatGenerator {
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
+            double riverNdx    = heightNoise.fbm2D((wx + 1) * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
+            double riverDistDx = Math.abs(riverNdx);
+            double riverWdx = smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDistDx);
+            double riverGradX = Math.abs(riverW - riverWdx);
+            double riverNdz    = heightNoise.fbm2D(wx * 0.003 + 50000, (wz + 1) * 0.003 + 50000, 4, 2.0, 0.5);
+            double riverDistDz = Math.abs(riverNdz);
+            double riverWdz = smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDistDz);
+            double riverGradZ = Math.abs(riverW - riverWdz);
+            blendedY = applyBeachFlat(blendedY, riverW, riverGradX, riverGradZ);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
             landHeight = blendedY;
         }
 
@@ -826,6 +948,16 @@ public class Layer1FlatGenerator {
         if (lakeW > 0.0) {
             int lakeFloorY = Math.min(landHeight, WATER_LEVEL) - LAKE_BED_DEPTH;
             int blendedY = (int) Math.round(landHeight + (lakeFloorY - landHeight) * lakeW);
+            if (blendedY < WATER_LEVEL) {
+                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            }
+            double lakeNdx = heightNoise.fbm2D((wx + 1) * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
+            double lakeWdx = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeNdx);
+            double lakeGradX = Math.abs(lakeW - lakeWdx);
+            double lakeNdz = heightNoise.fbm2D(wx * 0.006 + 70000, (wz + 1) * 0.006 + 70000, 3, 2.0, 0.5);
+            double lakeWdz = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeNdz);
+            double lakeGradZ = Math.abs(lakeW - lakeWdz);
+            blendedY = applyBeachFlat(blendedY, lakeW, lakeGradX, lakeGradZ);
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
