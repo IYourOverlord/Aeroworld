@@ -1,0 +1,22 @@
+{
+  "replace": false,
+  "values": [
+    "aeroworld:desert",
+    "aeroworld:ice_spikes",
+    "aeroworld:meadow",
+    "aeroworld:old_growth_pine_taiga",
+    "aeroworld:old_growth_spruce_taiga",
+    "aeroworld:plains",
+    "aeroworld:savanna",
+    "aeroworld:savanna_plateau",
+    "aeroworld:snowy_plains",
+    "aeroworld:snowy_taiga",
+    "aeroworld:stony_shore",
+    "aeroworld:sunflower_plains",
+    "aeroworld:taiga",
+    "aeroworld:windswept_forest",
+    "aeroworld:windswept_gravelly_hills",
+    "aeroworld:windswept_hills",
+    "aeroworld:windswept_savanna"
+  ]
+}

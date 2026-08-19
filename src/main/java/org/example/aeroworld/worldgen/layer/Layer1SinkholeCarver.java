@@ -37,8 +37,10 @@ public class Layer1SinkholeCarver {
 
     // ── Форма воронки ────────────────────────────────────────────────────────
     // Радиус воронки = radius острова над ней × этот коэффициент.
-    private static final double RADIUS_FACTOR  = 0.55;
-    private static final double MIN_RADIUS     = 4.0;
+    // Увеличено в 3 раза по запросу (было 0.55 / MIN_RADIUS=4.0) — воронки
+    // теперь заметно шире острова над ними, а не чуть уже его.
+    private static final double RADIUS_FACTOR  = 1.65;
+    private static final double MIN_RADIUS     = 12.0;
     // Неровность краёв (0..1 от радиуса) — карстовый, а не идеально круглый вид.
     private static final double EDGE_NOISE_AMP = 0.35;
 
@@ -125,14 +127,24 @@ public class Layer1SinkholeCarver {
     }
 
     private List<IslandData> collectNearby(int chunkX, int chunkZ) {
+        // Запас поиска чанков увеличен: после ×3 увеличения RADIUS_FACTOR
+        // воронка (baseR = radius × 1.65, до ×2.23 с учётом edge jitter)
+        // может быть заметно ШИРЕ самого острова над ней — searchRadius,
+        // рассчитанный от размера острова, больше не гарантирует, что мы
+        // найдём остров, чья воронка всё ещё накрывает этот чанк, но чей
+        // центр уже далеко за пределами старого радиуса поиска. Добавляем
+        // фиксированный запас в чанках (воронка растёт максимум на
+        // ~2.23× радиуса острова, что на практике укладывается в
+        // дополнительные 4 чанка поиска для любого разумного maxRadius).
+        final int EXTRA_SEARCH_CHUNKS = 4;
         List<IslandData> out = new ArrayList<>();
-        for (int[] c : layer2.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer2.getSearchRadius() + 1)) {
+        for (int[] c : layer2.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer2.getSearchRadius() + EXTRA_SEARCH_CHUNKS)) {
             out.add(layer2.getIslandData(c[0], c[1]));
         }
-        for (int[] c : layer3.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer3.getSearchRadius() + 1)) {
+        for (int[] c : layer3.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer3.getSearchRadius() + EXTRA_SEARCH_CHUNKS)) {
             out.add(layer3.getIslandData(c[0], c[1]));
         }
-        for (int[] c : layer4.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer4.getSearchRadius() + 1)) {
+        for (int[] c : layer4.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, layer4.getSearchRadius() + EXTRA_SEARCH_CHUNKS)) {
             out.add(layer4.getIslandData(c[0], c[1]));
         }
         return out;

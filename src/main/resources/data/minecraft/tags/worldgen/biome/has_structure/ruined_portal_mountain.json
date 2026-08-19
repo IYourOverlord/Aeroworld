@@ -1,0 +1,12 @@
+{
+  "replace": false,
+  "values": [
+    "aeroworld:frozen_peaks",
+    "aeroworld:jagged_peaks",
+    "aeroworld:stony_peaks",
+    "aeroworld:windswept_forest",
+    "aeroworld:windswept_gravelly_hills",
+    "aeroworld:windswept_hills",
+    "aeroworld:windswept_savanna"
+  ]
+}

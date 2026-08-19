@@ -1,0 +1,14 @@
+{
+  "replace": false,
+  "values": [
+    "aeroworld:cold_ocean",
+    "aeroworld:deep_cold_ocean",
+    "aeroworld:deep_frozen_ocean",
+    "aeroworld:deep_lukewarm_ocean",
+    "aeroworld:deep_ocean",
+    "aeroworld:frozen_ocean",
+    "aeroworld:lukewarm_ocean",
+    "aeroworld:ocean",
+    "aeroworld:warm_ocean"
+  ]
+}

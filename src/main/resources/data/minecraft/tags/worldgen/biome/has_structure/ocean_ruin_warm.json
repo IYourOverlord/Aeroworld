@@ -1,0 +1,8 @@
+{
+  "replace": false,
+  "values": [
+    "aeroworld:deep_lukewarm_ocean",
+    "aeroworld:lukewarm_ocean",
+    "aeroworld:warm_ocean"
+  ]
+}

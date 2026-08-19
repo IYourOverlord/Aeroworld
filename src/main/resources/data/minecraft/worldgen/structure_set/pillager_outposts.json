@@ -1,0 +1,14 @@
+{
+  "structures": [
+    {
+      "structure": "minecraft:pillager_outpost",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 165745296,
+    "spacing": 26,
+    "separation": 7
+  }
+}

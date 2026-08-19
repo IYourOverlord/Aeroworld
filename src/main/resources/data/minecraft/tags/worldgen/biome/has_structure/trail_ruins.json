@@ -1,0 +1,15 @@
+{
+  "replace": false,
+  "values": [
+    "aeroworld:frozen_peaks",
+    "aeroworld:grove",
+    "aeroworld:jagged_peaks",
+    "aeroworld:jungle",
+    "aeroworld:meadow",
+    "aeroworld:old_growth_pine_taiga",
+    "aeroworld:old_growth_spruce_taiga",
+    "aeroworld:snowy_slopes",
+    "aeroworld:sparse_jungle",
+    "aeroworld:stony_peaks"
+  ]
+}

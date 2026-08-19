@@ -30,6 +30,7 @@ import org.example.aeroworld.worldgen.feature.*;
 import org.example.aeroworld.worldgen.layer.*;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
+import org.example.aeroworld.worldgen.structure.StructureCavityCarver;
 import org.example.aeroworld.worldgen.structure.ValidationResult;
 
 import java.util.List;
@@ -373,6 +374,17 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                 && chunkMaxY >= Layer1FlatGenerator.LAYER_MIN_Y) {
             layer1.fillChunk(chunk, chunkX, chunkZ, biomeResolver);
 
+            // Вырезаем воздушную полость под структурами (см. StructureCavityCarver) —
+            // ДО этого момента рельеф Layer 1 залил сплошной камень везде, включая
+            // объём будущих jigsaw-структур (деревни, ancient_city и т.д.). Сама
+            // структура печатается позже, в applyBiomeDecoration → super() →
+            // StructureStart.placeInChunk, но заменяет камень только там, где стоят
+            // её пьесы — пространство МЕЖДУ пьесами (естественно открытое в
+            // оригинале) иначе остаётся сплошным камнем, и к каждой комнате
+            // приходится прокапываться. Carve здесь даёт структуре ту же "уже
+            // пористую" почву, которую в ваниле обеспечивает density-рельеф.
+            StructureCavityCarver.carveForChunk(chunk, structureManager, Layer1FlatGenerator.LAYER_MAX_Y);
+
             // Карстовые воронки под островами слоёв 2/3/4 — карвятся ПОСЛЕ
             // основного рельефа слоя 1, чтобы "прорезать" уже готовую землю,
             // а не пытаться предсказать её заранее.
@@ -561,6 +573,11 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // ─────────────────────────────────────────────────────────────────────
 
         super.applyBiomeDecoration(region, chunk, structureManager);
+
+        // Крупные, кучные, разноплановые деревья на вершинах гор Layer 1 —
+        // ванильные горные биомы почти безлесные, это намеренная кастомная
+        // декорация поверх обычной. См. javadoc MountainForestScatter.
+        MountainForestScatter.scatterForChunk(wgr, this, chunk, layer1, worldSeed);
 
         // Листья деревьев (±2 блока по XZ) — пишем через WorldGenLevel (регион 3×3 чанка).
         // В fillChunk через ChunkAccess запись за границы чанка некорректна.

@@ -1,0 +1,19 @@
+{
+  "structures": [
+    {
+      "structure": "minecraft:mineshaft_mesa",
+      "weight": 1
+    },
+    {
+      "structure": "minecraft:mineshaft",
+      "weight": 9
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 0,
+    "spacing": 1,
+    "separation": 0,
+    "frequency": 0.006
+  }
+}

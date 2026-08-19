@@ -20,6 +20,10 @@ public class Layer1FlatGenerator {
     // Базовая высота равнин (старое фиксированное значение SURFACE_Y) —
     // теперь это лишь ОТПРАВНАЯ точка шумовой heightmap, а не потолок.
     private static final int BASE_SURFACE_Y   = 48;
+    /** Публичный дубликат {@link #BASE_SURFACE_Y} — используется вне класса
+     *  (например {@link MountainForestScatter}) для определения "высоты горы"
+     *  относительно базового уровня равнины. */
+    public static final int PUBLIC_BASE_SURFACE_Y = BASE_SURFACE_Y;
     // Насколько высоко шум может поднять рельеф над базовой высотой равнин.
     // Было 130 — при таком размахе даже "полная" гора выглядела как высокий
     // холм, а не гора, и визуально сливалась с предгорьями. Подняли до 190,
@@ -1060,6 +1064,61 @@ public class Layer1FlatGenerator {
         // Ещё суша (не ушла под уровень воды) — значит именно пляжная кромка,
         // а не сам океан (тот уже отдельно обрабатывается в columnProfile).
         return blendedY >= WATER_LEVEL;
+    }
+
+    /**
+     * Есть ли в точке (wx, wz) открытая океанская вода (не пляж, не река,
+     * не мелкое озеро)? Использует ТОЧНО ту же формулу, что и океанская
+     * ветка columnProfile/isBeachColumn — чтобы биом "aeroworld:*_ocean"
+     * (см. AeroBiomeSource) совпадал с фактической водой в рельефе.
+     *
+     * <p>Только чтение — не изменяет и не дублирует физическую генерацию
+     * рельефа, лишь переиспользует тот же 2D-шум для решения о биоме.
+     */
+    public boolean isOceanColumn(int wx, int wz) {
+        int landHeight = computeLandHeight(wx, wz);
+        if (landHeight > WATER_MAX_LAND_Y) return false;
+
+        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+        double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
+        if (oceanW <= 0.0) return false;
+
+        double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
+        int bedDepth = OCEAN_MIN_DEPTH + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
+        int oceanFloorY = WATER_LEVEL - bedDepth;
+        int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
+        return blendedY < WATER_LEVEL;
+    }
+
+    /**
+     * Глубина океана в точке (wx, wz) как доля 0..1 (0 = мелко/у берега,
+     * 1 = максимальная глубина OCEAN_DEEP_AT). Вызывать только после
+     * {@link #isOceanColumn} вернувшего true — иначе результат не имеет
+     * смысла. Используется чтобы отличить обычный "aeroworld:ocean" от
+     * "aeroworld:deep_ocean" по фактической глубине воды в этой точке.
+     */
+    public double oceanDepth01(int wx, int wz) {
+        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+        return smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
+    }
+
+    /**
+     * Есть ли в точке (wx, wz) река? Та же формула, что использует
+     * columnProfile для русла реки — только чтение, для решения о биоме.
+     */
+    public boolean isRiverColumn(int wx, int wz) {
+        int landHeight = computeLandHeight(wx, wz);
+        if (landHeight > WATER_MAX_LAND_Y) return false;
+        if (isOceanColumn(wx, wz)) return false; // океан имеет приоритет, как и в columnProfile
+
+        double riverN    = heightNoise.fbm2D(wx * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
+        double riverDist = Math.abs(riverN);
+        double riverW = smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDist);
+        if (riverW <= 0.0) return false;
+
+        int riverFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
+        int blendedY = (int) Math.round(landHeight + (riverFloorY - landHeight) * riverW);
+        return blendedY < WATER_LEVEL;
     }
 
     /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */

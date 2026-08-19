@@ -150,6 +150,24 @@ public class AeroBiomeSource extends BiomeSource {
         return Stream.concat(aeroClones, vanillaFallback);
     }
 
+    // ── Deep Dark (подземный биом, нужен для ancient_city) ───────────────────
+    // y здесь — noise-координата в четвертях блока (y*4 ≈ блок). Ancient City
+    // в ваниле всегда генерируется на Y=-51 (реже -64..-8), внутри deep_dark.
+    // Раньше deep_dark был жёстко исключён (см. isExcluded) и НИКОГДА не
+    // выбирался ни в одной точке мира — из-за этого ancient_city физически
+    // не мог заспавниться (structure привязана к биому напрямую, не через
+    // has_structure-тег). Теперь выделяем под deep_dark отдельный диапазон
+    // глубин Layer 1 и редкий 2D-шум — независимо от температуры/влажности,
+    // как и в ваниле (deep_dark не зависит от климата).
+    private static final int DEEP_DARK_MAX_Y_BLOCK = -8;
+    private static final int DEEP_DARK_MIN_Y_BLOCK = Layer1FlatGeneratorMinYHolder.MIN_Y;
+    private static final double DEEP_DARK_NOISE_SCALE = 0.006;
+    private static final double DEEP_DARK_THRESHOLD   = 0.30; // ~15% покрытия глубин
+
+    private static final class Layer1FlatGeneratorMinYHolder {
+        static final int MIN_Y = org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MIN_Y;
+    }
+
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
         // Островные слои (Y > 12 noise units ≈ блок 50+) — делегируем ванили
@@ -160,6 +178,22 @@ public class AeroBiomeSource extends BiomeSource {
         // Слой 1: 2D-шум по seed мира (больше не зависим от sampler)
         double wx = x * 4.0;
         double wz = z * 4.0;
+
+        // ── Deep Dark: только на подземной глубине (Y от -64 до -8) ──────────
+        int blockY = y * 4;
+        if (blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
+            double dd = tempNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+            if (dd > DEEP_DARK_THRESHOLD) {
+                Optional<Holder<Biome>> deepDark =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "deep_dark"));
+                if (deepDark.isPresent()) return deepDark.get();
+            }
+        }
+
+        // Считаем температуру заранее — нужна и для океана (вариант по
+        // температуре: warm/lukewarm/ocean/cold/frozen), и для обычной
+        // климатической таблицы ниже. Одно вычисление, не дублируем fbm2D.
+        double temp = tempNoise.fbm2D(wx * TEMP_SCALE, wz * TEMP_SCALE, 4, 2.0, 0.5);
 
         // Кольцевые горные долины (см. Layer1FlatGenerator) гарантированно
         // получают forest/cherry_grove — независимо от того, что выпало бы
@@ -173,13 +207,42 @@ public class AeroBiomeSource extends BiomeSource {
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", forced));
                 if (forcedBiome.isPresent()) return forcedBiome.get();
             } else if (layer1.isBeachColumn(bwx, bwz)) {
+                // Пляж переходит либо в обычный "beach", либо в "snowy_beach"
+                // в холодных широтах — как и в ваниле (snowy_beach требует
+                // холодного климата). Раньше snowy_beach был недостижим нигде.
+                String beachName = (temp < -0.32) ? "snowy_beach" : "beach";
                 Optional<Holder<Biome>> beach =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "beach"));
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", beachName));
                 if (beach.isPresent()) return beach.get();
+            } else if (layer1.isOceanColumn(bwx, bwz)) {
+                // ── Океан: раньше физически была вода, но биом всегда
+                // резолвился в сухопутный (plains/forest/...) — из-за этого
+                // ВСЕ ocean-биомы были недостижимы, и структуры, привязанные
+                // к ним напрямую (ocean_monument, ocean_ruin_warm/cold,
+                // shipwreck), не могли заспавниться. Теперь биом синхронизирован
+                // с фактической водой из columnProfile через isOceanColumn/
+                // oceanDepth01 (та же формула, читается, не дублирует рельеф).
+                double depth01 = layer1.oceanDepth01(bwx, bwz);
+                boolean deep = depth01 > 0.55; // ближе к OCEAN_DEEP_AT → deep_*
+                String oceanName;
+                if (temp < -0.32)      oceanName = deep ? "deep_frozen_ocean"   : "frozen_ocean";
+                else if (temp < -0.096) oceanName = deep ? "deep_cold_ocean"    : "cold_ocean";
+                else if (temp <  0.096) oceanName = deep ? "deep_ocean"         : "ocean";
+                else if (temp <  0.32)  oceanName = deep ? "deep_lukewarm_ocean": "lukewarm_ocean";
+                else                    oceanName = "warm_ocean"; // тёплый океан не бывает "deep_" в ваниле
+                Optional<Holder<Biome>> ocean =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", oceanName));
+                if (ocean.isPresent()) return ocean.get();
+            } else if (layer1.isRiverColumn(bwx, bwz)) {
+                // Река: раньше физическая вода была, а биом — нет.
+                // frozen_river в холодных широтах, иначе обычная river.
+                String riverName = (temp < -0.32) ? "frozen_river" : "river";
+                Optional<Holder<Biome>> river =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", riverName));
+                if (river.isPresent()) return river.get();
             }
         }
 
-        double temp = tempNoise.fbm2D(wx * TEMP_SCALE, wz * TEMP_SCALE, 4, 2.0, 0.5);
         double hum  = humNoise .fbm2D(wx * HUM_SCALE,  wz * HUM_SCALE,  4, 2.0, 0.5);
         double rare = rareNoise.fbm2D(wx * TEMP_SCALE * 1.5, wz * HUM_SCALE * 1.5, 2, 2.0, 0.5);
 
