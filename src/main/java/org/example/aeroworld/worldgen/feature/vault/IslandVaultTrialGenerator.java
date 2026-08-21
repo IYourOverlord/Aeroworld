@@ -2,10 +2,12 @@ package org.example.aeroworld.worldgen.feature.vault;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.AeroWorld;
@@ -83,14 +85,14 @@ public final class IslandVaultTrialGenerator {
         for (int i = 0; i < tier.vaultCount(); i++) {
             BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
-            placeVault(region, pos, loot.vaultLootNormal(), rng);
+            placeVault(region, pos, loot);
             placed.add(pos);
         }
 
         for (int i = 0; i < tier.trialSpawnerCount(); i++) {
             BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
-            placeTrialSpawner(region, pos, loot, rng);
+            placeTrialSpawner(region, pos, loot);
             placed.add(pos);
         }
 
@@ -173,69 +175,125 @@ public final class IslandVaultTrialGenerator {
 
     // ── Постановка блоков ────────────────────────────────────────────────────
 
-    private static void placeVault(WorldGenLevel region, BlockPos pos,
-                                    ResourceLocation lootNormal, RandomSource rng) {
-        region.setBlock(pos, BS_VAULT, 3);
-
+    private static void placeVault(WorldGenLevel region, BlockPos pos, VaultTrialLootConfig loot) {
         CompoundTag config = new CompoundTag();
-        config.putString("loot_table", lootNormal.toString());
+        config.putString("loot_table", loot.vaultLootNormal().toString());
+        // key_item по умолчанию и так "minecraft:trial_key" — задаём явно, чтобы
+        // не зависеть от дефолтов ванили при возможных будущих изменениях.
+        CompoundTag keyItem = new CompoundTag();
+        keyItem.putString("id", "minecraft:trial_key");
+        keyItem.putInt("count", 1);
+        config.put("key_item", keyItem);
 
         CompoundTag root = new CompoundTag();
         root.put("config", config);
-        // "server_data.loot_table_to_eject_when_ominous" не заполняем: чтение
-        // произойдёт только когда рядом окажется игрок с Bad Omen — ванильная
-        // логика Vault сама подставит ominous-лут при активации. Здесь достаточно
-        // указать base loot_table; для ominous-варианта данный остров может
-        // (опционально) переопределить loot через отдельный вызов placeVault
-        // с другим ResourceLocation при более высоком тире — см. вызывающий код.
+        // "server_data"/"shared_data" намеренно не заполняем — ваниль инициализирует
+        // их дефолтными значениями (VaultServerData/VaultSharedData) при первом тике
+        // блок-сущности, до этого поля не нужны для базовой функциональности.
 
-        applyBlockEntityTag(region, pos, root);
+        placeBlockWithEntity(region, pos, BS_VAULT, root);
     }
 
-    private static void placeTrialSpawner(WorldGenLevel region, BlockPos pos,
-                                           VaultTrialLootConfig loot, RandomSource rng) {
-        region.setBlock(pos, BS_TRIAL_SPAWNER, 3);
-
+    private static void placeTrialSpawner(WorldGenLevel region, BlockPos pos, VaultTrialLootConfig loot) {
         CompoundTag root = new CompoundTag();
 
-        CompoundTag normalConfig = new CompoundTag();
-        normalConfig.put("loot_tables_to_eject", lootTablesToEjectList(loot.trialLootNormal()));
-
-        CompoundTag ominousConfig = new CompoundTag();
-        ominousConfig.put("loot_tables_to_eject", lootTablesToEjectList(loot.trialLootOminous()));
+        CompoundTag normalConfig = buildSpawnerConfig(loot.trialLootNormal(), loot.spawnPotentials(), false);
+        CompoundTag ominousConfig = buildSpawnerConfig(loot.trialLootOminous(), loot.spawnPotentials(), true);
 
         root.put("normal_config", normalConfig);
         root.put("ominous_config", ominousConfig);
 
-        applyBlockEntityTag(region, pos, root);
-    }
-
-    private static net.minecraft.nbt.ListTag lootTablesToEjectList(ResourceLocation lootTable) {
-        net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
-        CompoundTag entry = new CompoundTag();
-        entry.putString("data", lootTable.toString());
-        entry.putInt("weight", 1);
-        list.add(entry);
-        return list;
+        placeBlockWithEntity(region, pos, BS_TRIAL_SPAWNER, root);
     }
 
     /**
-     * Сливает NBT-тег в только что поставленный blockEntity.
+     * Строит полный trial spawner configuration compound (не просто loot_tables_to_eject).
      *
-     * <p>{@code EntityBlock.newBlockEntity} + {@code loadWithComponents} — способ,
-     * не зависящий от конкретного класса blockEntity (VaultBlockEntity/
-     * TrialSpawnerBlockEntity), поэтому переиспользуем для обоих блоков и для
-     * любых будущих блок-сущностей без изменения этого метода.</p>
+     * <p>Без {@code spawn_potentials} список мобов пуст, и спавнер никогда никого
+     * не призывает — тогда его невозможно "победить", и он никогда не переходит
+     * в фазу выдачи наград. Это обязательное поле, а не декоративное.</p>
+     *
+     * @param lootTable        loot table для {@code loot_tables_to_eject}
+     * @param spawnPotentials  список мобов (переиспользуется из {@link VaultTrialLootConfig})
+     * @param ominous          зловещий конфиг спавнит немного больше мобов одновременно
      */
-    private static void applyBlockEntityTag(WorldGenLevel region, BlockPos pos, CompoundTag tag) {
-        BlockEntity be = region.getBlockEntity(pos);
-        if (be == null) {
+    private static CompoundTag buildSpawnerConfig(ResourceLocation lootTable,
+                                                    List<VaultTrialLootConfig.SpawnPotential> spawnPotentials,
+                                                    boolean ominous) {
+        CompoundTag cfg = new CompoundTag();
+
+        ListTag potentials = new ListTag();
+        for (VaultTrialLootConfig.SpawnPotential sp : spawnPotentials) {
+            CompoundTag entry = new CompoundTag();
+            entry.putInt("weight", sp.weight());
+            CompoundTag data = new CompoundTag();
+            CompoundTag entity = new CompoundTag();
+            entity.putString("id", sp.entityId().toString());
+            data.put("entity", entity);
+            entry.put("data", data);
+            potentials.add(entry);
+        }
+        cfg.put("spawn_potentials", potentials);
+
+        ListTag ejectList = new ListTag();
+        CompoundTag ejectEntry = new CompoundTag();
+        ejectEntry.putString("data", lootTable.toString());
+        ejectEntry.putInt("weight", 1);
+        ejectList.add(ejectEntry);
+        cfg.put("loot_tables_to_eject", ejectList);
+
+        // Явно задаём остальные боевые параметры, а не полагаемся только на
+        // дефолты ванили — чтобы поведение было предсказуемо одинаковым
+        // независимо от версии/дефолтов конкретного билда игры.
+        cfg.putInt("spawn_range", 4);
+        cfg.putFloat("total_mobs", ominous ? 9.0f : 6.0f);
+        cfg.putFloat("simultaneous_mobs", ominous ? 3.0f : 2.0f);
+        cfg.putFloat("total_mobs_added_per_player", 2.0f);
+        cfg.putFloat("simultaneous_mobs_added_per_player", 1.0f);
+        cfg.putInt("ticks_between_spawn", 40);
+
+        return cfg;
+    }
+
+    /**
+     * Ставит блок и заполняет его blockEntity NBT-тегом, создавая blockEntity
+     * явно через {@link EntityBlock#newBlockEntity} вместо чтения его обратно
+     * из региона после {@code setBlock}.
+     *
+     * <p>{@link WorldGenLevel} не имеет собственного {@code setBlockEntity}
+     * (это метод {@link net.minecraft.world.level.chunk.ChunkAccess}/{@code Level}),
+     * поэтому получаем {@code ChunkAccess} через {@code region.getChunk(pos)}
+     * и ставим blockEntity туда напрямую — так же, как это делает ванильный
+     * код при генерации структур.</p>
+     *
+     * <p>Построение blockEntity вручную (а не чтение его обратно из региона
+     * через {@code getBlockEntity} сразу после {@code setBlock}) — надёжный
+     * способ гарантировать, что NBT (loot table, spawn_potentials и т.д.)
+     * переживёт генерацию чанка.</p>
+     */
+    private static void placeBlockWithEntity(WorldGenLevel region, BlockPos pos,
+                                              BlockState state, CompoundTag tag) {
+        region.setBlock(pos, state, 3);
+
+        if (!(state.getBlock() instanceof EntityBlock entityBlock)) {
             AeroWorld.LOGGER.warn(
-                    "[AeroWorld] IslandVaultTrialGenerator: blockEntity is null at {} after setBlock — skipped NBT.",
+                    "[AeroWorld] IslandVaultTrialGenerator: block at {} is not an EntityBlock — skipped NBT.",
                     pos);
             return;
         }
+
+        BlockEntity be = entityBlock.newBlockEntity(pos, state);
+        if (be == null) {
+            AeroWorld.LOGGER.warn(
+                    "[AeroWorld] IslandVaultTrialGenerator: newBlockEntity returned null at {} — skipped NBT.",
+                    pos);
+            return;
+        }
+
         be.loadWithComponents(tag, region.registryAccess());
+
+        net.minecraft.world.level.chunk.ChunkAccess chunk = region.getChunk(pos);
+        chunk.setBlockEntity(be);
         be.setChanged();
     }
 }
