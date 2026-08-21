@@ -84,20 +84,30 @@ public final class MountainForestScatter {
     // чтобы на одной горе могли соседствовать дуб, ель, берёза, тёмный
     // дуб, тропический куст и т.п. (запрошено явно: "самые разные деревья
     // из разных биомов").
+    // ВАЖНО: здесь НЕЛЬЗЯ использовать "*_checked" (и другие фичи, чей
+    // placement включает BiomeFilter) — эти PlacedFeature ожидают вызов
+    // через штатный ванильный цикл generateFeatures(), который заранее
+    // регистрирует текущую фичу во внутреннем контексте, используемом
+    // BiomeFilter'ом. При ручном вызове place() в обход этого цикла
+    // (как делаем здесь) BiomeFilter не находит фичу в контексте и
+    // бросает IllegalStateException("Tried to biome check an
+    // unregistered feature..."), что валит генерацию чанка целиком
+    // (status "features") и приводит к бесконечным ретраям/зависанию.
+    // Поэтому ниже — варианты БЕЗ biome-проверки (те же деревья, но без
+    // "_checked"-обёртки): они безопасны для прямого вызова place().
     private static final ResourceLocation[] TREE_FEATURE_IDS = {
-            ResourceLocation.withDefaultNamespace("oak_checked"),
-            ResourceLocation.withDefaultNamespace("fancy_oak_checked"),
-            ResourceLocation.withDefaultNamespace("birch_checked"),
+            ResourceLocation.withDefaultNamespace("oak"),
+            ResourceLocation.withDefaultNamespace("fancy_oak"),
+            ResourceLocation.withDefaultNamespace("birch"),
             ResourceLocation.withDefaultNamespace("birch_tall"),
-            ResourceLocation.withDefaultNamespace("spruce_checked"),
-            ResourceLocation.withDefaultNamespace("pine_checked"),
-            ResourceLocation.withDefaultNamespace("mega_spruce_checked"),
-            ResourceLocation.withDefaultNamespace("mega_pine_checked"),
-            ResourceLocation.withDefaultNamespace("dark_oak_checked"),
+            ResourceLocation.withDefaultNamespace("spruce"),
+            ResourceLocation.withDefaultNamespace("mega_spruce"),
+            ResourceLocation.withDefaultNamespace("mega_pine"),
+            ResourceLocation.withDefaultNamespace("dark_oak"),
             ResourceLocation.withDefaultNamespace("jungle_bush"),
             ResourceLocation.withDefaultNamespace("jungle_tree"),
-            ResourceLocation.withDefaultNamespace("acacia_checked"),
-            ResourceLocation.withDefaultNamespace("cherry_checked"),
+            ResourceLocation.withDefaultNamespace("acacia"),
+            ResourceLocation.withDefaultNamespace("cherry"),
     };
 
     private MountainForestScatter() {}
@@ -174,12 +184,29 @@ public final class MountainForestScatter {
 
             Holder<PlacedFeature> chosen = available.get(random.nextInt(available.size()));
             BlockPos pos = new BlockPos(wx, surfaceY + 1, wz);
-            chosen.value().place(region, chunkGenerator, random, pos);
-            // NB: PlacedFeature API — метод называется place() в 1.21.x
-            // маппингах (Mojang), возвращает boolean (успех размещения),
-            // здесь результат не важен — при неудаче (например, слишком
-            // крутой склон без опоры) просто ничего не ставится, а не
-            // прерывает остальной цикл.
+            try {
+                chosen.value().place(region, chunkGenerator, random, pos);
+                // NB: PlacedFeature API — метод называется place() в 1.21.x
+                // маппингах (Mojang), возвращает boolean (успех размещения),
+                // здесь результат не важен — при неудаче (например, слишком
+                // крутой склон без опоры) просто ничего не ставится, а не
+                // прерывает остальной цикл.
+            } catch (RuntimeException e) {
+                // Страховка: если выбранная фича (например, добавленная
+                // другим модом/датапаком) внутри себя всё же использует
+                // placement-модификатор, требующий штатного контекста
+                // ванильного цикла декорации (как BiomeFilter), вызов
+                // place() здесь может бросить исключение (в норме —
+                // IllegalStateException "Tried to biome check an
+                // unregistered feature..."). Раньше это гарантированно
+                // валило генерацию ВСЕГО чанка на статусе "features"
+                // (chunk generation aborted -> "Failed to load chunk"
+                // -> бесконечные ретраи у c2me и зависание сервера).
+                // Ловим и просто пропускаем это конкретное дерево —
+                // остальной чанк и остальные деревья не должны страдать
+                // из-за одной несовместимой фичи.
+                continue;
+            }
         }
     }
 }

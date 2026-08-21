@@ -239,7 +239,33 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         }
         // Layer 1 (поверхность) — реальная высота по колонке (горы/холмы),
         // а не фиксированная константа.
+        //
+        // ВАЖНО про type: ванильная структурная система (деревни, аванпосты
+        // и т.п.) ищет место для постройки через heightmap-типы, означающие
+        // "поверхность мира сверху" — WORLD_SURFACE(_WG), MOTION_BLOCKING(_NO_LEAVES).
+        // Если здесь всегда отдавать дно (surfaceHeight = groundY), структура
+        // в озере/океане получает Y дна и топит здание под водой. Для этих
+        // типов отдаём topmostHeight() — дно ИЛИ поверхность воды, смотря что
+        // выше — как и должен вести себя "мир сверху". OCEAN_FLOOR(_WG) по
+        // смыслу обязан оставаться дном, поэтому не трогаем его.
+        if (isSurfaceFromAboveHeightmap(type)) {
+            return layer1.topmostHeight(x, z) + 1;
+        }
         return layer1.surfaceHeight(x, z) + 1;
+    }
+
+    /**
+     * {@code true} для heightmap-типов, которые по ванильной семантике
+     * означают "первая непустая точка, если смотреть сверху" (т.е. включая
+     * воду как потенциальную опору) — в противовес OCEAN_FLOOR-типам,
+     * которые всегда означают именно твёрдое дно.
+     */
+    private static boolean isSurfaceFromAboveHeightmap(Heightmap.Types type) {
+        return switch (type) {
+            case WORLD_SURFACE, WORLD_SURFACE_WG,
+                 MOTION_BLOCKING, MOTION_BLOCKING_NO_LEAVES -> true;
+            default -> false;
+        };
     }
 
     /**
