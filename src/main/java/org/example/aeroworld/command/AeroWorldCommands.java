@@ -14,6 +14,7 @@ import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.event.ProximityTriggerHandler;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
 import org.example.aeroworld.worldgen.cache.IslandData;
+import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
 
@@ -61,7 +62,11 @@ public final class AeroWorldCommands {
                 .then(Commands.literal("forcePlacePending")
                         .executes(AeroWorldCommands::runForcePlacePending))
                 .then(Commands.literal("findIsland4")
-                        .executes(AeroWorldCommands::runFindIsland4)));
+                        .executes(AeroWorldCommands::runFindIsland4))
+                .then(Commands.literal("findIsland2")
+                        .executes(ctx -> runFindLowerIsland(ctx, 2)))
+                .then(Commands.literal("findIsland3")
+                        .executes(ctx -> runFindLowerIsland(ctx, 3))));
     }
 
     private static int runForcePlacePending(CommandContext<CommandSourceStack> ctx) {
@@ -181,6 +186,95 @@ public final class AeroWorldCommands {
 
         source.sendSuccess(() -> Component.literal(
                 "[AeroWorld] Ближайший остров слоя 4: X=" + fx + " Z=" + fz +
+                        " (Y " + data.bottomY + "\u2013" + data.topY + "), кольцо сетки #" + fring +
+                        " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
+        return 1;
+    }
+
+    /**
+     * {@code /aeroworld findIsland2} и {@code /aeroworld findIsland3} — тот же
+     * спиральный поиск, что и {@link #runFindIsland4}, но по сетке
+     * {@link org.example.aeroworld.worldgen.layer.LowerIslandGenerator}.
+     * Layer2StructurePlacer/Layer3StructurePlacer/руды слоёв 2 и 3 работают
+     * на этой же самой островной сетке (см. {@code lowerIslands} в
+     * {@link AeroWorldChunkGenerator}), отдельной сетки у них нет —
+     * поэтому обе команды телепортируют на один и тот же остров, различие
+     * только в номере слоя, указанном в тексте сообщения.
+     */
+    private static int runFindLowerIsland(CommandContext<CommandSourceStack> ctx, int layerNumber) {
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+
+        boolean isAeroWorld = level.dimensionTypeRegistration().unwrapKey()
+                .map(k -> k.location().getNamespace().equals(AeroWorld.MOD_ID))
+                .orElse(false);
+        if (!isAeroWorld) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Эту команду нужно выполнять находясь в измерении aeroworld " +
+                            "(сейчас: " + level.dimension().location() + "). " +
+                            "Используйте /execute in aeroworld:aeroworld run aeroworld findIsland" + layerNumber));
+            return 0;
+        }
+
+        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        if (!(generator instanceof AeroWorldChunkGenerator aeroGen)) {
+            source.sendFailure(Component.literal("[AeroWorld] Неожиданный тип генератора: " + generator.getClass()));
+            return 0;
+        }
+
+        LowerIslandGenerator lowerIslands = aeroGen.getLowerIslands();
+        if (lowerIslands == null) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] lowerIslands ещё не инициализирован — сгенерируйте хотя бы один чанк (просто полетайте) и повторите."));
+            return 0;
+        }
+
+        IslandPlacer placer = lowerIslands.getPlacer();
+        int gridChunks = placer.gridSizeChunks();
+
+        BlockPos origin = BlockPos.containing(source.getPosition());
+        int originCellX = Math.floorDiv(origin.getX() >> 4, gridChunks);
+        int originCellZ = Math.floorDiv(origin.getZ() >> 4, gridChunks);
+
+        final int MAX_RING = 64;
+        int[] found = null;
+        int foundRing = -1;
+        search:
+        for (int ring = 0; ring <= MAX_RING; ring++) {
+            for (int dcx = -ring; dcx <= ring; dcx++) {
+                for (int dcz = -ring; dcz <= ring; dcz++) {
+                    if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
+                    int[] c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (c != null) {
+                        found = c;
+                        foundRing = ring;
+                        break search;
+                    }
+                }
+            }
+        }
+
+        if (found == null) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Остров слоя " + layerNumber + " не найден даже в радиусе " + MAX_RING + " ячеек сетки (~" +
+                            (MAX_RING * gridChunks * 16) + " блоков). Это уже похоже на реальную поломку " +
+                            "генерации, а не на статистическую редкость — пришлите новый latest.log/debug.log."));
+            return 0;
+        }
+
+        IslandData data = lowerIslands.getIslandData(found[0], found[1]);
+        int teleportY = data.topY + 5;
+
+        final int fx = found[0], fz = found[1], fring = foundRing;
+        boolean teleported = false;
+        if (source.getEntity() instanceof ServerPlayer player) {
+            player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());
+            teleported = true;
+        }
+        final boolean tp = teleported;
+
+        source.sendSuccess(() -> Component.literal(
+                "[AeroWorld] Ближайший остров слоя " + layerNumber + ": X=" + fx + " Z=" + fz +
                         " (Y " + data.bottomY + "\u2013" + data.topY + "), кольцо сетки #" + fring +
                         " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
         return 1;

@@ -30,11 +30,12 @@ import java.util.List;
  *       передав {@link IslandShape} этого слоя и параметры тела острова.</li>
  * </ol>
  *
- * <h3>Почему "внутри самого верхнего слоя острова", а не на поверхности</h3>
- * Блоки замуровываются в каменном ядре острова, на 2–6 блоков ниже поверхности
- * (см. {@link #SURFACE_MIN_DEPTH}/{@link #SURFACE_MAX_DEPTH}) — то есть под травой/
- * землёй, внутри камня, а не поставлены сверху острова как декорация. Найти их
- * можно, только раскопав/прокопав остров.
+ * <h3>Почему "рядом с поверхностью острова, а не сверху на ней"</h3>
+ * Блок "врыт" в землю на {@link #BURY_DEPTH} блок — верхняя грань стоит на
+ * уровне поверхности острова, а над ней и вокруг расчищена небольшая площадка
+ * воздуха (см. {@link #clearAboveBlock}). Это не декорация поверх острова
+ * (блок не "парит" над землёй) и не замуровка в толще камня — он врыт вровень
+ * с землёй и виден сверху, как и природные Vault/Trial Spawner в trial chambers.
  *
  * <h3>Почему запись через {@link WorldGenLevel}, а не {@link net.minecraft.world.level.chunk.ChunkAccess}</h3>
  * Vault и Trial Spawner — блоки с {@link BlockEntity} (NBT-конфиг loot table).
@@ -48,9 +49,14 @@ public final class IslandVaultTrialGenerator {
     private static final BlockState BS_VAULT         = Blocks.VAULT.defaultBlockState();
     private static final BlockState BS_TRIAL_SPAWNER  = Blocks.TRIAL_SPAWNER.defaultBlockState();
 
-    /** Минимальная и максимальная глубина замуровки под верхней поверхностью острова. */
-    private static final int SURFACE_MIN_DEPTH = 2;
-    private static final int SURFACE_MAX_DEPTH = 6;
+    /** Насколько глубоко "врыт" блок: 1 — верх блока на уровне земли, сам блок в предыдущем слое почвы. */
+    private static final int BURY_DEPTH = 1;
+
+    /** Сколько блоков воздуха расчищаем над поставленным блоком (высота самого блока + запас). */
+    private static final int OPEN_ABOVE_BLOCKS = 3;
+
+    /** Радиус расчищаемой площадки вокруг блока по X/Z — нужен для спавна мобов Trial Spawner. */
+    private static final int CLEAR_RADIUS = 2;
 
     /** Сколько раз пытаемся найти валидную точку на острове, прежде чем отказаться от одной структуры. */
     private static final int MAX_PLACEMENT_ATTEMPTS = 48;
@@ -86,6 +92,7 @@ public final class IslandVaultTrialGenerator {
             BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
             placeVault(region, pos, loot);
+            clearAboveBlock(region, pos);
             placed.add(pos);
         }
 
@@ -93,6 +100,7 @@ public final class IslandVaultTrialGenerator {
             BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
             placeTrialSpawner(region, pos, loot);
+            clearAboveBlock(region, pos);
             placed.add(pos);
         }
 
@@ -104,12 +112,12 @@ public final class IslandVaultTrialGenerator {
     // ── Поиск точки внутри тела острова ────────────────────────────────────────
 
     /**
-     * Ищет случайную точку внутри каменного ядра острова, под поверхностью на
-     * глубину {@link #SURFACE_MIN_DEPTH}..{@link #SURFACE_MAX_DEPTH}, достаточно
-     * далеко от уже размещённых точек этого острова.
+     * Ищет случайную точку на поверхности острова, куда можно "врыть" блок
+     * на 1 блок вглубь земли — верхняя грань блока на уровне поверхности,
+     * а над ней открытый воздух (блок торчит из земли, видимый сверху).
      *
      * <p>Использует ту же {@link IslandShape#isSolid} математику, что и fillChunk
-     * слоя, поэтому гарантированно попадает внутрь реального тела острова
+     * слоя, поэтому гарантированно попадает на реальную поверхность острова
      * (с учётом деформации края), а не в пустоту рядом с ним.</p>
      */
     private static BlockPos findBuriedSpot(WorldGenLevel region,
@@ -120,7 +128,7 @@ public final class IslandVaultTrialGenerator {
                                             List<BlockPos> alreadyPlaced) {
 
         // Ограничиваем поиск внутренними ~70% радиуса, чтобы не задевать тонкий
-        // деформированный край острова (там мало каменной толщи для замуровки).
+        // деформированный край острова (там мало толщи почвы под поверхностью).
         double innerRadius = island.radius * 0.7;
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
@@ -133,19 +141,20 @@ public final class IslandVaultTrialGenerator {
                     wx, wz, island.cx, island.cz, island.radius, noiseDeform,
                     island.shapeNoiseIntensity, island.shapeProfile);
 
-            // Верхняя поверхность в этой XZ-колонке (бинарный поиск, как getDeformedTopY).
+            // Верхняя поверхность в этой XZ-колонке — тот же grass-блок, который
+            // ставит LowerIslandGenerator.fillChunk (идентичная формула isSolid).
             if (!shape.isSolid(island.topY, island.bottomY, island.topY, xz)) continue;
             int surfaceY = binarySearchTopSurface(shape, island, xz);
             if (surfaceY < island.bottomY) continue;
 
-            int depth = SURFACE_MIN_DEPTH + rng.nextInt(SURFACE_MAX_DEPTH - SURFACE_MIN_DEPTH + 1);
-            int wy = surfaceY - depth;
+            // Блок "врыт" на BURY_DEPTH ниже поверхности — верхняя часть
+            // остаётся на уровне земли, открытая сверху (не в толще камня).
+            int wy = surfaceY - BURY_DEPTH;
             if (wy <= island.bottomY) continue;
 
-            // Точка должна быть твёрдой (внутри камня), не пустотой под тонким сводом.
+            // Под точкой должна быть твёрдая почва (не пустота/обрыв края острова).
             if (!shape.isSolid(wy, island.bottomY, island.topY, xz)) continue;
             if (!shape.isSolid(wy - 1, island.bottomY, island.topY, xz)) continue;
-            if (!shape.isSolid(wy + 1, island.bottomY, island.topY, xz)) continue;
 
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;
@@ -171,6 +180,34 @@ public final class IslandVaultTrialGenerator {
         }
         if (shape.isSolid(lo + 1, island.bottomY, island.topY, xz)) return island.bottomY - 1; // не поверхность
         return lo;
+    }
+
+    /**
+     * Расчищает небольшую воздушную площадку над и вокруг только что
+     * поставленного блока — {@link #CLEAR_RADIUS} блоков в стороны,
+     * {@link #OPEN_ABOVE_BLOCKS} блоков вверх.
+     *
+     * <p>fillChunk слоя уже поставил grass/dirt поверх этой колонки до вызова
+     * генератора (см. {@code applyBiomeDecoration}), поэтому без явной расчистки
+     * поставленный блок останется погребён под травой, а не "торчащим из земли".</p>
+     *
+     * <p>Для Trial Spawner расчистка площадки, а не только столба, важна и
+     * функционально: спавнер проверяет line-of-sight и требует свободное место
+     * в радиусе {@code spawn_range} вокруг себя, иначе попытки спавна мобов
+     * проваливаются одна за другой и он никогда не переходит в фазу наград.</p>
+     */
+    private static void clearAboveBlock(WorldGenLevel region, BlockPos pos) {
+        BlockPos.MutableBlockPos cursor = pos.mutable();
+        for (int dy = 1; dy <= OPEN_ABOVE_BLOCKS; dy++) {
+            for (int dx = -CLEAR_RADIUS; dx <= CLEAR_RADIUS; dx++) {
+                for (int dz = -CLEAR_RADIUS; dz <= CLEAR_RADIUS; dz++) {
+                    cursor.set(pos.getX() + dx, pos.getY() + dy, pos.getZ() + dz);
+                    if (!region.getBlockState(cursor).isAir()) {
+                        region.setBlock(cursor, Blocks.AIR.defaultBlockState(), 3);
+                    }
+                }
+            }
+        }
     }
 
     // ── Постановка блоков ────────────────────────────────────────────────────
