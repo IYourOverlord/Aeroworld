@@ -121,6 +121,16 @@ public class Layer1FlatGenerator {
     // Высота карниза — на 1 блок НИЖЕ первой линии, то есть уже под водой.
     private static final int    BEACH_LEDGE_Y      = WATER_LEVEL - 1;
 
+    // ── Полая песчаная кромка ────────────────────────────────────────────────
+    // На узкой прибрежной полосе (ColumnProfile.isShoreEdge, см. applyBeachFlat)
+    // вместо монолитного песчаного столба оставляем одну непроницаемую для
+    // воды линию блоков вровень с водой/карнизом, а сразу под ней — полую
+    // полость на несколько блоков вглубь (как будто берег подкопан прибоем).
+    // Ниже полости снова сплошная порода — полость не достаёт до пещер.
+    // Линию делаем из SANDSTONE, а не SAND — он не подчиняется гравитации,
+    // поэтому не обрушится при первом же обновлении соседнего блока.
+    private static final int    SHORE_HOLLOW_DEPTH = 6;  // блоков полости под линией кромки
+
     // ── Океаны ────────────────────────────────────────────────────────────────
     // Отдельный, гораздо более широкий шум (масштаб материков), чем
     // реки/озёра. Ниже порога — открытый океан; глубина растёт по мере
@@ -1127,10 +1137,24 @@ public class Layer1FlatGenerator {
         public final int groundY;
         /** Y поверхности воды, или -1 если это суша. */
         public final int waterY;
+        /**
+         * true — колонка попадает в узкую прибрежную полосу (BEACH_EDGE_WIDTH +
+         * BEACH_LEDGE_WIDTH от уреза воды), где рельеф прижат к ступенчатому
+         * профилю applyBeachFlat. Используется fillChunk/applyLayer1Surface,
+         * чтобы вместо монолитного песка оставить только тонкую непроницаемую
+         * линию у воды, а под ней — полую полость (см. SHORE_HOLLOW_DEPTH).
+         * Для суши без водоёма рядом (applyBeachFlat не вызывался) — всегда false.
+         */
+        public final boolean isShoreEdge;
 
         ColumnProfile(int groundY, int waterY) {
-            this.groundY = groundY;
-            this.waterY  = waterY;
+            this(groundY, waterY, false);
+        }
+
+        ColumnProfile(int groundY, int waterY, boolean isShoreEdge) {
+            this.groundY     = groundY;
+            this.waterY      = waterY;
+            this.isShoreEdge = isShoreEdge;
         }
     }
 
@@ -1173,9 +1197,22 @@ public class Layer1FlatGenerator {
      *                  было видно на скриншоте: широкая плоская зона у
      *                  воды без чёткой ступени).
      **/
-    private int applyBeachFlat(int blendedY, double weight, double gradX, double gradZ) {
+    /** Результат {@link #applyBeachFlat}: итоговая высота + признак "это узкая
+     *  прибрежная полоса" (в пределах BEACH_EDGE_WIDTH+BEACH_LEDGE_WIDTH от
+     *  уреза воды), которую fillChunk/applyLayer1Surface должны делать полой
+     *  внутри (см. SHORE_HOLLOW_DEPTH). */
+    private static final class BeachFlatResult {
+        final int y;
+        final boolean isShoreEdge;
+        BeachFlatResult(int y, boolean isShoreEdge) {
+            this.y = y;
+            this.isShoreEdge = isShoreEdge;
+        }
+    }
+
+    private BeachFlatResult applyBeachFlat(int blendedY, double weight, double gradX, double gradZ) {
         double gradPerBlock = Math.sqrt(gradX * gradX + gradZ * gradZ);
-        if (weight <= 0.0 || gradPerBlock <= 1e-6) return blendedY;
+        if (weight <= 0.0 || gradPerBlock <= 1e-6) return new BeachFlatResult(blendedY, false);
 
         // Расстояние вглубь суши от точки, где weight пересекает "линию
         // уреза" — см. подробное объяснение в javadoc выше.
@@ -1183,7 +1220,7 @@ public class Layer1FlatGenerator {
 
         if (distanceBlocks <= BEACH_EDGE_WIDTH) {
             // Первая линия — вровень с водой, касается её напрямую.
-            return Math.min(blendedY, BEACH_EDGE_Y);
+            return new BeachFlatResult(Math.min(blendedY, BEACH_EDGE_Y), true);
         }
 
         double ledgeEnd = BEACH_EDGE_WIDTH + BEACH_LEDGE_WIDTH;
@@ -1192,7 +1229,7 @@ public class Layer1FlatGenerator {
             // смешивания с исходной blendedY. Это и даёт видимое
             // понижение рельефа сразу после береговой кромки, а не просто
             // отодвинутую вглубь линию воды.
-            return Math.min(blendedY, BEACH_LEDGE_Y);
+            return new BeachFlatResult(Math.min(blendedY, BEACH_LEDGE_Y), true);
         }
 
         // ── Адаптивная ширина подъёма от карниза к полной высоте суши ────────
@@ -1217,12 +1254,14 @@ public class Layer1FlatGenerator {
         double adaptiveBlend = Math.max(BEACH_LEDGE_BLEND, heightToClimb * BEACH_LEDGE_HEIGHT_RATIO);
 
         double blendDist = distanceBlocks - ledgeEnd; // 0 сразу после карниза
-        if (blendDist >= adaptiveBlend) return blendedY; // уже обычный рельеф
+        if (blendDist >= adaptiveBlend) return new BeachFlatResult(blendedY, false); // уже обычный рельеф
 
-        // Плавный подъём от карниза к обычной высоте суши.
+        // Плавный подъём от карниза к обычной высоте суши — это уже НЕ узкая
+        // кромка, isShoreEdge = false (тут рельеф обычный монолит, никакой
+        // полости под ним быть не должно).
         double riseT = smoothstep(0.0, adaptiveBlend, blendDist);
         int blended = (int) Math.round(lerp(BEACH_LEDGE_Y, blendedY, riseT));
-        return Math.min(blendedY, blended);
+        return new BeachFlatResult(Math.min(blendedY, blended), false);
     }
 
     /**
@@ -1244,6 +1283,11 @@ public class Layer1FlatGenerator {
      */
     public ColumnProfile columnProfile(int wx, int wz) {
         int landHeight = computeLandHeight(wx, wz);
+        // Признак "узкая прибрежная кромка" — проставляется применением
+        // applyBeachFlat в любой из веток (океан/река/озеро) ниже. Нужен на
+        // выходе, чтобы fillChunk/applyLayer1Surface знали, где оставлять
+        // только тонкую линию песка с полостью под ней (см. ColumnProfile).
+        boolean shoreEdge = false;
 
         // ── Ранний выход был здесь раньше ────────────────────────────────────
         // Старая версия: `if (landHeight > WATER_MAX_LAND_Y) return new
@@ -1298,7 +1342,9 @@ public class Layer1FlatGenerator {
             double oceanNdz = heightNoise.fbm2D(wx * 0.0009 + 90000, (wz + 1) * 0.0009 + 90000, 5, 2.0, 0.5);
             double oceanWdz = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanNdz);
             double oceanGradZ = Math.abs(oceanW - oceanWdz);
-            blendedY = applyBeachFlat(blendedY, oceanW, oceanGradX, oceanGradZ);
+            BeachFlatResult oceanBeach = applyBeachFlat(blendedY, oceanW, oceanGradX, oceanGradZ);
+            blendedY = oceanBeach.y;
+            shoreEdge = shoreEdge || oceanBeach.isShoreEdge;
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
@@ -1324,7 +1370,9 @@ public class Layer1FlatGenerator {
             double riverDistDz = Math.abs(riverNdz);
             double riverWdz = smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDistDz);
             double riverGradZ = Math.abs(riverW - riverWdz);
-            blendedY = applyBeachFlat(blendedY, riverW, riverGradX, riverGradZ);
+            BeachFlatResult riverBeach = applyBeachFlat(blendedY, riverW, riverGradX, riverGradZ);
+            blendedY = riverBeach.y;
+            shoreEdge = shoreEdge || riverBeach.isShoreEdge;
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
@@ -1346,14 +1394,16 @@ public class Layer1FlatGenerator {
             double lakeNdz = heightNoise.fbm2D(wx * 0.006 + 70000, (wz + 1) * 0.006 + 70000, 3, 2.0, 0.5);
             double lakeWdz = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeNdz);
             double lakeGradZ = Math.abs(lakeW - lakeWdz);
-            blendedY = applyBeachFlat(blendedY, lakeW, lakeGradX, lakeGradZ);
+            BeachFlatResult lakeBeach = applyBeachFlat(blendedY, lakeW, lakeGradX, lakeGradZ);
+            blendedY = lakeBeach.y;
+            shoreEdge = shoreEdge || lakeBeach.isShoreEdge;
             if (blendedY < WATER_LEVEL) {
                 return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
             }
             landHeight = blendedY;
         }
 
-        return new ColumnProfile(landHeight, -1);
+        return new ColumnProfile(landHeight, -1, shoreEdge);
     }
 
     /**
@@ -1543,7 +1593,17 @@ public class Layer1FlatGenerator {
                 int groundY  = profile.groundY;
                 int waterY   = profile.waterY;   // -1 = суша
                 boolean isWaterCol = waterY != -1;
-                int dirtMinY = groundY - SURFACE_SKIN;
+                // Полая песчаная кромка (см. ColumnProfile.isShoreEdge): узкая
+                // прибрежная полоса, где вместо монолитного песка нужна одна
+                // непроницаемая линия у поверхности + воздушная полость под
+                // ней на SHORE_HOLLOW_DEPTH блоков. Раздуваем толщину
+                // "подкожного" слоя (обычно SURFACE_SKIN=3) ровно настолько,
+                // чтобы полость уместилась целиком, не упираясь в dirtMinY —
+                // иначе на плоском берегу (SURFACE_SKIN=3) полость обрезалась
+                // бы до 2 блоков вместо заданных SHORE_HOLLOW_DEPTH.
+                boolean hollowShore = !isWaterCol && isSandy && profile.isShoreEdge;
+                int skinDepth = hollowShore ? Math.max(SURFACE_SKIN, SHORE_HOLLOW_DEPTH + 2) : SURFACE_SKIN;
+                int dirtMinY = groundY - skinDepth;
 
                 // ── Bedrock ───────────────────────────────────────────────────
                 pos.set(wx, LAYER_MIN_Y, wz);
@@ -1557,9 +1617,13 @@ public class Layer1FlatGenerator {
                 // без этой развилки песчаное дно повисало бы прямо над
                 // пещерой без опоры, и достаточно было сломать один блок,
                 // чтобы весь песок посыпался вниз (гравитационный каскад).
+                // Полая кромка (hollowShore) — та же логика: полость должна
+                // опираться на сплошную породу снизу, а не на пещерный
+                // воздух, иначе полости сольются в одну и берег обвалится
+                // при первом обновлении блока.
                 for (int y = LAYER_MIN_Y + 1; y < dirtMinY; y++) {
                     pos.set(wx, y, wz);
-                    BlockState rock = isWaterCol
+                    BlockState rock = (isWaterCol || hollowShore)
                             ? (y < DEEPSLATE_TOP ? BS_DEEPSLATE : BS_STONE)
                             : resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
                                     inColumnBase, colTSq, colBaseRv);
@@ -1574,20 +1638,36 @@ public class Layer1FlatGenerator {
                 // заглушки здесь не нужны, пишем только до groundY - 2.
                 // Для ВОДЫ applyLayer1Surface этот столбец пропускает целиком,
                 // поэтому дно (включая последние 2 блока) кладём прямо тут.
+                // ── Полая песчаная кромка (hollowShore вычислен выше) ───────────
+                // Узкая прибрежная полоса: вместо монолитного песчаника —
+                // одна линия SANDSTONE вровень с groundY (см. applyLayer1Surface,
+                // который красит groundY/groundY-1 сверху), затем воздух
+                // (SHORE_HOLLOW_DEPTH блоков), затем снова сплошная порода.
+                // Для воды / несандовых биомов / переходной зоны (isShoreEdge==false)
+                // поведение не меняется — обычный монолит, как раньше.
                 int dirtLoopTop = isWaterCol ? groundY + 1 : groundY - 1;
-                for (int y = dirtMinY; y < dirtLoopTop; y++) {
-                    pos.set(wx, y, wz);
-                    BlockState fill;
-                    if (isWaterCol) {
-                        fill = BS_SAND;
-                    } else if (isSandy) {
-                        fill = BS_SANDSTONE;
-                    } else if (isBadlands) {
-                        fill = BS_TERRACOTTA;
-                    } else {
-                        fill = BS_DIRT;
+                if (hollowShore) {
+                    int hollowBottom = Math.max(dirtMinY, dirtLoopTop - SHORE_HOLLOW_DEPTH);
+                    for (int y = dirtMinY; y < dirtLoopTop; y++) {
+                        pos.set(wx, y, wz);
+                        BlockState fill = (y >= hollowBottom) ? BS_AIR : BS_SANDSTONE;
+                        chunk.setBlockState(pos, fill, false);
                     }
-                    chunk.setBlockState(pos, fill, false);
+                } else {
+                    for (int y = dirtMinY; y < dirtLoopTop; y++) {
+                        pos.set(wx, y, wz);
+                        BlockState fill;
+                        if (isWaterCol) {
+                            fill = BS_SAND;
+                        } else if (isSandy) {
+                            fill = BS_SANDSTONE;
+                        } else if (isBadlands) {
+                            fill = BS_TERRACOTTA;
+                        } else {
+                            fill = BS_DIRT;
+                        }
+                        chunk.setBlockState(pos, fill, false);
+                    }
                 }
 
                 // ── Вода поверх дна (реки/озёра) ─────────────────────────────

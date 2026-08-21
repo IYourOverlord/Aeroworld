@@ -511,8 +511,16 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                         || path.equals("wooded_badlands") || path.equals("eroded_badlands");
 
                 if (isSandy) {
-                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_SAND,       false);
-                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_SAND,       false);
+                    chunk.setBlockState(pos.set(wx, surfaceY, wz), BS_SAND, false);
+                    // На узкой прибрежной кромке (isShoreEdge) fillChunk уже
+                    // оставил под surfaceY воздушную полость (см.
+                    // Layer1FlatGenerator.SHORE_HOLLOW_DEPTH) — не запечатываем
+                    // её вторым слоем песка, иначе полость исчезнет. Для
+                    // остального песчаного рельефа (не кромка) поведение как
+                    // раньше — сплошные 2 блока песка.
+                    if (!profile.isShoreEdge) {
+                        chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_SAND, false);
+                    }
                 } else if (isBadlands) {
                     chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_RED_SAND,   false);
                     chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_TERRACOTTA,  false);
