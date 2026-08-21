@@ -272,6 +272,9 @@ public class LowerIslandGenerator {
     /** Радиус поиска ячеек для этого слоя. Используется TerrainColumnSampler. */
     public int getSearchRadius() { return searchRadius; }
 
+    /** Форма острова этого слоя. Используется Layer2VaultTrialPlacer для поиска точек внутри тела острова. */
+    public IslandShape getShape() { return shape; }
+
     // ── Деревья ───────────────────────────────────────────────────────────────
 
     /**

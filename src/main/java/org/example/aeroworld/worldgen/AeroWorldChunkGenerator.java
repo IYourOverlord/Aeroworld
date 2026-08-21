@@ -79,6 +79,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     // ── Placers структур ──────────────────────────────────────────────────────
     private Layer2StructurePlacer structurePlacer;
     private Layer3StructurePlacer layer3StructurePlacer;
+    private org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
     // ─────────────────────────────────────────────────────────────────────────
 
     private StructureSupportValidator structureValidator;
@@ -169,6 +170,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // ── Инициализируем placers с актуальным seed ──────────────────────────
         structurePlacer       = new Layer2StructurePlacer(seed, sharedChunkIslandCache);
         layer3StructurePlacer = new Layer3StructurePlacer(seed, sharedChunkIslandCache);
+        layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache);
         // ─────────────────────────────────────────────────────────────────────
 
         AeroWorld.structureScheduler = new IslandStructureScheduler();
@@ -616,6 +618,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // Листья деревьев (±2 блока по XZ) — пишем через WorldGenLevel (регион 3×3 чанка).
         // В fillChunk через ChunkAccess запись за границы чанка некорректна.
         if (lowerIslands != null) lowerIslands.placeTreesInRegion(region, chunk);
+
+        // Vault/Trial Spawner на островах Layer 2 — замурованы в теле острова
+        // (см. IslandVaultTrialGenerator javadoc). Нужен WorldGenLevel (не
+        // ChunkAccess) ради registryAccess() при инициализации NBT blockEntity,
+        // поэтому вызывается здесь, а не в fillFromNoise.
+        if (lowerIslands != null && layer2VaultTrialPlacer != null) {
+            layer2VaultTrialPlacer.placeForChunk(region, chunk, lowerIslands, lowerIslands.getShape());
+        }
 
         // Генерация руды во всех слоях отключена полностью.
         // layer1Ores.generateOres(chunk, RandomSource.create(base ^ 0x5555L), chunkX, chunkZ);
