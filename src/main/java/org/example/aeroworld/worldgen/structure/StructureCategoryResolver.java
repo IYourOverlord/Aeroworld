@@ -93,7 +93,15 @@ public final class StructureCategoryResolver {
     /**
      * Определяет категорию с учётом Y-позиции структуры.
      * Структуры в диапазонах небесных слоёв → {@link StructureCategory#ISLAND}.
+     *
+     * @deprecated Категория по «сырому» {@code baseY} без учёта реального XZ-рельефа
+     * может ошибочно классифицировать структуру Layer 1 как ISLAND, если ванильный
+     * heightmap в данной точке случайно попал в Y-диапазон Layer 2/3/4 (см.
+     * {@link #resolveForActualLayer(ResourceLocation, int)}). Оставлено для обратной
+     * совместимости/фолбэка на случай, когда фактический слой определить не удалось
+     * (например, {@code TerrainColumnSampler} недоступен).
      */
+    @Deprecated
     public static StructureCategory resolveForY(ResourceLocation structureId, int baseY) {
         StructureCategory base = resolve(structureId);
 
@@ -112,6 +120,59 @@ public final class StructureCategoryResolver {
         }
 
         return base;
+    }
+
+    /**
+     * Определяет категорию по РЕАЛЬНОМУ слою в XZ-точке структуры, а не по
+     * сырому {@code baseY}.
+     *
+     * <h3>Проблема, которую решает этот метод</h3>
+     * {@link #resolveForY(ResourceLocation, int)} доверял только {@code baseY}:
+     * если ванильный алгоритм определял высоту структуры в диапазоне Y,
+     * который geometрически относится к Layer 2–4 (даже случайно, например
+     * из-за heightmap-артефакта или близости границ слоёв), структура,
+     * предназначенная для Layer 1 (деревня, аванпост и т.д.), получала
+     * категорию ISLAND и валидировалась против рельефа острова — который
+     * в этой XZ-точке физически существует, — из-за чего структура реально
+     * отстраивалась на острове чужого слоя.
+     *
+     * <p>Этот метод вместо диапазона Y использует {@code actualLayer} —
+     * результат {@link TerrainColumnSampler#resolveActualLayer(int, int)},
+     * который смотрит, покрывает ли остров Layer 2/3/4 (или сам Layer 1)
+     * данную XZ-точку в кэшированных данных генераторов — то есть определяет
+     * слой по факту наличия тверди, а не по совпадению чисел.
+     *
+     * @param structureId  id структуры
+     * @param actualLayer  результат {@code TerrainColumnSampler.resolveActualLayer(cx, cz)}:
+     *                     1 — Layer 1 (поверхность), 2/3/4 — острова, -1 — ничего не найдено
+     *                     (пустота между слоями либо точка вне любого острова)
+     */
+    public static StructureCategory resolveForActualLayer(ResourceLocation structureId, int actualLayer) {
+        StructureCategory base = resolve(structureId);
+
+        // Подземные/водные/deny — фактический слой не меняет категорию
+        if (base == StructureCategory.UNDERGROUND
+                || base == StructureCategory.WATER
+                || base == StructureCategory.DENY) {
+            return base;
+        }
+
+        // SKY_FLOATING остаётся SKY_FLOATING независимо от слоя — они парят,
+        // а не стоят на конкретном острове/поверхности.
+        if (base == StructureCategory.SKY_FLOATING) {
+            return StructureCategory.SKY_FLOATING;
+        }
+
+        if (actualLayer == 2 || actualLayer == 3 || actualLayer == 4) {
+            return StructureCategory.ISLAND;
+        }
+        if (actualLayer == 1) {
+            return StructureCategory.SURFACE;
+        }
+
+        // actualLayer == -1: в этой XZ-точке нет тверди ни на одном слое —
+        // структура гарантированно висит в пустоте между слоями.
+        return StructureCategory.SURFACE; // дальше отсеется через isVoidGapY/сэмплинг
     }
 
     // Запас (в блоках) вокруг фактического диапазона острова, в пределах

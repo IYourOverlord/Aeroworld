@@ -99,7 +99,26 @@ public final class StructureSupportValidator {
 
         BoundingBox bounds  = start.getBoundingBox();
         int baseY           = bounds.minY();
-        StructureCategory category = StructureCategoryResolver.resolveForY(structureId, baseY);
+
+        // Сэмплер создаём раньше, чем раньше — теперь он нужен уже на этапе
+        // определения категории, а не только для проверки поддержки.
+        // Это тот же самый объект, что использовался и до правки (создание
+        // сэмплера — не тяжёлая операция, все реальные вычисления идут через
+        // уже прогретые ChunkIslandCache/IslandCache и кэшируются внутри
+        // самого сэмплера на время этого вызова validate()).
+        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache);
+
+        // ── ИСПРАВЛЕНИЕ: категория по фактическому слою в XZ-точке, а не по
+        //    сырому baseY. Раньше resolveForY(structureId, baseY) полагался
+        //    только на диапазон Y, из-за чего структуры Layer 1 (деревни,
+        //    аванпосты) при определённых heightmap-значениях ошибочно
+        //    классифицировались как ISLAND и отстраивались на островах
+        //    Layer 2 (и потенциально 3/4). См. javadoc
+        //    StructureCategoryResolver.resolveForActualLayer(). ──────────────
+        int cx = (bounds.minX() + bounds.maxX()) / 2;
+        int cz = (bounds.minZ() + bounds.maxZ()) / 2;
+        int actualLayer = sampler.resolveActualLayer(cx, cz);
+        StructureCategory category = StructureCategoryResolver.resolveForActualLayer(structureId, actualLayer);
 
         // ── 1. Жёсткое отклонение ─────────────────────────────────────────────
         if (category == StructureCategory.DENY) {
@@ -114,15 +133,17 @@ public final class StructureSupportValidator {
         }
 
         // ── 3. Пустота между слоями — структура гарантированно в воздухе ──────
-        if (StructureCategoryResolver.isVoidGapY(baseY)) {
+        //    actualLayer == -1 уже покрывает большинство случаев пустоты, но
+        //    оставляем и старую проверку по Y как дополнительную страховку
+        //    (например, если структура сама по себе большая и её центр по XZ
+        //    зацепил остров, а minY всё равно в пустоте).
+        if (actualLayer < 0 && StructureCategoryResolver.isVoidGapY(baseY)) {
             logRejection(structureId, bounds,
-                    String.format("Y=%d в пустоте между слоями", baseY));
+                    String.format("Y=%d в пустоте между слоями (фактический слой не найден)", baseY));
             return ValidationResult.voidGap(structureId, category, bounds);
         }
 
         // ── 4. Специфичная логика по категории ────────────────────────────────
-        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache);
-
         ValidationResult result = switch (category) {
             case SURFACE      -> validateSurface(structureId, bounds, sampler);
             case ISLAND       -> validateIsland(structureId, bounds, sampler);

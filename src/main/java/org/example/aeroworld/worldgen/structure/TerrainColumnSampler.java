@@ -136,6 +136,89 @@ public final class TerrainColumnSampler {
         return structureMinY - topY < SKY_MIN_CLEARANCE;
     }
 
+    /**
+     * Определяет, какому слою РЕАЛЬНО принадлежит точка (wx, wz) — по факту
+     * наличия острова в XZ-проекции, а не по диапазону Y структуры.
+     *
+     * <p><b>Зачем.</b> Раньше категория (SURFACE/ISLAND) определялась только
+     * по {@code baseY} структуры ({@code isIslandLayerY}): если ванильный
+     * heightmap в данной XZ-точке случайно выдавал Y, попадающий в диапазон
+     * Layer 2/3/4 (даже с запасом LAYER_MARGIN), структура Layer 1 (деревня,
+     * аванпост и т.п.) ошибочно классифицировалась как ISLAND и проходила
+     * валидацию против рельефа острова, который в этой точке физически есть,
+     * а не против того, для которого структура предназначалась. Из-за этого
+     * структуры, ожидаемые на Layer 1, отстраивались на островах Layer 2 (и
+     * потенциально 3/4).
+     *
+     * <p><b>Как чинит.</b> Используем ту же кэшированную логику XZ-покрытия,
+     * что и {@link #computeIslandTopY} (Layer 2 → 3 → 4 → Layer 1) — без
+     * дополнительных проходов по миру, все обращения идут через уже
+     * прогретый {@link ChunkIslandCache} / {@code IslandCache} генераторов.
+     * Возвращает номер слоя (1–4), под которым реально находится твердь
+     * в этой XZ-точке, либо -1 если ни один слой не покрывает точку (пустота
+     * между слоями/за пределами острова).
+     */
+    public int resolveActualLayer(int wx, int wz) {
+        int chunkX = wx >> 4;
+        int chunkZ = wz >> 4;
+
+        // ── Layer 2 ───────────────────────────────────────────────────────────
+        {
+            List<int[]> centres = sharedChunkCache.get(
+                    LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                    key -> layer2.getPlacer().getIslandCentresForChunk(
+                            chunkX, chunkZ, layer2.getSearchRadius()));
+            for (int[] c : centres) {
+                IslandData d = layer2.getIslandData(c[0], c[1]);
+                double dx = wx - d.cx, dz = wz - d.cz;
+                if (dx * dx + dz * dz <= d.radius * d.radius) {
+                    return 2;
+                }
+            }
+        }
+
+        // ── Layer 3 ───────────────────────────────────────────────────────────
+        {
+            List<int[]> centres = sharedChunkCache.get(
+                    HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                    key -> layer3.getPlacer().getIslandCentresForChunk(
+                            chunkX, chunkZ, layer3.getSearchRadius()));
+            for (int[] c : centres) {
+                IslandData d = layer3.getIslandData(c[0], c[1]);
+                double effR = (d.ellipsoidAxes != null)
+                        ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2])
+                        : d.radius;
+                double dx = wx - d.cx, dz = wz - d.cz;
+                if (dx * dx + dz * dz <= effR * effR) {
+                    return 3;
+                }
+            }
+        }
+
+        // ── Layer 4 ───────────────────────────────────────────────────────────
+        {
+            List<int[]> centres = sharedChunkCache.get(
+                    UpperIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                    key -> layer4.getPlacer().getIslandCentresForChunk(
+                            chunkX, chunkZ, layer4.getSearchRadius()));
+            for (int[] c : centres) {
+                IslandData d = layer4.getIslandData(c[0], c[1]);
+                double dx = wx - d.cx, dz = wz - d.cz;
+                if (dx * dx + dz * dz <= d.radius * d.radius) {
+                    return 4;
+                }
+            }
+        }
+
+        // ── Layer 1: реальная высота по колонке (горы/холмы) ───────────────────
+        int surfY = layer1.surfaceHeight(wx, wz);
+        if (isSolidAt(wx, surfY, wz, 1)) {
+            return 1;
+        }
+
+        return -1;
+    }
+
     // ── Внутренние вычисления ─────────────────────────────────────────────────
 
     private boolean computeHasSolid(int wx, int wz, int fromY) {
