@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.IslandData;
+import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import java.util.ArrayList;
@@ -224,6 +225,72 @@ public final class IslandVaultTrialGenerator {
                 island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
     }
 
+    /**
+     * Размещает Vault и Trial Spawner для одного острова Layer 3 (эллипсоид,
+     * {@code HighIslandGenerator}) согласно выбранному тиру.
+     *
+     * <p>В отличие от {@link #placeForIsland} (Layer 2, {@link IslandShape}),
+     * этот метод не использует {@code IslandShape.isSolid()}/{@code precomputeXZ()} —
+     * у эллипсоидной геометрии Layer 3 их попросту нет. Вместо этого точка
+     * поверхности ищется через {@link HighIslandGenerator#getEllipsoidTopY}/
+     * {@link HighIslandGenerator#getEllipsoidBottomY} (см. {@link #findBuriedSpotEllipsoid}),
+     * которые уже воспроизводят ту же формулу {@code xzSq + dyInv² ≤ 1} и тот
+     * же {@code edgeNoise} (nx/nz), что и {@code HighIslandGenerator.fillChunk}
+     * — иначе кандидат мог бы попасть в шумовой зазор на краю острова.</p>
+     *
+     * <p>Постановка блока/NBT ({@link #placeVault}/{@link #placeTrialSpawner}/
+     * {@link #placeBlockWithEntity}) и расчистка воздуха ({@link #clearAboveBlock})
+     * переиспользуются без изменений — они не знают о геометрии слоя.</p>
+     *
+     * @param region     регион генерации (для записи blockEntity с NBT)
+     * @param generator  генератор Layer 3 (источник {@code getEllipsoidTopY}/{@code getEllipsoidBottomY}/{@code computeXZSq})
+     * @param island     кэшированные данные острова (bounds, radius, {@code ellipsoidAxes})
+     * @param tier       категория богатства спавна для этого острова
+     * @param loot       конфиг loot table (специфичен для слоя/дропа)
+     * @param rng        детерминированный источник случайности (по острову, не по чанку!)
+     * @param chunkX     координата чанка (в чанках), вызвавшего decoration
+     * @param chunkZ     см. {@code chunkX}
+     */
+    public static void placeForEllipsoidIsland(WorldGenLevel region,
+                                                HighIslandGenerator generator,
+                                                IslandData island,
+                                                VaultTrialSpawnTier tier,
+                                                VaultTrialLootConfig loot,
+                                                RandomSource rng,
+                                                int chunkX,
+                                                int chunkZ) {
+
+        List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
+
+        for (int i = 0; i < tier.vaultCount(); i++) {
+            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, placed, chunkX, chunkZ);
+            if (pos == null) continue;
+            if (!placeVault(region, pos, loot)) continue;
+            clearAboveBlock(region, pos);
+            placed.add(pos);
+        }
+
+        for (int i = 0; i < tier.trialSpawnerCount(); i++) {
+            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, placed, chunkX, chunkZ);
+            if (pos == null) continue;
+            if (!placeTrialSpawner(region, pos, loot)) continue;
+            clearAboveBlock(region, pos);
+            placed.add(pos);
+        }
+
+        AeroWorld.LOGGER.debug(
+                "[AeroWorld] IslandVaultTrialGenerator: ellipsoid island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
+                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
+    }
+
+    /**
+     * Консервативный запас от края эллипсоида по XZ — аналог {@code island.radius * 0.7}
+     * из {@link #findBuriedSpot} (Layer 2), но выраженный через {@code xzSq}
+     * (см. {@link HighIslandGenerator#computeXZSq}): {@code xzSq <= 0.49} эквивалентно
+     * "внутри 0.7 нормализованного радиуса эллипсоида".
+     */
+    private static final double ELLIPSOID_INNER_XZ_SQ = 0.7 * 0.7;
+
     // ── Поиск точки внутри тела острова ────────────────────────────────────────
 
     /**
@@ -344,6 +411,81 @@ public final class IslandVaultTrialGenerator {
             // вызов на каждую из MAX_PLACEMENT_ATTEMPTS попыток. Единственная
             // реальная гарантия успешной записи — проверка возвращаемого
             // значения setBlock в placeBlockWithEntity, которая остаётся.
+            return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * Аналог {@link #findBuriedSpot}, но под эллипсоидную геометрию Layer 3
+     * ({@code HighIslandGenerator}) — сплошной эллипсоид без {@link IslandShape}.
+     *
+     * <h3>Почему нельзя переиспользовать {@link #findBuriedSpot}</h3>
+     * {@code findBuriedSpot} завязан на {@code IslandShape.isSolid()}/
+     * {@code precomputeXZ()} — у Layer 3 этой геометрии нет вообще (см. javadoc
+     * {@link #placeForEllipsoidIsland}). Вместо этого поверхность колонки
+     * берётся из {@link HighIslandGenerator#getEllipsoidTopY} — тот же метод,
+     * которым LOD получает реальный Y верхней границы острова, а значит он уже
+     * учитывает {@code edgeNoise} (nx/nz) и формулу {@code xzSq + dyInv² ≤ 1}
+     * идентично {@code HighIslandGenerator.fillChunk}. Без этого шума кандидат
+     * мог бы попасть в шумовой зазор на краю острова, где реального блока нет.
+     *
+     * <p>Все остальные правила (ограничение точки одним чанком decoration,
+     * {@code EFFECTIVE_EXCLUSION_RADIUS} от центра острова — здесь это будущий
+     * excraft:HAUL-01, {@code MIN_SPACING} между уже поставленными структурами)
+     * идентичны {@link #findBuriedSpot} — см. его javadoc за подробным
+     * обоснованием каждой проверки.
+     */
+    private static BlockPos findBuriedSpotEllipsoid(WorldGenLevel region,
+                                                      HighIslandGenerator generator,
+                                                      IslandData island,
+                                                      RandomSource rng,
+                                                      List<BlockPos> alreadyPlaced,
+                                                      int chunkX,
+                                                      int chunkZ) {
+
+        for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+            // Сэмплируем точку строго внутри чанка-инициатора decoration —
+            // та же причина, что и в findBuriedSpot (см. его javadoc):
+            // WorldGenLevel.setBlock тихо отбрасывает запись за пределами
+            // safe-radius decoration-фазы для любого другого чанка.
+            int wx = (chunkX << 4) + rng.nextInt(16);
+            int wz = (chunkZ << 4) + rng.nextInt(16);
+
+            // Не ставим структуру там, где её сфера расчистки (CLEAR_RADIUS)
+            // может дотянуться до зоны будущего excraft:HAUL-01 (origin =
+            // island.cx/cz, см. Layer3StructurePlacer) — тот же принцип, что и
+            // EFFECTIVE_EXCLUSION_RADIUS у Layer 2 (см. его javadoc).
+            double distFromCentreSq = (double) (wx - island.cx) * (wx - island.cx)
+                    + (double) (wz - island.cz) * (wz - island.cz);
+            if (distFromCentreSq < EFFECTIVE_EXCLUSION_RADIUS * EFFECTIVE_EXCLUSION_RADIUS) continue;
+
+            // XZ-проверка "не слишком близко к краю" — эллипсоидный аналог
+            // island.radius * 0.7 у Layer 2 (см. ELLIPSOID_INNER_XZ_SQ). Заодно
+            // отсекает xzSq > 1.0 (вне эллипсоида по XZ), т.к. 0.49 < 1.0.
+            double xzSq = generator.computeXZSq(wx, wz, island);
+            if (xzSq > ELLIPSOID_INNER_XZ_SQ) continue;
+
+            // Верхняя поверхность колонки — та же формула (с тем же edgeNoise),
+            // что fillChunk использовал при заливке острова сплошным камнем.
+            int surfaceY = generator.getEllipsoidTopY(wx, wz, island);
+            if (surfaceY < island.bottomY) continue; // колонка вне острова
+
+            int wy = surfaceY;
+            if (wy <= island.bottomY) continue;
+
+            // Под точкой должна быть твёрдая почва минимум на 2 блока вниз.
+            // Эллипсоид — СПЛОШНОЕ тело (fillChunk заливает камнем весь объём
+            // от columnBottomY до columnTopY в этой XZ-колонке, без полостей),
+            // поэтому достаточно убедиться, что (wy - 2) не ниже нижней границы
+            // эллипсоида в этой колонке — тогда весь диапазон [wy-2, wy] заведомо
+            // внутри сплошного тела и, значит, твёрдый.
+            int columnBottomY = generator.getEllipsoidBottomY(wx, wz, island);
+            if (wy - 2 < columnBottomY) continue;
+
+            BlockPos candidate = new BlockPos(wx, wy, wz);
+            if (tooClose(candidate, alreadyPlaced)) continue;
+
             return candidate;
         }
         return null;

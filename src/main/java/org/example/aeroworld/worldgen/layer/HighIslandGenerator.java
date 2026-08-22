@@ -277,6 +277,33 @@ public class HighIslandGenerator {
                 chunkX, chunkZ, wx, wy, wz, cx, cz, reason);
     }
     /**
+     * Возвращает нормализованное XZ-расстояние ({@code xzSq}) точки (wx, wz)
+     * от центра эллипсоида острова, с учётом той же шумовой деформации края
+     * ({@code edgeNoise}/{@code nx}/{@code nz}), что использует {@link #fillChunk}.
+     *
+     * <p>Формула идентична XZ-части проверки в {@code fillChunk}:
+     * {@code xzSq = ((wx-cx+nx)/ax)² + ((wz-cz+nz)/az)²}. {@code xzSq <= 1.0}
+     * означает "внутри эллипсоида по XZ" (для какого-то Y), {@code xzSq <= 0.49}
+     * (соответствует 0.7 радиуса) — консервативный запас от края, аналогичный
+     * {@code island.radius * 0.7} у Layer 2 ({@code IslandVaultTrialGenerator}).
+     *
+     * <p>Используется генератором Vault/Trial Spawner Layer 3, чтобы искать
+     * точку постановки строго внутри тела острова, не задевая тонкую
+     * приграничную зону.
+     */
+    public double computeXZSq(int wx, int wz, IslandData d) {
+        double ax = d.ellipsoidAxes[0];
+        double az = d.ellipsoidAxes[2];
+
+        double nx = edgeNoise.fbm2D(wx * 0.035,      wz * 0.035,      2, 2.0, 0.5) * noiseDeform;
+        double nz = edgeNoise.fbm2D(wx * 0.035 + 55, wz * 0.035 + 55, 2, 2.0, 0.5) * noiseDeform;
+
+        double dxN = ((wx - d.cx) + nx) / ax;
+        double dzN = ((wz - d.cz) + nz) / az;
+        return dxN * dxN + dzN * dzN;
+    }
+
+    /**
      * Возвращает реальный Y верхней поверхности эллипсоидного острова
      * в точке (wx, wz) с учётом шумовой деформации края — для LOD.
      *

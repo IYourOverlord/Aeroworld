@@ -52,4 +52,25 @@ public record VaultTrialLootConfig(
                     new SpawnPotential(ResourceLocation.withDefaultNamespace("husk"), 1)
             )
     );
+
+    /**
+     * Конфиг loot-таблиц Layer 3 (см. data/aeroworld/loot_table/gameplay/layer3/).
+     *
+     * <p>Дроп — золото, редстоун, железо (без угля и меди), в тех же
+     * пропорциях/весах, что и {@link #LAYER_2}: {@code copper → gold},
+     * {@code coal → redstone}, {@code iron} без изменений. Список мобов
+     * spawn_potentials оставлен таким же, как у Layer 2.</p>
+     */
+    public static final VaultTrialLootConfig LAYER_3 = new VaultTrialLootConfig(
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer3/vault_normal"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer3/vault_ominous"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer3/trial_spawner_normal"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer3/trial_spawner_ominous"),
+            List.of(
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("zombie"), 2),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("skeleton"), 2),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("spider"), 1),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("husk"), 1)
+            )
+    );
 }

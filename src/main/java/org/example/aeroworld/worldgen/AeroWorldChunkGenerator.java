@@ -80,6 +80,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private Layer2StructurePlacer structurePlacer;
     private Layer3StructurePlacer layer3StructurePlacer;
     private org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
+    private org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer layer3VaultTrialPlacer;
     // ─────────────────────────────────────────────────────────────────────────
 
     private StructureSupportValidator structureValidator;
@@ -171,6 +172,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         structurePlacer       = new Layer2StructurePlacer(seed, sharedChunkIslandCache);
         layer3StructurePlacer = new Layer3StructurePlacer(seed, sharedChunkIslandCache);
         layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache);
+        layer3VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer(seed, sharedChunkIslandCache);
         // ─────────────────────────────────────────────────────────────────────
 
         AeroWorld.structureScheduler = new IslandStructureScheduler();
@@ -625,6 +627,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // поэтому вызывается здесь, а не в fillFromNoise.
         if (lowerIslands != null && layer2VaultTrialPlacer != null) {
             layer2VaultTrialPlacer.placeForChunk(region, chunk, lowerIslands, lowerIslands.getShape());
+        }
+
+        // Vault/Trial Spawner на островах Layer 3 (эллипсоиды) — по аналогии с
+        // Layer 2, но через IslandVaultTrialGenerator.placeForEllipsoidIsland
+        // (без IslandShape, геометрия эллипсоида берётся напрямую из
+        // HighIslandGenerator). См. Layer3VaultTrialPlacer javadoc.
+        if (highIslands != null && layer3VaultTrialPlacer != null) {
+            layer3VaultTrialPlacer.placeForChunk(region, chunk, highIslands);
         }
 
         // Генерация руды во всех слоях отключена полностью.
