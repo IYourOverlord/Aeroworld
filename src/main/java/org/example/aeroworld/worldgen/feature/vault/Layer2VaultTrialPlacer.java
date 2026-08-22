@@ -77,7 +77,8 @@ public final class Layer2VaultTrialPlacer {
                             ^ 0xFACE5EEDL);
 
             IslandVaultTrialGenerator.placeForIsland(
-                    region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng);
+                    region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
+                    chunkX, chunkZ);
 
             AeroWorld.LOGGER.debug(
                     "[AeroWorld] Layer2VaultTrialPlacer: island ({},{}) got tier {}.",

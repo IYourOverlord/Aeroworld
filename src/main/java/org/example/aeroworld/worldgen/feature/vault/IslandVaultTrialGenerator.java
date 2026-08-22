@@ -64,6 +64,19 @@ public final class IslandVaultTrialGenerator {
     /** Минимальное расстояние (в блоках) между уже поставленными Vault/Trial на одном острове. */
     private static final double MIN_SPACING = 6.0;
 
+    /**
+     * Безопасный отступ (в блоках) от границы чанка, вызвавшего декорацию.
+     * Кандидатная точка обязана лежать строго внутри {@code [chunkMinX + margin, chunkMaxX - margin]}
+     * (аналогично по Z), где margin учитывает {@link #CLEAR_RADIUS} расчистки площадки
+     * вокруг блока — иначе {@link #clearAboveBlock} и последующая запись blockEntity
+     * могут задеть соседний чанк, который на момент вызова {@code applyBiomeDecoration}
+     * ещё не гарантированно декорирован. Запись/чтение чужого недекорированного чанка
+     * через {@link WorldGenLevel#getChunk} — основная причина, по которой Trial Spawner
+     * теряет свой NBT-конфиг (спавнится без {@code spawn_potentials}) или структура
+     * пропадает вовсе при последующей генерации того чанка.
+     */
+    private static final int CHUNK_SAFETY_MARGIN = CLEAR_RADIUS + 1;
+
     private IslandVaultTrialGenerator() {
     }
 
@@ -77,6 +90,9 @@ public final class IslandVaultTrialGenerator {
      * @param tier       категория богатства спавна для этого острова
      * @param loot       конфиг loot table (специфичен для слоя/дропа)
      * @param rng        детерминированный источник случайности (по острову, не по чанку!)
+     * @param chunkX     координата чанка (в чанках), вызвавшего decoration — точка размещения
+     *                   обязана остаться внутри него (см. {@link #CHUNK_SAFETY_MARGIN})
+     * @param chunkZ     см. {@code chunkX}
      */
     public static void placeForIsland(WorldGenLevel region,
                                        IslandShape shape,
@@ -84,12 +100,14 @@ public final class IslandVaultTrialGenerator {
                                        double noiseDeform,
                                        VaultTrialSpawnTier tier,
                                        VaultTrialLootConfig loot,
-                                       RandomSource rng) {
+                                       RandomSource rng,
+                                       int chunkX,
+                                       int chunkZ) {
 
         List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
 
         for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
             if (pos == null) continue;
             placeVault(region, pos, loot);
             clearAboveBlock(region, pos);
@@ -97,7 +115,7 @@ public final class IslandVaultTrialGenerator {
         }
 
         for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
             if (pos == null) continue;
             placeTrialSpawner(region, pos, loot);
             clearAboveBlock(region, pos);
@@ -105,8 +123,8 @@ public final class IslandVaultTrialGenerator {
         }
 
         AeroWorld.LOGGER.debug(
-                "[AeroWorld] IslandVaultTrialGenerator: island ({},{}) tier={} placed {} structure(s).",
-                island.cx, island.cz, tier, placed.size());
+                "[AeroWorld] IslandVaultTrialGenerator: island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
+                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
     }
 
     // ── Поиск точки внутри тела острова ────────────────────────────────────────
@@ -119,23 +137,62 @@ public final class IslandVaultTrialGenerator {
      * <p>Использует ту же {@link IslandShape#isSolid} математику, что и fillChunk
      * слоя, поэтому гарантированно попадает на реальную поверхность острова
      * (с учётом деформации края), а не в пустоту рядом с ним.</p>
+     *
+     * <h3>Почему точка обязана лежать внутри вызвавшего чанка</h3>
+     * Остров ({@code island.radius}) обычно значительно больше 16×16 блоков
+     * одного чанка, а {@link Layer2VaultTrialPlacer#placeForChunk} вызывается
+     * из {@code applyBiomeDecoration} для одного конкретного чанка. Если бы
+     * кандидатная точка могла оказаться в соседнем чанке, то запись блока
+     * и его {@code blockEntity} (см. {@link #placeBlockWithEntity}) шла бы
+     * через {@code region.getChunk(pos)} в чанк, который на этот момент
+     * не гарантированно декорирован — такая запись либо не переживает
+     * последующую генерацию того чанка (NBT конфига Trial Spawner теряется,
+     * из-за чего он спавнится без {@code spawn_potentials} и никогда не
+     * запускает испытание), либо структура пропадает целиком. Поэтому поиск
+     * жёстко ограничен текущим чанком (с отступом {@link #CHUNK_SAFETY_MARGIN}
+     * от его границ) — независимо от того, насколько большой остров.
      */
     private static BlockPos findBuriedSpot(WorldGenLevel region,
                                             IslandShape shape,
                                             IslandData island,
                                             double noiseDeform,
                                             RandomSource rng,
-                                            List<BlockPos> alreadyPlaced) {
+                                            List<BlockPos> alreadyPlaced,
+                                            int chunkX,
+                                            int chunkZ) {
 
         // Ограничиваем поиск внутренними ~70% радиуса, чтобы не задевать тонкий
         // деформированный край острова (там мало толщи почвы под поверхностью).
         double innerRadius = island.radius * 0.7;
+
+        // Безопасные границы текущего чанка (включительно), с отступом от
+        // краёв на CHUNK_SAFETY_MARGIN — см. javadoc метода и константы.
+        int minX = (chunkX << 4) + CHUNK_SAFETY_MARGIN;
+        int maxX = (chunkX << 4) + 15 - CHUNK_SAFETY_MARGIN;
+        int minZ = (chunkZ << 4) + CHUNK_SAFETY_MARGIN;
+        int maxZ = (chunkZ << 4) + 15 - CHUNK_SAFETY_MARGIN;
+
+        // island.cx/cz всегда внутри этого чанка (вызывающая сторона гарантирует
+        // это — см. Layer2VaultTrialPlacer.placeForChunk), но остров сам по себе
+        // часто больше одного чанка. Подрезаем радиус поиска расстоянием до
+        // ближайшей безопасной границы чанка, иначе большая часть попыток из
+        // MAX_PLACEMENT_ATTEMPTS уйдёт впустую на точки, заведомо отбракованные
+        // проверкой границ чанка ниже.
+        double maxDistToChunkEdge = Math.min(
+                Math.min(island.cx - minX, maxX - island.cx),
+                Math.min(island.cz - minZ, maxZ - island.cz));
+        if (maxDistToChunkEdge < 0) return null; // остров вплотную к недекорируемому краю чанка
+        innerRadius = Math.min(innerRadius, maxDistToChunkEdge);
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
             double angle = rng.nextDouble() * Math.PI * 2.0;
             double dist  = rng.nextDouble() * innerRadius;
             int wx = island.cx + (int) Math.round(Math.cos(angle) * dist);
             int wz = island.cz + (int) Math.round(Math.sin(angle) * dist);
+
+            // Точка обязана остаться в пределах вызвавшего чанка (с запасом) —
+            // иначе пропускаем кандидата, не тратя время на isSolid-математику.
+            if (wx < minX || wx > maxX || wz < minZ || wz > maxZ) continue;
 
             IslandShape.XZCache xz = shape.precomputeXZ(
                     wx, wz, island.cx, island.cz, island.radius, noiseDeform,
@@ -158,6 +215,12 @@ public final class IslandVaultTrialGenerator {
 
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;
+
+            // Вторичная защита: если по каким-то причинам регион не считает
+            // чанк этой точки доступным для записи (ещё не сгенерирован до
+            // нужной стадии), пропускаем — лучше не поставить структуру,
+            // чем поставить её с потерянным при последующей генерации NBT.
+            if (!region.hasChunk(candidate.getX() >> 4, candidate.getZ() >> 4)) continue;
 
             return candidate;
         }
