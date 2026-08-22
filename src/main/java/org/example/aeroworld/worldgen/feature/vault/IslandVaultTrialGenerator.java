@@ -30,12 +30,15 @@ import java.util.List;
  *       передав {@link IslandShape} этого слоя и параметры тела острова.</li>
  * </ol>
  *
- * <h3>Почему "рядом с поверхностью острова, а не сверху на ней"</h3>
- * Блок "врыт" в землю на {@link #BURY_DEPTH} блок — верхняя грань стоит на
- * уровне поверхности острова, а над ней и вокруг расчищена небольшая площадка
- * воздуха (см. {@link #clearAboveBlock}). Это не декорация поверх острова
- * (блок не "парит" над землёй) и не замуровка в толще камня — он врыт вровень
- * с землёй и виден сверху, как и природные Vault/Trial Spawner в trial chambers.
+ * <h3>Почему "на поверхности острова, заменяя верхний слой земли"</h3>
+ * Блок ставится на {@code surfaceY} — том же Y, на котором fillChunk слоя
+ * поставил верхний grass/dirt блок острова — и тем самым заменяет его
+ * (см. {@link #placeVault}/{@link #placeTrialSpawner}, которые вызывают
+ * {@code region.setBlock} на этой позиции). Сверху расчищена небольшая
+ * площадка воздуха (см. {@link #clearAboveBlock}). Так блок не "парит" над
+ * землёй и не оказывается погребён под нетронутым верхним слоем почвы —
+ * последнее раньше блокировало spawn_range Trial Spawner твёрдым блоком
+ * прямо сверху, из-за чего мобы не могли заспавниться.
  *
  * <h3>Почему запись через {@link WorldGenLevel}, а не {@link net.minecraft.world.level.chunk.ChunkAccess}</h3>
  * Vault и Trial Spawner — блоки с {@link BlockEntity} (NBT-конфиг loot table).
@@ -49,9 +52,6 @@ public final class IslandVaultTrialGenerator {
     private static final BlockState BS_VAULT         = Blocks.VAULT.defaultBlockState();
     private static final BlockState BS_TRIAL_SPAWNER  = Blocks.TRIAL_SPAWNER.defaultBlockState();
 
-    /** Насколько глубоко "врыт" блок: 1 — верх блока на уровне земли, сам блок в предыдущем слое почвы. */
-    private static final int BURY_DEPTH = 1;
-
     /** Сколько блоков воздуха расчищаем над поставленным блоком (высота самого блока + запас). */
     private static final int OPEN_ABOVE_BLOCKS = 3;
 
@@ -63,19 +63,6 @@ public final class IslandVaultTrialGenerator {
 
     /** Минимальное расстояние (в блоках) между уже поставленными Vault/Trial на одном острове. */
     private static final double MIN_SPACING = 6.0;
-
-    /**
-     * Безопасный отступ (в блоках) от границы чанка, вызвавшего декорацию.
-     * Кандидатная точка обязана лежать строго внутри {@code [chunkMinX + margin, chunkMaxX - margin]}
-     * (аналогично по Z), где margin учитывает {@link #CLEAR_RADIUS} расчистки площадки
-     * вокруг блока — иначе {@link #clearAboveBlock} и последующая запись blockEntity
-     * могут задеть соседний чанк, который на момент вызова {@code applyBiomeDecoration}
-     * ещё не гарантированно декорирован. Запись/чтение чужого недекорированного чанка
-     * через {@link WorldGenLevel#getChunk} — основная причина, по которой Trial Spawner
-     * теряет свой NBT-конфиг (спавнится без {@code spawn_potentials}) или структура
-     * пропадает вовсе при последующей генерации того чанка.
-     */
-    private static final int CHUNK_SAFETY_MARGIN = CLEAR_RADIUS + 1;
 
     private IslandVaultTrialGenerator() {
     }
@@ -90,8 +77,8 @@ public final class IslandVaultTrialGenerator {
      * @param tier       категория богатства спавна для этого острова
      * @param loot       конфиг loot table (специфичен для слоя/дропа)
      * @param rng        детерминированный источник случайности (по острову, не по чанку!)
-     * @param chunkX     координата чанка (в чанках), вызвавшего decoration — точка размещения
-     *                   обязана остаться внутри него (см. {@link #CHUNK_SAFETY_MARGIN})
+     * @param chunkX     координата чанка (в чанках), вызвавшего decoration — используется
+     *                    только для диагностического лога, поиск точки им не ограничен
      * @param chunkZ     см. {@code chunkX}
      */
     public static void placeForIsland(WorldGenLevel region,
@@ -107,7 +94,7 @@ public final class IslandVaultTrialGenerator {
         List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
 
         for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
             placeVault(region, pos, loot);
             clearAboveBlock(region, pos);
@@ -115,7 +102,7 @@ public final class IslandVaultTrialGenerator {
         }
 
         for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed);
             if (pos == null) continue;
             placeTrialSpawner(region, pos, loot);
             clearAboveBlock(region, pos);
@@ -130,69 +117,53 @@ public final class IslandVaultTrialGenerator {
     // ── Поиск точки внутри тела острова ────────────────────────────────────────
 
     /**
-     * Ищет случайную точку на поверхности острова, куда можно "врыть" блок
-     * на 1 блок вглубь земли — верхняя грань блока на уровне поверхности,
-     * а над ней открытый воздух (блок торчит из земли, видимый сверху).
+     * Ищет случайную точку на поверхности острова, куда можно поставить блок
+     * вровень с землёй — сама точка (surfaceY) станет позицией Vault/Trial
+     * Spawner, заменив исходный верхний grass/dirt блок острова.
      *
      * <p>Использует ту же {@link IslandShape#isSolid} математику, что и fillChunk
      * слоя, поэтому гарантированно попадает на реальную поверхность острова
      * (с учётом деформации края), а не в пустоту рядом с ним.</p>
      *
-     * <h3>Почему точка обязана лежать внутри вызвавшего чанка</h3>
-     * Остров ({@code island.radius}) обычно значительно больше 16×16 блоков
-     * одного чанка, а {@link Layer2VaultTrialPlacer#placeForChunk} вызывается
-     * из {@code applyBiomeDecoration} для одного конкретного чанка. Если бы
-     * кандидатная точка могла оказаться в соседнем чанке, то запись блока
-     * и его {@code blockEntity} (см. {@link #placeBlockWithEntity}) шла бы
-     * через {@code region.getChunk(pos)} в чанк, который на этот момент
-     * не гарантированно декорирован — такая запись либо не переживает
-     * последующую генерацию того чанка (NBT конфига Trial Spawner теряется,
-     * из-за чего он спавнится без {@code spawn_potentials} и никогда не
-     * запускает испытание), либо структура пропадает целиком. Поэтому поиск
-     * жёстко ограничен текущим чанком (с отступом {@link #CHUNK_SAFETY_MARGIN}
-     * от его границ) — независимо от того, насколько большой остров.
+     * <h3>Почему точка НЕ ограничена одним чанком</h3>
+     * Остров ({@code island.radius}, 25–110 блоков для Layer 2) обычно
+     * значительно больше 16×16 блоков одного чанка, а {@code applyBiomeDecoration}
+     * работает с {@link WorldGenLevel}, который в фазе decoration уже покрывает
+     * запас в несколько чанков вокруг чанка-инициатора — этого запаса, как
+     * правило, достаточно для всего острова. Вместо жёсткой геометрической
+     * границы (которая раньше почти обнуляла область поиска и убивала
+     * генерацию структур) используется точечная проверка {@code region.hasChunk}
+     * на самом кандидате — она отбраковывает только реально недоступные точки,
+     * не сужая поиск заранее.
      */
     private static BlockPos findBuriedSpot(WorldGenLevel region,
                                             IslandShape shape,
                                             IslandData island,
                                             double noiseDeform,
                                             RandomSource rng,
-                                            List<BlockPos> alreadyPlaced,
-                                            int chunkX,
-                                            int chunkZ) {
+                                            List<BlockPos> alreadyPlaced) {
 
         // Ограничиваем поиск внутренними ~70% радиуса, чтобы не задевать тонкий
         // деформированный край острова (там мало толщи почвы под поверхностью).
+        //
+        // ВАЖНО: радиус острова Layer 2 (25–110 блоков, см. Layer2Settings)
+        // почти всегда больше одного чанка (16×16), поэтому кандидатная точка
+        // намеренно НЕ ограничивается границами chunkX/chunkZ — такое
+        // ограничение раньше практически обнуляло область поиска и убивало
+        // генерацию структур почти на всех островах. Вместо этого ниже
+        // используется честная проверка region.hasChunk(...) на конкретной
+        // кандидатной точке: WorldGenRegion в фазе decoration уже покрывает
+        // запас в несколько чанков вокруг чанка-инициатора (обычно даже
+        // больше диаметра острова), так что это не сужает поиск, а лишь
+        // отбраковывает те редкие случаи, когда точка реально уходит за
+        // пределы доступного региона.
         double innerRadius = island.radius * 0.7;
-
-        // Безопасные границы текущего чанка (включительно), с отступом от
-        // краёв на CHUNK_SAFETY_MARGIN — см. javadoc метода и константы.
-        int minX = (chunkX << 4) + CHUNK_SAFETY_MARGIN;
-        int maxX = (chunkX << 4) + 15 - CHUNK_SAFETY_MARGIN;
-        int minZ = (chunkZ << 4) + CHUNK_SAFETY_MARGIN;
-        int maxZ = (chunkZ << 4) + 15 - CHUNK_SAFETY_MARGIN;
-
-        // island.cx/cz всегда внутри этого чанка (вызывающая сторона гарантирует
-        // это — см. Layer2VaultTrialPlacer.placeForChunk), но остров сам по себе
-        // часто больше одного чанка. Подрезаем радиус поиска расстоянием до
-        // ближайшей безопасной границы чанка, иначе большая часть попыток из
-        // MAX_PLACEMENT_ATTEMPTS уйдёт впустую на точки, заведомо отбракованные
-        // проверкой границ чанка ниже.
-        double maxDistToChunkEdge = Math.min(
-                Math.min(island.cx - minX, maxX - island.cx),
-                Math.min(island.cz - minZ, maxZ - island.cz));
-        if (maxDistToChunkEdge < 0) return null; // остров вплотную к недекорируемому краю чанка
-        innerRadius = Math.min(innerRadius, maxDistToChunkEdge);
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
             double angle = rng.nextDouble() * Math.PI * 2.0;
             double dist  = rng.nextDouble() * innerRadius;
             int wx = island.cx + (int) Math.round(Math.cos(angle) * dist);
             int wz = island.cz + (int) Math.round(Math.sin(angle) * dist);
-
-            // Точка обязана остаться в пределах вызвавшего чанка (с запасом) —
-            // иначе пропускаем кандидата, не тратя время на isSolid-математику.
-            if (wx < minX || wx > maxX || wz < minZ || wz > maxZ) continue;
 
             IslandShape.XZCache xz = shape.precomputeXZ(
                     wx, wz, island.cx, island.cz, island.radius, noiseDeform,
@@ -204,22 +175,30 @@ public final class IslandVaultTrialGenerator {
             int surfaceY = binarySearchTopSurface(shape, island, xz);
             if (surfaceY < island.bottomY) continue;
 
-            // Блок "врыт" на BURY_DEPTH ниже поверхности — верхняя часть
-            // остаётся на уровне земли, открытая сверху (не в толще камня).
-            int wy = surfaceY - BURY_DEPTH;
+            // Блок ставится ВРОВЕНЬ с поверхностью острова (на surfaceY, том же
+            // Y, где fillChunk слоя поставил верхний grass/dirt блок) — этот
+            // блок далее заменяется постановкой Vault/Trial Spawner, а не
+            // остаётся нетронутым НАД структурой. Раньше здесь стоял
+            // surfaceY - BURY_DEPTH: спавнер оказывался на блок НИЖЕ земли,
+            // а верхний слой почвы (surfaceY) не расчищался вообще —
+            // структура была буквально погребена под этим слоем земли, и
+            // spawn_range Trial Spawner был перекрыт твёрдым блоком сверху,
+            // из-за чего мобы физически не могли заспавниться (Cooldown
+            // оставался 0s бесконечно).
+            int wy = surfaceY;
             if (wy <= island.bottomY) continue;
 
             // Под точкой должна быть твёрдая почва (не пустота/обрыв края острова).
-            if (!shape.isSolid(wy, island.bottomY, island.topY, xz)) continue;
             if (!shape.isSolid(wy - 1, island.bottomY, island.topY, xz)) continue;
+            if (!shape.isSolid(wy - 2, island.bottomY, island.topY, xz)) continue;
 
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;
 
-            // Вторичная защита: если по каким-то причинам регион не считает
-            // чанк этой точки доступным для записи (ещё не сгенерирован до
-            // нужной стадии), пропускаем — лучше не поставить структуру,
-            // чем поставить её с потерянным при последующей генерации NBT.
+            // Единственная защита от записи в недекорированный/недоступный
+            // чанк: если region его не считает загруженным — пропускаем,
+            // лучше не поставить структуру, чем поставить её с NBT, который
+            // не переживёт последующую генерацию того чанка.
             if (!region.hasChunk(candidate.getX() >> 4, candidate.getZ() >> 4)) continue;
 
             return candidate;
@@ -248,22 +227,27 @@ public final class IslandVaultTrialGenerator {
     /**
      * Расчищает небольшую воздушную площадку над и вокруг только что
      * поставленного блока — {@link #CLEAR_RADIUS} блоков в стороны,
-     * {@link #OPEN_ABOVE_BLOCKS} блоков вверх.
+     * {@link #OPEN_ABOVE_BLOCKS} блоков вверх, начиная с {@code pos.y + 1}
+     * (сам {@code pos} уже занят Vault/Trial Spawner, поставленным заранее
+     * через {@link #placeBlockWithEntity} — он и заменил исходный grass/dirt
+     * той колонки).
      *
-     * <p>fillChunk слоя уже поставил grass/dirt поверх этой колонки до вызова
-     * генератора (см. {@code applyBiomeDecoration}), поэтому без явной расчистки
-     * поставленный блок останется погребён под травой, а не "торчащим из земли".</p>
+     * <p>Критично не начинать расчистку с {@code pos} — тогда исходный
+     * верхний слой почвы прямо НАД блоком остался бы нетронутым и перекрывал
+     * бы {@code spawn_range} Trial Spawner сверху твёрдым блоком: спавнер
+     * выглядел бы погребённым в земле, а попытки заспавнить моба
+     * проваливались бы одна за другой, никогда не переходя в фазу наград.</p>
      *
      * <p>Для Trial Spawner расчистка площадки, а не только столба, важна и
      * функционально: спавнер проверяет line-of-sight и требует свободное место
-     * в радиусе {@code spawn_range} вокруг себя, иначе попытки спавна мобов
-     * проваливаются одна за другой и он никогда не переходит в фазу наград.</p>
+     * в радиусе {@code spawn_range} вокруг себя.</p>
      */
     private static void clearAboveBlock(WorldGenLevel region, BlockPos pos) {
         BlockPos.MutableBlockPos cursor = pos.mutable();
-        for (int dy = 1; dy <= OPEN_ABOVE_BLOCKS; dy++) {
+        for (int dy = 0; dy <= OPEN_ABOVE_BLOCKS; dy++) {
             for (int dx = -CLEAR_RADIUS; dx <= CLEAR_RADIUS; dx++) {
                 for (int dz = -CLEAR_RADIUS; dz <= CLEAR_RADIUS; dz++) {
+                    if (dy == 0 && dx == 0 && dz == 0) continue; // сам блок структуры — не трогаем
                     cursor.set(pos.getX() + dx, pos.getY() + dy, pos.getZ() + dz);
                     if (!region.getBlockState(cursor).isAir()) {
                         region.setBlock(cursor, Blocks.AIR.defaultBlockState(), 3);
