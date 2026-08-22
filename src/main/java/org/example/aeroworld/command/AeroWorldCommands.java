@@ -194,7 +194,7 @@ public final class AeroWorldCommands {
     /**
      * {@code /aeroworld findIsland2} и {@code /aeroworld findIsland3} — тот же
      * спиральный поиск, что и {@link #runFindIsland4}, но по сетке
-     * {@link org.example.aeroworld.worldgen.layer.LowerIslandGenerator}.
+     * {@link LowerIslandGenerator}.
      * Layer2StructurePlacer/Layer3StructurePlacer/руды слоёв 2 и 3 работают
      * на этой же самой островной сетке (см. {@code lowerIslands} в
      * {@link AeroWorldChunkGenerator}), отдельной сетки у них нет —

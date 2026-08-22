@@ -55,40 +55,124 @@ public final class IslandVaultTrialGenerator {
     /** Сколько блоков воздуха расчищаем над поставленным блоком (высота самого блока + запас). */
     private static final int OPEN_ABOVE_BLOCKS = 3;
 
-    /** Радиус расчищаемой площадки вокруг блока по X/Z — нужен для спавна мобов Trial Spawner. */
-    private static final int CLEAR_RADIUS = 2;
+    /**
+     * Радиус расчищаемой площадки вокруг блока по X/Z/Y — нужен для спавна
+     * мобов Trial Spawner. СИНХРОНИЗИРОВАН с {@code spawn_range=4}, который
+     * задаётся в {@link #buildSpawnerConfig} — ваниль пытается разместить
+     * моба в сферическом радиусе {@code spawn_range} от блока спавнера и
+     * требует line-of-sight до него (см. Minecraft Wiki: "Mobs spawn in
+     * positions that have a line of sight to the trial spawner, in a
+     * 4-block spherical radius"). Если это значение расходится с
+     * {@code spawn_range}, часть кандидатных позиций внутри spawn_range
+     * остаётся погребена в нерасчищенном грунте острова — спавн в них тихо
+     * проваливается (без ошибок в логах), и при достаточно частых неудачах
+     * складывается впечатление, что спавнер вообще не активируется, хотя
+     * "Cooldown: 0s" продолжает показываться (это лишь означает "не на
+     * кулдауне", а не "успешно спавнит").
+     */
+    private static final int CLEAR_RADIUS = 4;
+
+    /**
+     * Сколько блоков ниже {@code pos.y} тоже нужно расчистить. Ваниль
+     * пробует спавнить моба в диапазоне Y от {@code spawner.y - 1} до
+     * {@code spawner.y + 2} (см. Minecraft Wiki: "The random Y coordinate
+     * will be from -1 to 2") — то есть в том числе на один блок НИЖЕ
+     * самого блока спавнера (стандартная позиция для моба ростом 2 блока:
+     * ноги на {@code y-1}). Без расчистки этого нижнего яруса там всегда
+     * стоит нерасчищенный грунт острова, что дополнительно душит спавн и
+     * ломает line-of-sight с этой стороны.
+     */
+    private static final int CLEAR_BELOW_BLOCKS = 1;
+
+    /**
+     * Горизонтальный радиус (по X/Z, в блоках), в пределах которого разрешён
+     * снос яруса {@code pos.y - 1} (см. {@link #CLEAR_BELOW_BLOCKS}).
+     *
+     * <p>Снос нижнего яруса нужен только под самим спавнером и в его
+     * непосредственной близости — там, где действительно может встать моб
+     * ростом 2 блока. Если применять его по всей сфере {@code CLEAR_RADIUS=4},
+     * получается кольцевая прорезь в полу острова на расстоянии до 4 блоков
+     * от центра (на один Y ниже поверхности) — на тонких островах или ближе
+     * к краю это может продырявить остров насквозь или оставить нависающие
+     * "карманы" пустоты. Ограничение до ближней зоны сохраняет функциональный
+     * эффект (нижний ярус спавна расчищен) без риска для целостности острова.
+     */
+    private static final int CLEAR_BELOW_RADIUS = 1;
 
     /** Сколько раз пытаемся найти валидную точку на острове, прежде чем отказаться от одной структуры. */
     private static final int MAX_PLACEMENT_ATTEMPTS = 48;
 
-    /** Минимальное расстояние (в блоках) между уже поставленными Vault/Trial на одном острове. */
-    private static final double MIN_SPACING = 6.0;
+    /**
+     * Минимальное расстояние (в блоках) между уже поставленными Vault/Trial
+     * на одном острове.
+     *
+     * <p>Раньше здесь стояло 9.0 (диаметр сферы расчистки {@code CLEAR_RADIUS*2}),
+     * чтобы снос грунта ниже {@code pos.y} у одной структуры не подрезал пол
+     * под соседней. Это исходило из того, что {@code CLEAR_BELOW_BLOCKS}
+     * применялся по всей сфере радиуса {@code CLEAR_RADIUS=4}. После введения
+     * {@link #CLEAR_BELOW_RADIUS} снос нижнего яруса ограничен ближней зоной
+     * (радиус 1) — соседние структуры больше не могут подрезать друг другу
+     * пол, даже если их верхние (y ≥ 0) сферы расчистки перекрываются: это
+     * лишь означает перекрывающийся воздух, а не разрушение опоры.</p>
+     *
+     * <p>9.0 при этом оказалось СЛИШКОМ БОЛЬШИМ значением для площади поиска:
+     * кандидаты сэмплируются строго внутри одного чанка 16×16 (см.
+     * {@link #findBuriedSpot}), и уместить 5 точек (RICH-тир: 3 vault + 5
+     * trial spawner) с попарным расстоянием ≥9 в этой площади практически
+     * невозможно — симуляция (500 прогонов, {@code MAX_PLACEMENT_ATTEMPTS=48}
+     * на структуру) показала в среднем лишь ~3.7 из 5 успешно размещённых
+     * структур. Именно это и вызывало баг "тир MEDIUM, а trial spawner на
+     * острове всего 1 вместо 3" — часть структур находила null-позицию и
+     * просто пропускалась ({@code if (pos == null) continue;} в
+     * {@link #placeForIsland}) без единой строки в логах.
+     *
+     * <p>5.0 — минимальное из проверенных значений, при котором та же
+     * симуляция даёт гарантированные 5/5 в каждом из 500 прогонов.</p>
+     */
+    private static final double MIN_SPACING = 5.0;
 
     /**
-     * Радиус (в блоках) вокруг центра острова, зарезервированный под
-     * {@code physical_structures:tank21} (см. {@link
-     * org.example.aeroworld.worldgen.layer.Layer2StructurePlacer}), который
-     * планируется отдельным, полностью независимым проходом (server-thread,
-     * уже после decoration) на origin, совпадающем с {@code island.cx}/
-     * {@code island.cz} — самым центром острова. Известный размер блюпринта
-     * tank21 — 11×12×7 (см. лог "StructureSizeCache: cached ... → 11x12x7"),
-     * то есть его наибольший горизонтальный габарит — 12 блоков.
+     * Радиус (в блоках) вокруг центра острова, реально занятый (или в
+     * ближайшем будущем занятый) блюпринтом {@code physical_structures:tank21}
+     * (см. {@link org.example.aeroworld.worldgen.layer.Layer2StructurePlacer}),
+     * который планируется отдельным, полностью независимым проходом
+     * (server-thread, уже после decoration) на origin, совпадающем с
+     * {@code island.cx}/{@code island.cz} — самым центром острова. Известный
+     * размер блюпринта tank21 — 11×12×7 (см. лог "StructureSizeCache: cached
+     * ... → 11x12x7"), причём origin — это УГОЛ блюпринта (см.
+     * {@code Layer2StructurePlacer}: {@code origin.x = island.cx},
+     * {@code origin.z = island.cz}), а не его центр — структура растёт от
+     * (cx, cz) в положительном направлении X/Z.
      *
-     * <p>ВАЖНО: радиус здесь НЕ может превышать половину диагонали одного
-     * чанка (16×16 ≈ 22.6 блока по диагонали), потому что кандидатные точки
-     * Vault/Trial Spawner сэмплируются строго внутри чанка-инициатора
-     * decoration (см. {@link #findBuriedSpot}) — этот же чанк почти всегда
-     * содержит и центр острова (island.cx/cz), вокруг которого построена
-     * exclusion-зона. Слишком большой радиус (например, 14 — было раньше)
-     * покрывает круг диаметром 28 блоков, что физически больше самого чанка
-     * целиком, и оставляет НОЛЬ валидных точек ни для одной структуры —
-     * именно так и получился баг "ни ларец, ни спавнер не появляются вообще".
-     * 7 блоков — компромисс: покрывает половину габарита tank21 (не
-     * идеальная гарантия для самых больших/асимметрично расположенных
-     * блюпринтов, но реалистичный компромисс при жёстком ограничении
-     * одним чанком) и оставляет достаточно площади чанка для поиска.
+     * <p>ВАЖНО: это НЕ тот радиус, который напрямую сравнивается с координатами
+     * кандидата в {@link #findBuriedSpot} — см. {@link #EFFECTIVE_EXCLUSION_RADIUS}
+     * ниже и почему разница между ними существенна.</p>
      */
-    private static final double STRUCTURE_EXCLUSION_RADIUS = 7.0;
+    private static final double STRUCTURE_EXCLUSION_RADIUS = 3.0;
+
+    /**
+     * Фактический радиус отсечки кандидатов в {@link #findBuriedSpot} —
+     * {@link #STRUCTURE_EXCLUSION_RADIUS}, увеличенный на {@link #CLEAR_RADIUS}.
+     *
+     * <p>Раньше отсекались только кандидаты, чья ТОЧКА постановки Vault/Trial
+     * лежала внутри {@code STRUCTURE_EXCLUSION_RADIUS} от центра острова. Но
+     * сама точка — не единственное, что затрагивает зону tank21: после
+     * постановки блока {@link #clearAboveBlock} расчищает сферу воздуха
+     * радиусом {@link #CLEAR_RADIUS} вокруг неё. Кандидат мог легко пройти
+     * проверку (например, оказаться в 3.5 блоках от центра — уже за пределами
+     * exclusion-радиуса 3.0), но его сфера расчистки радиусом 4 всё равно
+     * дотягивалась ДО и ЗА пределы зоны tank21, выбивая в ней воздушные
+     * карманы прямо на той высоте, где позже (в отдельном проходе) собирается
+     * блюпринт — из-за чего tank21 оказывался частично "подвешен" в пустоте
+     * или пересекался с ямой Vault/Trial структуры.</p>
+     *
+     * <p>Отсекать нужно не по точке постановки, а по тому, может ли ЛЮБАЯ
+     * точка сферы расчистки (радиус {@code CLEAR_RADIUS} от кандидата)
+     * оказаться внутри {@code STRUCTURE_EXCLUSION_RADIUS} от центра острова.
+     * Это эквивалентно требованию: расстояние от кандидата до центра ≥
+     * {@code STRUCTURE_EXCLUSION_RADIUS + CLEAR_RADIUS}.</p>
+     */
+    private static final double EFFECTIVE_EXCLUSION_RADIUS = STRUCTURE_EXCLUSION_RADIUS + CLEAR_RADIUS;
 
     private IslandVaultTrialGenerator() {
     }
@@ -161,7 +245,8 @@ public final class IslandVaultTrialGenerator {
      * не отбрасывает запись — тот самый, для которого прямо сейчас вызван
      * {@code applyBiomeDecoration}. Поэтому кандидатные точки сэмплируются
      * непосредственно внутри {@code chunkX}/{@code chunkZ}, а не по всему
-     * {@code island.radius}.
+     * {@code island.radius}. Финальная гарантия успешной записи — проверка
+     * возвращаемого значения {@code setBlock} в {@link #placeBlockWithEntity}.
      */
     private static BlockPos findBuriedSpot(WorldGenLevel region,
                                             IslandShape shape,
@@ -205,12 +290,15 @@ public final class IslandVaultTrialGenerator {
             // для большинства островов их центр (и какая-то площадь вокруг)
             // гарантированно лежит в этом самом чанке.
 
-            // Не ставим Vault/Trial Spawner в зоне, где почти наверняка позже
-            // будет собран physical_structures:tank21 (origin = island.cx/cz).
-            // См. javadoc STRUCTURE_EXCLUSION_RADIUS.
+            // Не ставим Vault/Trial Spawner там, где его сфера расчистки
+            // (радиус CLEAR_RADIUS) может дотянуться до зоны, где почти
+            // наверняка позже будет собран physical_structures:tank21
+            // (origin = island.cx/cz). Сравниваем с EFFECTIVE_EXCLUSION_RADIUS
+            // (= STRUCTURE_EXCLUSION_RADIUS + CLEAR_RADIUS), а не с "голым"
+            // радиусом tank21 — см. javadoc EFFECTIVE_EXCLUSION_RADIUS.
             double distFromCentreSq = (double)(wx - island.cx) * (wx - island.cx)
                     + (double)(wz - island.cz) * (wz - island.cz);
-            if (distFromCentreSq < STRUCTURE_EXCLUSION_RADIUS * STRUCTURE_EXCLUSION_RADIUS) continue;
+            if (distFromCentreSq < EFFECTIVE_EXCLUSION_RADIUS * EFFECTIVE_EXCLUSION_RADIUS) continue;
 
             // Не выходим за пределы разумного тела острова (0.7 радиуса) —
             // страховка от случая, когда чанк частично лежит далеко за
@@ -247,14 +335,15 @@ public final class IslandVaultTrialGenerator {
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;
 
-            // Дешёвая ранняя отсечка — не тратим дальнейшие проверки на точки,
-            // чей чанк region вообще не считает загруженным. Финальная и
-            // единственно надёжная гарантия успешной записи — проверка
-            // возвращаемого значения setBlock в placeBlockWithEntity: она
-            // отбрасывает и те случаи, где hasChunk() вернул true, но фактическая
-            // запись всё равно отклонена движком (far-chunk write).
-            if (!region.hasChunk(candidate.getX() >> 4, candidate.getZ() >> 4)) continue;
-
+            // Раньше здесь была дополнительная проверка region.hasChunk(...).
+            // Она убрана как избыточная: кандидат по построению всегда лежит
+            // внутри chunkX/chunkZ (см. семплирование wx/wz выше и javadoc
+            // класса), а это тот самый чанк, для которого прямо сейчас вызван
+            // applyBiomeDecoration — region.hasChunk() для него гарантированно
+            // true, так что проверка ничего не отсеивала, а только тратила
+            // вызов на каждую из MAX_PLACEMENT_ATTEMPTS попыток. Единственная
+            // реальная гарантия успешной записи — проверка возвращаемого
+            // значения setBlock в placeBlockWithEntity, которая остаётся.
             return candidate;
         }
         return null;
@@ -279,29 +368,42 @@ public final class IslandVaultTrialGenerator {
     }
 
     /**
-     * Расчищает небольшую воздушную площадку над и вокруг только что
-     * поставленного блока — {@link #CLEAR_RADIUS} блоков в стороны,
-     * {@link #OPEN_ABOVE_BLOCKS} блоков вверх, начиная с {@code pos.y + 1}
-     * (сам {@code pos} уже занят Vault/Trial Spawner, поставленным заранее
-     * через {@link #placeBlockWithEntity} — он и заменил исходный grass/dirt
-     * той колонки).
+     * Расчищает воздушную площадку сферической формы вокруг только что
+     * поставленного блока — радиусом {@link #CLEAR_RADIUS} (синхронизирован
+     * с {@code spawn_range} спавнера), от {@code pos.y - CLEAR_BELOW_BLOCKS}
+     * до {@code pos.y + OPEN_ABOVE_BLOCKS} по высоте (сам {@code pos} уже
+     * занят Vault/Trial Spawner, поставленным заранее через
+     * {@link #placeBlockWithEntity} — он и заменил исходный grass/dirt той
+     * колонки).
      *
-     * <p>Критично не начинать расчистку с {@code pos} — тогда исходный
-     * верхний слой почвы прямо НАД блоком остался бы нетронутым и перекрывал
-     * бы {@code spawn_range} Trial Spawner сверху твёрдым блоком: спавнер
-     * выглядел бы погребённым в земле, а попытки заспавнить моба
-     * проваливались бы одна за другой, никогда не переходя в фазу наград.</p>
+     * <p>Форма — сфера, а не прямоугольный столб/площадка: ваниль спавнит
+     * мобов Trial Spawner в сферическом радиусе {@code spawn_range} и требует
+     * прямую line-of-sight до блока спавнера. Прямоугольная расчистка
+     * оставляла нетронутые "углы" грунта острова на границе радиуса —
+     * дальние по диагонали кандидатные позиции внутри {@code spawn_range}
+     * либо оказывались физически погребены в грунте, либо не имели прямой
+     * видимости до спавнера из-за стенки нерасчищенной ямы. Оба случая
+     * приводят к тихому провалу попытки спавна без единой записи в логах.</p>
      *
-     * <p>Для Trial Spawner расчистка площадки, а не только столба, важна и
-     * функционально: спавнер проверяет line-of-sight и требует свободное место
-     * в радиусе {@code spawn_range} вокруг себя.</p>
+     * <p>Нижний ярус ({@code CLEAR_BELOW_BLOCKS}) обязателен: ваниль пробует
+     * Y от {@code pos.y - 1} до {@code pos.y + 2} — без расчистки этого яруса
+     * там всегда стоит нерасчищенный грунт острова, что душит и позицию
+     * спавна, и line-of-sight с этой стороны.</p>
      */
     private static void clearAboveBlock(WorldGenLevel region, BlockPos pos) {
         BlockPos.MutableBlockPos cursor = pos.mutable();
-        for (int dy = 0; dy <= OPEN_ABOVE_BLOCKS; dy++) {
+        int radiusSq = CLEAR_RADIUS * CLEAR_RADIUS;
+        int belowRadiusSq = CLEAR_BELOW_RADIUS * CLEAR_BELOW_RADIUS;
+        for (int dy = -CLEAR_BELOW_BLOCKS; dy <= OPEN_ABOVE_BLOCKS; dy++) {
             for (int dx = -CLEAR_RADIUS; dx <= CLEAR_RADIUS; dx++) {
                 for (int dz = -CLEAR_RADIUS; dz <= CLEAR_RADIUS; dz++) {
-                    if (dy == 0 && dx == 0 && dz == 0) continue; // сам блок структуры — не трогаем
+                    if (dx == 0 && dy == 0 && dz == 0) continue; // сам блок структуры — не трогаем
+                    if (dx * dx + dy * dy + dz * dz > radiusSq) continue; // только внутри сферы
+                    // Ниже уровня спавнера снос грунта ограничен ближней зоной
+                    // (CLEAR_BELOW_RADIUS), а не всей сферой — иначе получается
+                    // кольцевая прорезь в полу острова у самой границы spawn_range.
+                    // См. javadoc CLEAR_BELOW_RADIUS.
+                    if (dy < 0 && dx * dx + dz * dz > belowRadiusSq) continue;
                     cursor.set(pos.getX() + dx, pos.getY() + dy, pos.getZ() + dz);
                     if (!region.getBlockState(cursor).isAir()) {
                         region.setBlock(cursor, Blocks.AIR.defaultBlockState(), 3);

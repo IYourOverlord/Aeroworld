@@ -80,7 +80,23 @@ org.example.aeroworld
     │   ├── Layer2OreGenerator.java — +редстоун, Y 300..400, 2x vein size
     │   ├── Layer3OreGenerator.java — то же без алмаз/лазурит/изумруд, Y 1000..1100, x2 attempts
     │   ├── Layer4OreGenerator.java — ТОЛЬКО алмаз/лазурит/изумруд, Y 1900..2031
-    │   └── OreVeinHelper.java      — общая сферическая жила (используется Layer1-3, у Layer4 своя копия)
+    │   ├── OreVeinHelper.java      — общая сферическая жила (используется Layer1-3, у Layer4 своя копия)
+    │   └── vault/                  — генерация Vault/Trial Spawner внутри тела острова (Layer 2; см. раздел 4a)
+    │       ├── IslandVaultTrialGenerator.java — ★ переиспользуемое ядро: поиск точки в теле острова
+    │       │   (`findBuriedSpot`, завязан на `IslandShape.isSolid`/`precomputeXZ`), постановка блока +
+    │       │   NBT (`placeVault`/`placeTrialSpawner`/`buildSpawnerConfig`), сферическая расчистка воздуха
+    │       │   вокруг (`clearAboveBlock`, радиус синхронизирован с NBT `spawn_range`). Не знает про
+    │       │   конкретный слой — принимает `IslandShape`/`IslandData` любого слоя, использующего ту же
+    │       │   geometry-модель (`isSolid`). ⚠ Layer 3 (`HighIslandGenerator`) на эту модель НЕ похож
+    │       │   (эллипсоид через `IslandData.ellipsoidAxes`, без `IslandShape`) — для Layer 3 этот класс
+    │       │   в текущем виде переиспользовать напрямую нельзя, нужен отдельный метод поиска точки.
+    │       ├── Layer2VaultTrialPlacer.java — Layer2-специфичная точка входа: выбор `VaultTrialSpawnTier`
+    │       │   по детерминированному хэшу координат острова, вероятности тиров (`POOR/MEDIUM/RICH_CHANCE`),
+    │       │   вызывает `IslandVaultTrialGenerator.placeForIsland` с `VaultTrialLootConfig.LAYER_2`.
+    │       ├── VaultTrialSpawnTier.java — enum POOR(1 vault,1 trial) / MEDIUM(2,3) / RICH(3,5).
+    │       └── VaultTrialLootConfig.java — record: ссылки на loot table JSON (vault/trial × normal/ominous)
+    │           + список `spawnPotentials` (мобы Trial Spawner). `LAYER_2` — единственный существующий
+    │           конфиг (zombie/skeleton/spider/husk, дроп: медь/железо/уголь).
     ├── layer/
     │   ├── Layer1FlatGenerator.java     — ★★ САМЫЙ БОЛЬШОЙ ФАЙЛ (1454 строки). Рельеф поверхности
     │   ├── Layer1SinkholeCarver.java    — карстовые воронки под островами 2/3/4, карвятся в Layer 1
@@ -98,6 +114,10 @@ org.example.aeroworld
         ├── StructureCategory.java          — enum: SURFACE/ISLAND/UNDERGROUND/WATER/SKY_FLOATING/DENY
         ├── StructureCategoryResolver.java  — классификация id структуры → категория
         ├── StructureSupportValidator.java  — ★ главный класс валидации (вызывается из createStructures)
+        ├── StructureCavityCarver.java      — вырезает воздушную полость под ванильными jigsaw-структурами
+        │   (деревни, ancient_city и т.п.) в Layer 1 ДО того, как рельеф зальёт их объём сплошным камнем
+        │   (`carveForChunk`, вызывается в `fillFromNoise` сразу после `layer1.fillChunk()`) — иначе
+        │   пространство между jigsaw-пьесами остаётся закрашено камнем (см. javadoc класса)
         ├── TerrainColumnSampler.java       — детерминированные "будет ли здесь твёрдый блок" без чтения мира
         ├── SupportSample.java              — diag record (x,z)
         └── ValidationResult.java           — результат валидации + причина отказа
@@ -111,7 +131,10 @@ org.example.aeroworld
 пайплайн NeoForge/Minecraft:
 
 1. **`fillFromNoise`** — основной проход:
-   - Layer 1: `layer1.fillChunk()` → рельеф; затем `sinkholeCarver.carveChunk()`
+   - Layer 1: `layer1.fillChunk()` → рельеф; сразу затем
+     `StructureCavityCarver.carveForChunk()` (вырезает полость под ванильными
+     jigsaw-структурами, пока рельеф не залил их объём камнем — см. javadoc
+     класса), затем `sinkholeCarver.carveChunk()`
      (воронки) и `coralScatter.scatter()` (кораллы).
    - Layer 2: `lowerIslands.fillChunk()`, затем `structurePlacer.placeForChunk()`
      (ставит tank21 в очередь).
@@ -134,6 +157,10 @@ org.example.aeroworld
 4. **`applyBiomeDecoration`** — вызывает ванильную декорацию (деревья, трава
    и т.д. по biome features), затем `lowerIslands.placeTreesInRegion()`
    (листья деревьев Layer 2, т.к. они выходят за границы чанка), затем
+   `layer2VaultTrialPlacer.placeForChunk()` (Vault/Trial Spawner, замурованы
+   в теле острова Layer 2 — требует `WorldGenLevel`, а не `ChunkAccess`, ради
+   `registryAccess()` при инициализации NBT blockEntity, поэтому не может
+   вызываться из `fillFromNoise`; см. раздел 4a), затем
    **`Layer1OreFilter.applyToChunk()`** — чистит любую руду по всей высоте
    чанка (единственный активный шаг работы с рудой, см. раздел 6).
 
@@ -182,6 +209,52 @@ worldgen-поток (C2ME, может быть параллельным)
 обходит всю очередь без проверки дистанции/backoff. Нужно выполнять **до**
 любого внешнего импорта чанков (например, Voxy) — иначе LOD-рендерер увидит
 острова без структур.
+
+---
+
+## 4a. Vault / Trial Spawner (Layer 2)
+
+Отдельная от tank21/HAUL-01 подсистема — не структура в понимании
+`PhysicalStructures`/`.excraft`, а обычные ванильные блоки `minecraft:vault`
+и `minecraft:trial_spawner`, вставляемые с ручным NBT прямо во время
+decoration. Пакет: `worldgen/feature/vault/`.
+
+```
+Layer2VaultTrialPlacer.placeForChunk() [вызывается из applyBiomeDecoration]
+  → pickTier()                         — детерминированный хэш координат острова → POOR/MEDIUM/RICH
+  → IslandVaultTrialGenerator.placeForIsland(shape, island, tier, LootConfig, rng, chunkX, chunkZ)
+       для каждого vault/trial (tier.vaultCount()/trialSpawnerCount()):
+       → findBuriedSpot()   — семплирует точку СТРОГО внутри chunkX/chunkZ (WorldGenLevel.setBlock
+                               тихо отбрасывает запись за пределами чанка-инициатора decoration),
+                               проверяет island.radius*0.7, EFFECTIVE_EXCLUSION_RADIUS (не залезать
+                               в зону будущего tank21), MIN_SPACING от уже поставленных структур
+       → placeVault() / placeTrialSpawner() → placeBlockWithEntity() — ставит блок, вручную строит
+                               BlockEntity + loadWithComponents(NBT), проверяет возврат setBlock
+       → clearAboveBlock() — расчищает СФЕРУ воздуха радиусом CLEAR_RADIUS (синхронизирован с NBT
+                               spawn_range=4) вокруг блока; ниже уровня блока снос грунта ограничен
+                               CLEAR_BELOW_RADIUS=1 (не всей сферой) — иначе кольцевая прорезь в полу
+                               острова у границы spawn_range
+```
+
+Дроп настраивается ЧЕРЕЗ ВАНИЛЬНЫЕ loot table JSON, а не в Java (проценты/
+диапазоны количеств — в `resources/data/aeroworld/loot_table/gameplay/layerN/`,
+см. раздел 7); Java-код (`VaultTrialLootConfig`) хранит только
+`ResourceLocation`-ссылки на них + список мобов Trial Spawner
+(`spawnPotentials`, вес выбора). Чтобы завести новый профиль дропа —
+не трогая `IslandVaultTrialGenerator`, достаточно новых JSON + нового
+`VaultTrialLootConfig`.
+
+**⚠ Реализовано только для Layer 2.** `IslandVaultTrialGenerator.findBuriedSpot`
+жёстко завязан на `IslandShape.isSolid()`/`precomputeXZ()` — геометрию
+Layer 2 (см. `worldgen/noise/IslandShape.java`). Layer 3 (`HighIslandGenerator`)
+использует принципиально другую модель (сплошной эллипсоид через
+`IslandData.ellipsoidAxes`, формула `xzSq + dyInv² ≤ 1`, без `IslandShape`
+вообще — см. `HighIslandGenerator.fillChunk`). Чтобы добавить Vault/Trial
+Spawner на Layer 3/4, нужен отдельный метод поиска точки под соответствующую
+геометрию слоя (постановка блока/NBT/расчистка в `IslandVaultTrialGenerator`
+уже geometry-независимы и переиспользуются без изменений); аналогичный
+`LayerNVaultTrialPlacer` и вызов из `applyBiomeDecoration` — по образцу
+`Layer2VaultTrialPlacer`.
 
 ---
 
@@ -262,6 +335,14 @@ worldgen-поток (C2ME, может быть параллельным)
    подтянет новое значение (использует статические поля напрямую, не
    захардкожен).
 
+9. **Vault/Trial Spawner реализованы только для Layer 2.** См. раздел 4a.
+   `IslandVaultTrialGenerator` завязан на `IslandShape.isSolid()` — этой
+   геометрии нет у Layer 3 (эллипсоид, `IslandData.ellipsoidAxes`) и Layer 4
+   (медузы, `IslandData.tentacleData`). Попытка вызвать существующий
+   `placeForIsland` для этих слоёв без адаптации приведёт либо к ошибке
+   компиляции (нет подходящего `IslandShape`), либо, если подсунуть
+   заглушку — к тому, что `findBuriedSpot` никогда не найдёт валидную точку.
+
 ---
 
 ## 7. Ресурсы (data/assets)
@@ -273,6 +354,9 @@ resources/
     ├── aeroworld/
     │   ├── dimension/aeroworld.json               — ★ единственный активный источник aero_settings
     │   ├── dimension_type/aeroworld.json           — Y-границы мира (-64..2031, height=2096)
+    │   ├── loot_table/gameplay/layer2/             — дроп Vault/Trial Spawner Layer 2 (см. раздел 4a)
+    │   │   ├── vault_normal.json / vault_ominous.json         — медь/железо/уголь (равные веса) + ominous_bottle
+    │   │   └── trial_spawner_normal.json / trial_spawner_ominous.json — trial_key + медь/железо/уголь (raw + block)
     │   ├── neoforge/biome_modifier/remove_ores.json — вырезает все руд-фичи из #aeroworld:aero_biomes
     │   ├── presets/*.json                          — ⚠ см. пункт 4 раздела 6, не подключены к коду
     │   ├── tags/worldgen/biome/aero_biomes.json     — список всех 53 клонированных биомов
@@ -313,6 +397,15 @@ README с объяснением) лежат в корне репозитори�
   `worldgen/structure/StructureSupportValidator.java` и
   `StructureCategoryResolver.java` — логика принятия/отказа, пороги
   поддержки, категории.
+- **Добавляете Vault/Trial Spawner на новый слой** (сейчас есть только
+  Layer 2) → см. раздел 4a и пункт 9 раздела 6. Нужен отдельный метод
+  поиска точки в `IslandVaultTrialGenerator` под геометрию слоя
+  (`IslandShape.isSolid` для Layer 2-подобной формы, эллипсоид для Layer 3,
+  щупальца для Layer 4) — постановка блока/NBT/расчистка уже
+  geometry-независимы. Плюс новый `LayerNVaultTrialPlacer` (по образцу
+  `Layer2VaultTrialPlacer`) и вызов из `applyBiomeDecoration`. Дроп —
+  новый `VaultTrialLootConfig` + loot table JSON в
+  `resources/data/aeroworld/loot_table/gameplay/layerN/`.
 - **Проблемы с производительностью генерации** → сначала проверьте кэши
   (раздел 5); большинство «дорогих» путей уже кэшированы, но новый код,
   добавленный в горячие циклы (`fillChunk` любого слоя), должен следовать
