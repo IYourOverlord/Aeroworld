@@ -275,9 +275,28 @@ public final class ProximityTriggerHandler {
             }
         } else {
             // Размер недоступен (excraft: или кеш не смог прочитать) — fallback:
-            // проверяем хотя бы центральный чанк.
+            // используем консервативный размер и для проверки готовности чанков,
+            // и для проверки занятости пространства.
+            //
+            // ИСПРАВЛЕНО: раньше isSpaceClear здесь не вызывался вовсе, из-за
+            // чего excraft-структуры (например 'physical_structures:tank21')
+            // безусловно ставились поверх origin, даже если там уже стоял
+            // Vault/Trial Spawner, поставленный decoration-фазой islan'а
+            // (см. IslandVaultTrialGenerator) — блюпринт перезаписывал его
+            // своими блоками, и спавнер физически исчезал из мира, оставаясь
+            // только в логах decoration ("placed N structure(s)").
             Vec3i fallbackSize = new Vec3i(16, 10, 16);
             if (!StructurePlacementHelper.areChunksReady(level, origin, fallbackSize)) {
+                data.replaceEntry(entry, entry.withNextRetry(currentTick));
+                return;
+            }
+
+            if (entry.attempts() >= 2
+                    && !StructurePlacementHelper.isSpaceClear(level, origin, fallbackSize)) {
+                AeroWorld.LOGGER.warn(
+                        "[AeroWorld] Space occupied for '{}' at {} (attempt {}/{}). " +
+                                "Another structure or terrain block (e.g. a vault/trial spawner) is in the way.",
+                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
                 return;
             }
