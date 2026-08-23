@@ -1,0 +1,58 @@
+{
+  "type": "minecraft:generic",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "weight": 5000,
+          "name": "minecraft:diamond_block",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "min": 2, "max": 3 }
+            }
+          ]
+        },
+        {
+          "type": "minecraft:item",
+          "weight": 2500,
+          "name": "minecraft:emerald_block",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "min": 4, "max": 7 }
+            }
+          ]
+        },
+        {
+          "type": "minecraft:item",
+          "weight": 2500,
+          "name": "minecraft:lapis_block",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "min": 7, "max": 11 }
+            }
+          ]
+        },
+        {
+          "type": "minecraft:item",
+          "weight": 1,
+          "name": "minecraft:ominous_bottle",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "min": 1, "max": 1 }
+            },
+            {
+              "function": "minecraft:set_ominous_bottle_amplifier",
+              "amplifier": { "min": 0, "max": 4 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

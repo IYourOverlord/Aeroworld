@@ -20,7 +20,7 @@
 | Layer 4 | 1900 .. 2031 | "медузы" (купол + щупальца) | `worldgen/layer/UpperIslandGenerator.java` | `config/Layer4Settings.java` |
 
 Все четыре слоя координируются одним классом:
-**`worldgen/AeroWorldChunkGenerator.java`** (585 строк) — точка входа
+**`worldgen/AeroWorldChunkGenerator.java`** (666 строк) — точка входа
 в генерацию чанков (`fillFromNoise`, `applyCarvers`, `applyBiomeDecoration`,
 `getBaseHeight`, `getBaseColumn`, `createStructures`). Начинать чтение кода
 генерации стоит именно отсюда.
@@ -81,22 +81,27 @@ org.example.aeroworld
     │   ├── Layer3OreGenerator.java — то же без алмаз/лазурит/изумруд, Y 1000..1100, x2 attempts
     │   ├── Layer4OreGenerator.java — ТОЛЬКО алмаз/лазурит/изумруд, Y 1900..2031
     │   ├── OreVeinHelper.java      — общая сферическая жила (используется Layer1-3, у Layer4 своя копия)
-    │   └── vault/                  — генерация Vault/Trial Spawner внутри тела острова (Layer 2; см. раздел 4a)
-    │       ├── IslandVaultTrialGenerator.java — ★ переиспользуемое ядро: поиск точки в теле острова
-    │       │   (`findBuriedSpot`, завязан на `IslandShape.isSolid`/`precomputeXZ`), постановка блока +
-    │       │   NBT (`placeVault`/`placeTrialSpawner`/`buildSpawnerConfig`), сферическая расчистка воздуха
-    │       │   вокруг (`clearAboveBlock`, радиус синхронизирован с NBT `spawn_range`). Не знает про
-    │       │   конкретный слой — принимает `IslandShape`/`IslandData` любого слоя, использующего ту же
-    │       │   geometry-модель (`isSolid`). ⚠ Layer 3 (`HighIslandGenerator`) на эту модель НЕ похож
-    │       │   (эллипсоид через `IslandData.ellipsoidAxes`, без `IslandShape`) — для Layer 3 этот класс
-    │       │   в текущем виде переиспользовать напрямую нельзя, нужен отдельный метод поиска точки.
-    │       ├── Layer2VaultTrialPlacer.java — Layer2-специфичная точка входа: выбор `VaultTrialSpawnTier`
-    │       │   по детерминированному хэшу координат острова, вероятности тиров (`POOR/MEDIUM/RICH_CHANCE`),
-    │       │   вызывает `IslandVaultTrialGenerator.placeForIsland` с `VaultTrialLootConfig.LAYER_2`.
+    │   └── vault/                  — генерация Vault/Trial Spawner внутри тела острова (Layer 2/3/4; см. раздел 4a)
+    │       ├── IslandVaultTrialGenerator.java — ★ переиспользуемое ядро: постановка блока + NBT
+    │       │   (`placeVault`/`placeTrialSpawner`/`buildSpawnerConfig`), сферическая расчистка воздуха
+    │       │   вокруг (`clearAboveBlock`, радиус синхронизирован с NBT `spawn_range`). Три метода
+    │       │   поиска точки под три разных геометрии слоёв: `findBuriedSpot` (Layer 2,
+    │       │   `IslandShape.isSolid`/`precomputeXZ`), `findBuriedSpotEllipsoid` (Layer 3, эллипсоид через
+    │       │   `HighIslandGenerator.getEllipsoidTopY`/`getEllipsoidBottomY`), `findBuriedSpotCap` (Layer 4,
+    │       │   купол через `UpperIslandGenerator.getCapTopY`/`getCapBottomY` — щупальца исключены, слишком
+    │       │   тонкие для структур). Три публичные точки входа — `placeForIsland`/`placeForEllipsoidIsland`/
+    │       │   `placeForJellyfishIsland` — каждая вызывает свой метод поиска, но переиспользует общую
+    │       │   постановку блока/NBT/расчистку.
+    │       ├── Layer2VaultTrialPlacer.java / Layer3VaultTrialPlacer.java / Layer4VaultTrialPlacer.java —
+    │       │   Layer-специфичные точки входа: выбор `VaultTrialSpawnTier` по детерминированному хэшу
+    │       │   координат острова (соль RNG своя на каждый слой, чтобы не совпасть детерминированно),
+    │       │   вероятности тиров (`POOR/MEDIUM/RICH_CHANCE`, у всех трёх слоёв сейчас 50/35/15), вызывают
+    │       │   соответствующий `placeFor*` с `VaultTrialLootConfig.LAYER_2`/`LAYER_3`/`LAYER_4`.
     │       ├── VaultTrialSpawnTier.java — enum POOR(1 vault,1 trial) / MEDIUM(2,3) / RICH(3,5).
     │       └── VaultTrialLootConfig.java — record: ссылки на loot table JSON (vault/trial × normal/ominous)
-    │           + список `spawnPotentials` (мобы Trial Spawner). `LAYER_2` — единственный существующий
-    │           конфиг (zombie/skeleton/spider/husk, дроп: медь/железо/уголь).
+    │           + список `spawnPotentials` (мобы Trial Spawner, одинаковый набор zombie/skeleton/spider/husk
+    │           на всех трёх слоях). `LAYER_2` (медь/железо/уголь), `LAYER_3` (золото/редстоун/железо),
+    │           `LAYER_4` (алмаз/изумруд/лазурит: блоки в Vault, сырые предметы в Trial Spawner).
     ├── layer/
     │   ├── Layer1FlatGenerator.java     — ★★ САМЫЙ БОЛЬШОЙ ФАЙЛ (1454 строки). Рельеф поверхности
     │   ├── Layer1SinkholeCarver.java    — карстовые воронки под островами 2/3/4, карвятся в Layer 1
@@ -157,8 +162,10 @@ org.example.aeroworld
 4. **`applyBiomeDecoration`** — вызывает ванильную декорацию (деревья, трава
    и т.д. по biome features), затем `lowerIslands.placeTreesInRegion()`
    (листья деревьев Layer 2, т.к. они выходят за границы чанка), затем
-   `layer2VaultTrialPlacer.placeForChunk()` (Vault/Trial Spawner, замурованы
-   в теле острова Layer 2 — требует `WorldGenLevel`, а не `ChunkAccess`, ради
+   по очереди `layer2VaultTrialPlacer.placeForChunk()`,
+   `layer3VaultTrialPlacer.placeForChunk()`, `layer4VaultTrialPlacer.placeForChunk()`
+   (Vault/Trial Spawner на островах всех трёх слоёв, замурованы/встроены
+   в тело/купол острова — требует `WorldGenLevel`, а не `ChunkAccess`, ради
    `registryAccess()` при инициализации NBT blockEntity, поэтому не может
    вызываться из `fillFromNoise`; см. раздел 4a), затем
    **`Layer1OreFilter.applyToChunk()`** — чистит любую руду по всей высоте
@@ -212,22 +219,32 @@ worldgen-поток (C2ME, может быть параллельным)
 
 ---
 
-## 4a. Vault / Trial Spawner (Layer 2)
+## 4a. Vault / Trial Spawner (Layer 2 / Layer 3 / Layer 4)
 
-Отдельная от tank21/HAUL-01 подсистема — не структура в понимании
+Отдельная от tank21/HAUL-01/excraft подсистема — не структура в понимании
 `PhysicalStructures`/`.excraft`, а обычные ванильные блоки `minecraft:vault`
 и `minecraft:trial_spawner`, вставляемые с ручным NBT прямо во время
-decoration. Пакет: `worldgen/feature/vault/`.
+decoration. Пакет: `worldgen/feature/vault/`. Реализовано на всех трёх
+слоях островов (Layer 2, 3, 4); Layer 1 (поверхность) их не имеет.
 
 ```
-Layer2VaultTrialPlacer.placeForChunk() [вызывается из applyBiomeDecoration]
-  → pickTier()                         — детерминированный хэш координат острова → POOR/MEDIUM/RICH
-  → IslandVaultTrialGenerator.placeForIsland(shape, island, tier, LootConfig, rng, chunkX, chunkZ)
+Layer{2,3,4}VaultTrialPlacer.placeForChunk() [вызывается из applyBiomeDecoration]
+  → pickTier()  — детерминированный хэш координат острова (+ соль слоя) → POOR/MEDIUM/RICH
+  → IslandVaultTrialGenerator.placeFor{Island,EllipsoidIsland,JellyfishIsland}(..., tier, LootConfig, rng, chunkX, chunkZ)
        для каждого vault/trial (tier.vaultCount()/trialSpawnerCount()):
-       → findBuriedSpot()   — семплирует точку СТРОГО внутри chunkX/chunkZ (WorldGenLevel.setBlock
+       → findBuriedSpot{,Ellipsoid,Cap}() — геометрия-специфичный поиск точки, но общая логика:
+                               семплирует точку СТРОГО внутри chunkX/chunkZ (WorldGenLevel.setBlock
                                тихо отбрасывает запись за пределами чанка-инициатора decoration),
-                               проверяет island.radius*0.7, EFFECTIVE_EXCLUSION_RADIUS (не залезать
-                               в зону будущего tank21), MIN_SPACING от уже поставленных структур
+                               MIN_SPACING от уже поставленных структур на этом острове
+                               • Layer 2 (findBuriedSpot): IslandShape.isSolid/precomputeXZ,
+                                 island.radius*0.7, EFFECTIVE_EXCLUSION_RADIUS вокруг tank21
+                               • Layer 3 (findBuriedSpotEllipsoid): HighIslandGenerator.getEllipsoidTopY/
+                                 getEllipsoidBottomY, ELLIPSOID_INNER_XZ_SQ, EFFECTIVE_EXCLUSION_RADIUS
+                                 вокруг HAUL-01
+                               • Layer 4 (findBuriedSpotCap): UpperIslandGenerator.getCapTopY/
+                                 getCapBottomY — точки ищутся ТОЛЬКО на куполе медузы, не в щупальцах
+                                 (слишком тонкие для CLEAR_RADIUS=4); нет своего блюпринта-структуры,
+                                 поэтому эксклюзии вокруг центра острова нет
        → placeVault() / placeTrialSpawner() → placeBlockWithEntity() — ставит блок, вручную строит
                                BlockEntity + loadWithComponents(NBT), проверяет возврат setBlock
        → clearAboveBlock() — расчищает СФЕРУ воздуха радиусом CLEAR_RADIUS (синхронизирован с NBT
@@ -244,17 +261,17 @@ Layer2VaultTrialPlacer.placeForChunk() [вызывается из applyBiomeDeco
 не трогая `IslandVaultTrialGenerator`, достаточно новых JSON + нового
 `VaultTrialLootConfig`.
 
-**⚠ Реализовано только для Layer 2.** `IslandVaultTrialGenerator.findBuriedSpot`
-жёстко завязан на `IslandShape.isSolid()`/`precomputeXZ()` — геометрию
-Layer 2 (см. `worldgen/noise/IslandShape.java`). Layer 3 (`HighIslandGenerator`)
-использует принципиально другую модель (сплошной эллипсоид через
-`IslandData.ellipsoidAxes`, формула `xzSq + dyInv² ≤ 1`, без `IslandShape`
-вообще — см. `HighIslandGenerator.fillChunk`). Чтобы добавить Vault/Trial
-Spawner на Layer 3/4, нужен отдельный метод поиска точки под соответствующую
-геометрию слоя (постановка блока/NBT/расчистка в `IslandVaultTrialGenerator`
-уже geometry-независимы и переиспользуются без изменений); аналогичный
-`LayerNVaultTrialPlacer` и вызов из `applyBiomeDecoration` — по образцу
-`Layer2VaultTrialPlacer`.
+Текущий дроп по слоям:
+- **Layer 2** — медь/железо/уголь.
+- **Layer 3** — золото/редстоун/железо.
+- **Layer 4** — Vault: алмазный/изумрудный/лазуритовый блок (1–2 / 3–5 / 5–8,
+  шансы 50% / 25% / 25%). Trial Spawner: сырые алмаз/изумруд/лазурит
+  (5–12 / 20–32 / 20–40, шансы 33% / 33% / 34%), не считая отдельно
+  идущего `trial_key`.
+
+Вероятности тиров (POOR/MEDIUM/RICH = 50%/35%/15%) и список мобов
+spawn_potentials (zombie/skeleton/spider/husk) одинаковы на всех трёх слоях —
+меняется только дроп (`VaultTrialLootConfig`) и геометрия поиска точки.
 
 ---
 
@@ -335,13 +352,16 @@ Spawner на Layer 3/4, нужен отдельный метод поиска т
    подтянет новое значение (использует статические поля напрямую, не
    захардкожен).
 
-9. **Vault/Trial Spawner реализованы только для Layer 2.** См. раздел 4a.
-   `IslandVaultTrialGenerator` завязан на `IslandShape.isSolid()` — этой
-   геометрии нет у Layer 3 (эллипсоид, `IslandData.ellipsoidAxes`) и Layer 4
-   (медузы, `IslandData.tentacleData`). Попытка вызвать существующий
-   `placeForIsland` для этих слоёв без адаптации приведёт либо к ошибке
-   компиляции (нет подходящего `IslandShape`), либо, если подсунуть
-   заглушку — к тому, что `findBuriedSpot` никогда не найдёт валидную точку.
+9. **Vault/Trial Spawner реализованы на Layer 2, 3 и 4.** См. раздел 4a.
+   Каждый слой использует свой метод поиска точки в `IslandVaultTrialGenerator`
+   (`findBuriedSpot`/`findBuriedSpotEllipsoid`/`findBuriedSpotCap`), т.к. их
+   геометрия принципиально разная — `IslandShape.isSolid()` (Layer 2, сплошная
+   форма с профилем), сплошной эллипсоид через `IslandData.ellipsoidAxes`
+   (Layer 3), купол медузы без сплошного тела ниже него (Layer 4,
+   `IslandData.tentacleData` описывает только тонкие щупальца, непригодные
+   для структур — см. javadoc `IslandVaultTrialGenerator.placeForJellyfishIsland`).
+   Постановка блока/NBT/расчистка воздуха (`placeVault`/`placeTrialSpawner`/
+   `clearAboveBlock`) остаётся общей для всех слоёв и geometry-независимой.
 
 ---
 
@@ -354,9 +374,18 @@ resources/
     ├── aeroworld/
     │   ├── dimension/aeroworld.json               — ★ единственный активный источник aero_settings
     │   ├── dimension_type/aeroworld.json           — Y-границы мира (-64..2031, height=2096)
-    │   ├── loot_table/gameplay/layer2/             — дроп Vault/Trial Spawner Layer 2 (см. раздел 4a)
-    │   │   ├── vault_normal.json / vault_ominous.json         — медь/железо/уголь (равные веса) + ominous_bottle
-    │   │   └── trial_spawner_normal.json / trial_spawner_ominous.json — trial_key + медь/железо/уголь (raw + block)
+    │   ├── loot_table/gameplay/                     — дроп Vault/Trial Spawner по слоям (см. раздел 4a)
+    │   │   ├── layer2/
+    │   │   │   ├── vault_normal.json / vault_ominous.json         — медь/железо/уголь (равные веса) + ominous_bottle
+    │   │   │   └── trial_spawner_normal.json / trial_spawner_ominous.json — trial_key + медь/железо/уголь (raw + block)
+    │   │   ├── layer3/
+    │   │   │   ├── vault_normal.json / vault_ominous.json         — золото/железо/редстоун (равные веса) + ominous_bottle
+    │   │   │   └── trial_spawner_normal.json / trial_spawner_ominous.json — trial_key + золото/железо/редстоун (raw + block)
+    │   │   └── layer4/
+    │   │       ├── vault_normal.json / vault_ominous.json         — алмазный/изумрудный/лазуритовый блок
+    │   │       │   (50%/25%/25%) + ominous_bottle
+    │   │       └── trial_spawner_normal.json / trial_spawner_ominous.json — trial_key + сырые алмаз/изумруд/лазурит
+    │   │           (33%/33%/34%)
     │   ├── neoforge/biome_modifier/remove_ores.json — вырезает все руд-фичи из #aeroworld:aero_biomes
     │   ├── presets/*.json                          — ⚠ см. пункт 4 раздела 6, не подключены к коду
     │   ├── tags/worldgen/biome/aero_biomes.json     — список всех 53 клонированных биомов
@@ -397,15 +426,21 @@ README с объяснением) лежат в корне репозитори�
   `worldgen/structure/StructureSupportValidator.java` и
   `StructureCategoryResolver.java` — логика принятия/отказа, пороги
   поддержки, категории.
-- **Добавляете Vault/Trial Spawner на новый слой** (сейчас есть только
-  Layer 2) → см. раздел 4a и пункт 9 раздела 6. Нужен отдельный метод
-  поиска точки в `IslandVaultTrialGenerator` под геометрию слоя
-  (`IslandShape.isSolid` для Layer 2-подобной формы, эллипсоид для Layer 3,
-  щупальца для Layer 4) — постановка блока/NBT/расчистка уже
-  geometry-независимы. Плюс новый `LayerNVaultTrialPlacer` (по образцу
-  `Layer2VaultTrialPlacer`) и вызов из `applyBiomeDecoration`. Дроп —
+- **Меняете дроп Vault/Trial Spawner на существующем слое (2/3/4)** →
+  правьте только JSON в `resources/data/aeroworld/loot_table/gameplay/layerN/`
+  (проценты — через `weight`, диапазоны количеств — через `set_count`);
+  Java (`VaultTrialLootConfig`) трогать не нужно, если состав предметов не
+  меняется, только веса/диапазоны. См. раздел 4a за текущими значениями по
+  слоям.
+- **Добавляете Vault/Trial Spawner на Layer 1** (сейчас есть на 2/3/4,
+  реализовано по образцу друг друга) → см. раздел 4a и пункт 9 раздела 6.
+  Нужен отдельный метод поиска точки в `IslandVaultTrialGenerator` под
+  геометрию поверхности Layer 1 — постановка блока/NBT/расчистка уже
+  geometry-независимы. Плюс новый `Layer1VaultTrialPlacer` (по образцу
+  `Layer4VaultTrialPlacer` — ближайший пример со своей геометрией без
+  привязанного блюпринта-структуры) и вызов из `applyBiomeDecoration`. Дроп —
   новый `VaultTrialLootConfig` + loot table JSON в
-  `resources/data/aeroworld/loot_table/gameplay/layerN/`.
+  `resources/data/aeroworld/loot_table/gameplay/layer1/`.
 - **Проблемы с производительностью генерации** → сначала проверьте кэши
   (раздел 5); большинство «дорогих» путей уже кэшированы, но новый код,
   добавленный в горячие циклы (`fillChunk` любого слоя), должен следовать

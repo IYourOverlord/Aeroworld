@@ -81,6 +81,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private Layer3StructurePlacer layer3StructurePlacer;
     private org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
     private org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer layer3VaultTrialPlacer;
+    private org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer layer4VaultTrialPlacer;
     // ─────────────────────────────────────────────────────────────────────────
 
     private StructureSupportValidator structureValidator;
@@ -173,6 +174,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         layer3StructurePlacer = new Layer3StructurePlacer(seed, sharedChunkIslandCache);
         layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache);
         layer3VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer(seed, sharedChunkIslandCache);
+        layer4VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer(seed, sharedChunkIslandCache);
         // ─────────────────────────────────────────────────────────────────────
 
         AeroWorld.structureScheduler = new IslandStructureScheduler();
@@ -635,6 +637,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // HighIslandGenerator). См. Layer3VaultTrialPlacer javadoc.
         if (highIslands != null && layer3VaultTrialPlacer != null) {
             layer3VaultTrialPlacer.placeForChunk(region, chunk, highIslands);
+        }
+
+        // Vault/Trial Spawner на островах Layer 4 (медузы — купол + щупальца) —
+        // по аналогии с Layer 2/3, но через IslandVaultTrialGenerator.placeForJellyfishIsland
+        // (структуры ставятся только на купол, не в щупальца — см. javadoc
+        // Layer4VaultTrialPlacer/IslandVaultTrialGenerator.placeForJellyfishIsland).
+        if (upperIslands != null && layer4VaultTrialPlacer != null) {
+            layer4VaultTrialPlacer.placeForChunk(region, chunk, upperIslands);
         }
 
         // Генерация руды во всех слоях отключена полностью.

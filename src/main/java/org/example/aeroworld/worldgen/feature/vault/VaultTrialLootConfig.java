@@ -73,4 +73,23 @@ public record VaultTrialLootConfig(
                     new SpawnPotential(ResourceLocation.withDefaultNamespace("husk"), 1)
             )
     );
+
+    /**
+     * Конфиг loot-таблиц Layer 4 (см. data/aeroworld/loot_table/gameplay/layer4/).
+     *
+     * <p>Дроп — алмаз/изумруд/лазурит (блоки в Vault, сырые предметы в Trial
+     * Spawner). Список мобов spawn_potentials оставлен таким же, как у Layer 2/3.</p>
+     */
+    public static final VaultTrialLootConfig LAYER_4 = new VaultTrialLootConfig(
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer4/vault_normal"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer4/vault_ominous"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer4/trial_spawner_normal"),
+            ResourceLocation.fromNamespaceAndPath("aeroworld", "gameplay/layer4/trial_spawner_ominous"),
+            List.of(
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("zombie"), 2),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("skeleton"), 2),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("spider"), 1),
+                    new SpawnPotential(ResourceLocation.withDefaultNamespace("husk"), 1)
+            )
+    );
 }

@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
+import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import java.util.ArrayList;
@@ -284,12 +285,88 @@ public final class IslandVaultTrialGenerator {
     }
 
     /**
+     * Размещает Vault и Trial Spawner для одного острова Layer 4 (медуза —
+     * купол + щупальца, {@code UpperIslandGenerator}) согласно выбранному тиру.
+     *
+     * <p>В отличие от {@link #placeForIsland} (Layer 2) и
+     * {@link #placeForEllipsoidIsland} (Layer 3), структуры Layer 4 ставятся
+     * ТОЛЬКО на купол ({@code isCapSolid}), а не в произвольную точку тела
+     * острова — щупальца слишком тонкие (радиус 5 → 1.5 блока на конце,
+     * см. {@code UpperIslandGenerator.TENTACLE_BASE_R}/{@code TENTACLE_TIP_R})
+     * и физически не способны вместить {@code CLEAR_RADIUS=4}-сферу расчистки
+     * без разрушения формы щупальца. Купол (радиус острова, см.
+     * {@code isCapSolid}) — единственная часть медузы с достаточным объёмом
+     * тела, аналогично тому, как у Layer 2/3 структуры ставятся в "ядро"
+     * острова (0.7 нормализованного радиуса), не у самого края.</p>
+     *
+     * <p>Точка поверхности ищется через {@link UpperIslandGenerator#getCapTopY}/
+     * {@link UpperIslandGenerator#getCapBottomY} — те же методы, что использует
+     * LOD/сэмплер колонки для купола, поэтому кандидат гарантированно попадает
+     * на реальную верхнюю поверхность купола (с учётом {@code capEdgeNoise}),
+     * а не в шумовой зазор на его краю.</p>
+     *
+     * <p>Постановка блока/NBT и расчистка воздуха переиспользуются без
+     * изменений, как и у Layer 2/3 — они не знают о геометрии слоя. У Layer 4
+     * нет своего "якорного" блюпринта (в отличие от tank21/HAUL-01 у Layer 2/3,
+     * см. {@code Layer2StructurePlacer}/{@code Layer3StructurePlacer}), поэтому
+     * зона вокруг {@code island.cx}/{@code island.cz} НЕ исключается —
+     * см. {@link #findBuriedSpotCap}.</p>
+     *
+     * @param region     регион генерации (для записи blockEntity с NBT)
+     * @param generator  генератор Layer 4 (источник {@code getCapTopY}/{@code getCapBottomY})
+     * @param island     кэшированные данные острова (bounds, radius, {@code tentacleData})
+     * @param tier       категория богатства спавна для этого острова
+     * @param loot       конфиг loot table (специфичен для слоя/дропа)
+     * @param rng        детерминированный источник случайности (по острову, не по чанку!)
+     * @param chunkX     координата чанка (в чанках), вызвавшего decoration
+     * @param chunkZ     см. {@code chunkX}
+     */
+    public static void placeForJellyfishIsland(WorldGenLevel region,
+                                                 UpperIslandGenerator generator,
+                                                 IslandData island,
+                                                 VaultTrialSpawnTier tier,
+                                                 VaultTrialLootConfig loot,
+                                                 RandomSource rng,
+                                                 int chunkX,
+                                                 int chunkZ) {
+
+        List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
+
+        for (int i = 0; i < tier.vaultCount(); i++) {
+            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, placed, chunkX, chunkZ);
+            if (pos == null) continue;
+            if (!placeVault(region, pos, loot)) continue;
+            clearAboveBlock(region, pos);
+            placed.add(pos);
+        }
+
+        for (int i = 0; i < tier.trialSpawnerCount(); i++) {
+            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, placed, chunkX, chunkZ);
+            if (pos == null) continue;
+            if (!placeTrialSpawner(region, pos, loot)) continue;
+            clearAboveBlock(region, pos);
+            placed.add(pos);
+        }
+
+        AeroWorld.LOGGER.debug(
+                "[AeroWorld] IslandVaultTrialGenerator: jellyfish island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
+                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
+    }
+
+    /**
      * Консервативный запас от края эллипсоида по XZ — аналог {@code island.radius * 0.7}
      * из {@link #findBuriedSpot} (Layer 2), но выраженный через {@code xzSq}
      * (см. {@link HighIslandGenerator#computeXZSq}): {@code xzSq <= 0.49} эквивалентно
      * "внутри 0.7 нормализованного радиуса эллипсоида".
      */
     private static final double ELLIPSOID_INNER_XZ_SQ = 0.7 * 0.7;
+
+    /**
+     * Консервативный запас от края купола Layer 4 (медуза) по XZ — тот же
+     * принцип "0.7 нормализованного радиуса", что и у Layer 2/3, чтобы не
+     * ставить структуры у самой кромки купола, где его толщина минимальна.
+     */
+    private static final double CAP_INNER_RADIUS_FACTOR = 0.7;
 
     // ── Поиск точки внутри тела острова ────────────────────────────────────────
 
@@ -482,6 +559,90 @@ public final class IslandVaultTrialGenerator {
             // внутри сплошного тела и, значит, твёрдый.
             int columnBottomY = generator.getEllipsoidBottomY(wx, wz, island);
             if (wy - 2 < columnBottomY) continue;
+
+            BlockPos candidate = new BlockPos(wx, wy, wz);
+            if (tooClose(candidate, alreadyPlaced)) continue;
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * Аналог {@link #findBuriedSpotEllipsoid}, но под геометрию купола Layer 4
+     * ({@code UpperIslandGenerator}) — медуза не сплошное тело: сплошной
+     * объём есть только у купола ({@code capBaseY..topY}), ниже него до
+     * {@code botY} тело представлено тонкими щупальцами, непригодными для
+     * структур (см. javadoc {@link #placeForJellyfishIsland}).
+     *
+     * <h3>Почему нельзя переиспользовать {@link #findBuriedSpotEllipsoid}</h3>
+     * У купола нет единой формулы {@code xzSq + dyInv² ≤ 1}, как у эллипсоида —
+     * его радиус зависит от {@code t=(wy-capBaseY)/(topY-capBaseY)} нелинейно
+     * (см. {@code UpperIslandGenerator.isCapSolid}: {@code base=(1-t²)},
+     * дополнительная выпуклость {@code bulge} у основания купола). Вместо
+     * попытки продублировать эту формулу здесь, точка поверхности берётся
+     * напрямую через {@link UpperIslandGenerator#getCapTopY}/
+     * {@link UpperIslandGenerator#getCapBottomY} — те же методы, которыми
+     * пользуется остальной код мода для колонки купола, поэтому кандидат
+     * гарантированно совпадает с реальной поверхностью (включая
+     * {@code capEdgeNoise}).
+     *
+     * <p>XZ-отсечка "не у края купола" использует {@code island.radius},
+     * умноженный на {@link #CAP_INNER_RADIUS_FACTOR} — тот же принцип
+     * "0.7 нормализованного радиуса", что у {@link #findBuriedSpot}/
+     * {@link #findBuriedSpotEllipsoid}, но купол сужается к вершине и
+     * основанию (см. {@code base}/{@code bulge} в {@code isCapSolid}), так
+     * что эта отсечка — лишь консервативная стартовая эвристика; финальная
+     * проверка объёма всё равно выполняется через {@code getCapTopY}/
+     * {@code getCapBottomY} ниже.</p>
+     *
+     * <p>В отличие от Layer 2/3, здесь НЕТ {@code EFFECTIVE_EXCLUSION_RADIUS}
+     * от {@code island.cx}/{@code island.cz} — у Layer 4 нет собственного
+     * блюпринта-структуры, привязанного к центру острова (см. javadoc
+     * {@link #placeForJellyfishIsland}).</p>
+     */
+    private static BlockPos findBuriedSpotCap(WorldGenLevel region,
+                                                UpperIslandGenerator generator,
+                                                IslandData island,
+                                                RandomSource rng,
+                                                List<BlockPos> alreadyPlaced,
+                                                int chunkX,
+                                                int chunkZ) {
+
+        double innerRadius = island.radius * CAP_INNER_RADIUS_FACTOR;
+
+        for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+            // Сэмплируем точку строго внутри чанка-инициатора decoration —
+            // та же причина, что и в findBuriedSpot/findBuriedSpotEllipsoid
+            // (см. их javadoc): WorldGenLevel.setBlock тихо отбрасывает
+            // запись за пределами safe-radius decoration-фазы для любого
+            // другого чанка.
+            int wx = (chunkX << 4) + rng.nextInt(16);
+            int wz = (chunkZ << 4) + rng.nextInt(16);
+
+            // Консервативная XZ-отсечка от края купола (см. javadoc метода).
+            double distFromCentreSq = (double) (wx - island.cx) * (wx - island.cx)
+                    + (double) (wz - island.cz) * (wz - island.cz);
+            if (distFromCentreSq > innerRadius * innerRadius) continue;
+
+            // Верхняя поверхность купола в этой XZ-колонке — тот же метод,
+            // которым UpperIslandGenerator/остальной код мода получает
+            // реальный Y верхней границы купола (учитывает capEdgeNoise).
+            int surfaceY = generator.getCapTopY(wx, wz, island);
+            if (surfaceY < island.bottomY) continue; // колонка вне купола (в щупальце или мимо острова)
+
+            int wy = surfaceY;
+            if (wy <= island.bottomY) continue;
+
+            // Под точкой должен быть сплошной купол минимум на 2 блока вниз.
+            // Купол — сплошное тело в диапазоне [capBottomY, capTopY] в этой
+            // XZ-колонке (см. UpperIslandGenerator.isCapSolid: условие только
+            // по XZ-расстоянию и Y-диапазону, без внутренних полостей),
+            // поэтому достаточно убедиться, что (wy - 2) не ниже нижней
+            // границы купола — тогда весь диапазон [wy-2, wy] заведомо внутри
+            // сплошного тела.
+            int capBottomY = generator.getCapBottomY(wx, wz, island);
+            if (wy - 2 < capBottomY) continue;
 
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;
