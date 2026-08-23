@@ -75,6 +75,10 @@ public class Layer1FlatGenerator {
     private static final double CANYON_CHANCE     = 0.35;  // доля горных регионов — с гигантским ущельем
     private static final double CANYON_HALF_WIDTH = 26.0;  // блоков от центра ущелья до края
     private static final int    CANYON_FLOOR      = BASE_SURFACE_Y + 6; // дно ущелья — безопасно выше пещеры
+    private static final double CANYON_MEANDER_AMPL = 70.0; // амплитуда извива линии ущелья вдоль его длины (блоков)
+    private static final double CANYON_TALUS_MIN_RUN  = 34.0; // минимальная ширина осыпного шлейфа (блоков)
+    private static final double CANYON_TALUS_PER_DROP = 0.85; // доп. ширина шлейфа на каждый блок перепада высоты
+    private static final double CANYON_TALUS_MAX_FACTOR = 0.55; // макс. доля перепада, снимаемая в шлейфе (не доходит до дна)
 
     // ── Реки / озёра ──────────────────────────────────────────────────────────
     // Фиксированный уровень воды — чуть ниже базовой равнины (48), чтобы вода
@@ -153,6 +157,23 @@ public class Layer1FlatGenerator {
     private static final int DEEPSLATE_TOP = 0;
 
     // ── Параметры пещеры ──────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Горные туннели/арки ("noodle"-пещеры внутри тела горы, выше базовой
+    // подземной пещерной системы). Технически — классический приём "лапши":
+    // два независимых 3D-шума n1,n2, туннель там, где sqrt(n1²+n2²) < порог.
+    // Т.к. рельеф колонный (2D heightmap), туннель автоматически "прорезает"
+    // гору насквозь и превращается в открытую арку там, где соседняя колонка
+    // ниже уровня туннеля (высота горы падает быстрее, чем сам туннель) —
+    // никакой отдельной логики для арок не требуется.
+    // ══════════════════════════════════════════════════════════════════════════
+    private static final int    MTUN_MIN_GROUND_Y  = BASE_SURFACE_Y + 65; // только настоящие горы
+    private static final int    MTUN_LOW_MARGIN    = 22;  // отступ вверх от потолка базовой пещеры
+    private static final int    MTUN_HIGH_MARGIN   = 24;  // отступ вниз от поверхности/пика
+    private static final double MTUN_FREQ_XZ       = 0.017; // частота по X/Z — определяет "толщину" туннеля
+    private static final double MTUN_FREQ_Y_MULT   = 0.55;  // туннель более пологий/горизонтальный
+    private static final double MTUN_THRESHOLD     = 0.42;  // порог sqrt(n1²+n2²) — ширина прохода
+    private static final double MTUN_WATER_FRAC    = 0.30;  // доля высоты туннеля, залитая водой (ручей/озеро)
+
     private static final int FLOOR_BASE_Y   = -14;   // базовый Y верхнего края пола
     private static final int CEIL_BASE_Y    = 36;    // базовый Y нижнего края потолка
     private static final int FLOOR_VAR      = 5;     // амплитуда холмов пола (блоков)
@@ -212,6 +233,9 @@ public class Layer1FlatGenerator {
     private static final long SEED_STAC  = 0x4C71_1234_ABCDL;
     private static final long SEED_ORE   = 0xAA02L;
     private static final long SEED_HEIGHT = 0x4E1687_71ADL;
+    private static final long SEED_MTUN_A = 0x7A0D_1E11_A001L;
+    private static final long SEED_MTUN_B = 0x7A0D_1E11_B002L;
+    private static final long SEED_MTUN_W = 0x7A0D_1E11_C003L;
 
     // ── Шумовые генераторы ────────────────────────────────────────────────────
     private final AeroNoise stoneVariance;
@@ -221,6 +245,9 @@ public class Layer1FlatGenerator {
     private final AeroNoise stalagNoise;
     private final AeroNoise stalacNoise;
     private final AeroNoise heightNoise;
+    private final AeroNoise mtunNoiseA;
+    private final AeroNoise mtunNoiseB;
+    private final AeroNoise mtunWaterNoise;
 
     private final long seed;
 
@@ -233,6 +260,9 @@ public class Layer1FlatGenerator {
         stalagNoise   = new AeroNoise(worldSeed ^ SEED_STAG);
         stalacNoise   = new AeroNoise(worldSeed ^ SEED_STAC);
         heightNoise   = new AeroNoise(worldSeed ^ SEED_HEIGHT);
+        mtunNoiseA    = new AeroNoise(worldSeed ^ SEED_MTUN_A);
+        mtunNoiseB    = new AeroNoise(worldSeed ^ SEED_MTUN_B);
+        mtunWaterNoise= new AeroNoise(worldSeed ^ SEED_MTUN_W);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -796,16 +826,89 @@ public class Layer1FlatGenerator {
         // ── Гигантское ущелье, режущее хребет насквозь ───────────────────────
         // Только в регионах с hasCanyon, и только там, где реально есть гора
         // (mountainMask масштабирует эффект — на равнине каньон невидим).
-        // Каньон не блендится между ячейками (это единичная резкая структура,
-        // не форма гребня) — берём параметры БЛИЖАЙШЕЙ ячейки (round, не floor).
+        //
+        // РАНЬШЕ: carve зависел только от canyonDist (перпендикулярное
+        // расстояние до идеально прямой линии) и mountainMask — то есть
+        // поперечное сечение (ширина/глубина/профиль ската) было АБСОЛЮТНО
+        // одинаковым на всей длине ущелья — по сути прямая экструзия одной
+        // и той же формы вдоль прямой линии. Именно это и читалось как
+        // "ровный неестественный срез" (см. баг-репорт со скриншотами) —
+        // никакая реальная река/каньон так не выглядит: ширина гуляет,
+        // русло петляет, дно то выше, то ниже, края рваные, а не гладкая
+        // труба постоянного диаметра.
+        //
+        // ТЕПЕРЬ: считаем координату "вдоль ущелья" (along) — перпендикуляр
+        // к нормали canyonAngle — и гоняем по ней независимый набор шумов:
+        // меандр самой линии (центр гуляет из стороны в сторону), ширину
+        // и глубину дна. Плюс мелкая рябь по краю профиля, чтобы скат не
+        // был идеально гладким. Каньон не блендится между ячейками (это
+        // единичная резкая структура) — берём параметры БЛИЖАЙШЕЙ ячейки.
         if (nearest.hasCanyon && mountainMask > 0.05) {
-            double cu = wx * Math.cos(nearest.canyonAngle) + wz * Math.sin(nearest.canyonAngle)
-                    - nearest.canyonOffset + warp;
+            double cosA = Math.cos(nearest.canyonAngle);
+            double sinA = Math.sin(nearest.canyonAngle);
+            // Координата вдоль длины ущелья (перпендикулярна нормали canyonAngle).
+            // Множитель angle*NNN в офсетах шума ниже — дешёвый способ развести
+            // шум разных региональных ущелий (у каждого свой canyonAngle) без
+            // отдельного набора seed-полей, как уже принято в этом файле.
+            double along = -wx * sinA + wz * cosA;
+
+            // Меандр: крупный плавный извив линии + более тесная мелкая
+            // волна поверх него — как настоящее петляющее русло, а не
+            // синусоида одного масштаба.
+            double meanderBig = heightNoise.fbm2D(along * 0.0035 + 222000, nearest.canyonAngle * 500.0 + 222000, 4, 2.0, 0.5);
+            double meanderFine = heightNoise.fbm2D(along * 0.012 + 333000, nearest.canyonAngle * 700.0 + 333000, 3, 2.0, 0.5);
+            double meander = meanderBig * CANYON_MEANDER_AMPL + meanderFine * (CANYON_MEANDER_AMPL * 0.25);
+
+            double cu = wx * cosA + wz * sinA - nearest.canyonOffset + warp + meander;
             double canyonDist = Math.abs(cu);
-            if (canyonDist < CANYON_HALF_WIDTH) {
-                double t = 1.0 - canyonDist / CANYON_HALF_WIDTH; // 1 в центре, 0 на краях
-                double carve = Math.pow(t, 1.4) * mountainMask;
-                h = (int) Math.round(h - (h - CANYON_FLOOR) * carve);
+
+            // Ширина и глубина дна плывут вдоль along — узкие теснины
+            // сменяются широкими долинами, дно то выше, то ниже.
+            double widthN = heightNoise.fbm2D(along * 0.006 + 444000, nearest.canyonAngle * 900.0 + 444000, 3, 2.0, 0.5);
+            double localHalfWidth = CANYON_HALF_WIDTH * (0.55 + 0.55 * Math.max(0.0, Math.min(1.0, widthN * 0.5 + 0.5)));
+
+            if (canyonDist < localHalfWidth) {
+                double depthN = heightNoise.fbm2D(along * 0.005 + 555000, nearest.canyonAngle * 1100.0 + 555000, 3, 2.0, 0.5);
+                int localFloor = CANYON_FLOOR + (int) Math.round(depthN * 10.0);
+
+                double t = 1.0 - canyonDist / localHalfWidth; // 1 в центре, 0 на краях
+                // Мелкая рябь по краю профиля (высокочастотный шум прямо по
+                // wx/wz, не по along) — рвёт идеально гладкий скат, край
+                // выглядит выщербленным/каменистым, а не отфрезерованным.
+                double edgeJag = heightNoise.fbm2D(wx * 0.05 + 666000, wz * 0.05 + 666000, 2, 2.0, 0.5) * 0.12;
+                double tj = Math.max(0.0, Math.min(1.0, t + edgeJag * (1.0 - t)));
+                double carve = Math.pow(tj, 1.4) * mountainMask;
+                h = (int) Math.round(h - (h - localFloor) * carve);
+            } else {
+                // ── Осыпной шлейф (talus apron) ──────────────────────────────
+                // Сразу за краем "коренного" русла высота раньше падала до
+                // localFloor практически вертикально — на пик высотой ~190
+                // блоков приходилось всего ~15-28 блоков по горизонтали, т.е.
+                // отвесная голая скала (см. скриншот с "ровным срезом" —
+                // именно это и была причина, а не форма самой линии реки).
+                // Природные ущелья так не выглядят: у подножия скального
+                // русла реальная гора осыпается пологим шлейфом щебня, на
+                // котором успевает закрепиться почва и лес — резкая стена
+                // исчезает задолго до вершины.
+                //
+                // Ширина шлейфа растёт вместе с перепадом высоты (чем выше
+                // гора над руслом — тем длиннее нужен пологий скат, иначе
+                // геометрически получится тот же отвес, просто чуть шире).
+                double dropHere = Math.max(0.0, h - CANYON_FLOOR);
+                double taperRun = CANYON_TALUS_MIN_RUN + dropHere * CANYON_TALUS_PER_DROP;
+                double outerHalfWidth = localHalfWidth + taperRun;
+                if (canyonDist < outerHalfWidth) {
+                    double t2 = 1.0 - (canyonDist - localHalfWidth) / taperRun; // 1 у края русла, 0 на внешней границе
+                    double smooth2 = smoothstep(0.0, 1.0, t2);
+                    // Мелкая рябь — шлейф тоже не идеально гладкая линия.
+                    double apronJag = heightNoise.fbm2D(wx * 0.03 + 777000, wz * 0.03 + 777000, 2, 2.0, 0.5) * 0.10;
+                    double smooth2j = Math.max(0.0, Math.min(1.0, smooth2 + apronJag * smooth2));
+                    // Ограничен CANYON_TALUS_MAX_FACTOR — шлейф понижает склон,
+                    // но никогда не доводит его до дна русла, поэтому граница
+                    // с "коренной" зоной не даёт видимого излома.
+                    double carve = smooth2j * smooth2j * CANYON_TALUS_MAX_FACTOR * mountainMask;
+                    h = (int) Math.round(h - dropHere * carve);
+                }
             }
         }
 
@@ -1673,7 +1776,7 @@ public class Layer1FlatGenerator {
                     BlockState rock = (isWaterCol || hollowShore)
                             ? (y < DEEPSLATE_TOP ? BS_DEEPSLATE : BS_STONE)
                             : resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
-                                    inColumnBase, colTSq, colBaseRv);
+                                    inColumnBase, colTSq, colBaseRv, groundY);
                     chunk.setBlockState(pos, rock, false);
                 }
 
@@ -1791,6 +1894,49 @@ public class Layer1FlatGenerator {
         return new double[]{ rawFloorY, rawCeilY, rawStagTopY, rawStacBotY };
     }
 
+    /**
+     * "Лапшовый" туннель/арка внутри тела горы (выше базовой пещерной
+     * системы). Возвращает {@code null}, если точка вне туннеля (порода
+     * должна остаться сплошной), иначе BS_AIR или BS_WATER.
+     *
+     * <p>Активно только там, где колонка достаточно высокая (настоящая
+     * гора, не холм) и Y лежит в полосе между потолком базовых пещер и
+     * поверхностью/пиком. Полоса завязана на groundY ЭТОЙ колонки — если у
+     * соседней колонки поверхность ниже уровня туннеля, там породы уже нет
+     * (см. columnProfile/fillChunk), и туннель естественно превращается в
+     * открытую арку/окно наружу — без отдельной логики.
+     */
+    private BlockState resolveMountainTunnel(int wx, int y, int wz, int groundY) {
+        if (groundY < MTUN_MIN_GROUND_Y) return null;
+
+        int lowY  = CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN;
+        int highY = groundY - MTUN_HIGH_MARGIN;
+        if (highY - lowY < 20 || y < lowY || y > highY) return null;
+
+        double n1 = mtunNoiseA.noise3D(
+                wx * MTUN_FREQ_XZ,
+                y  * MTUN_FREQ_XZ * MTUN_FREQ_Y_MULT,
+                wz * MTUN_FREQ_XZ);
+        double n2 = mtunNoiseB.noise3D(
+                wx * MTUN_FREQ_XZ + 4096,
+                y  * MTUN_FREQ_XZ * MTUN_FREQ_Y_MULT,
+                wz * MTUN_FREQ_XZ + 4096);
+        double dist = Math.sqrt(n1 * n1 + n2 * n2);
+        if (dist >= MTUN_THRESHOLD) return null;
+
+        // Внутри туннеля: нижняя часть его сечения залита водой (ручей/
+        // озеро, по которому можно проплыть на лодке), верх — воздух.
+        // "Уровень воды" в каждой точке (wx,wz) — почти плоская, слегка
+        // волнистая линия внутри полосы [lowY, highY], поэтому там, где
+        // туннель проходит низко, он затоплен, а где высоко — сухой проход.
+        double waterN   = mtunWaterNoise.fbm2D(wx * 0.01, wz * 0.01, 3, 2.0, 0.5); // -1..1
+        int    waterY   = lowY + (int) Math.round((highY - lowY) * (MTUN_WATER_FRAC + 0.12 * waterN));
+        if (y <= waterY) {
+            return BS_WATER;
+        }
+        return BS_AIR;
+    }
+
 
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1799,13 +1945,17 @@ public class Layer1FlatGenerator {
 
     private BlockState resolveBlock(int wx, int y, int wz,
                                     int fY, int cY, int stgTopY, int stcBotY,
-                                    boolean inColumnBase, double colTSq, int colBaseR) {
+                                    boolean inColumnBase, double colTSq, int colBaseR,
+                                    int groundY) {
         // Ниже пола → сплошная порода
         if (y <= fY) {
             return y < DEEPSLATE_TOP ? deepslateBlock(wx, y, wz) : stoneBlock(wx, y, wz);
         }
-        // Выше потолка → сплошная порода
+        // Выше потолка → сплошная порода, если только тут не проходит
+        // горный туннель/арка (см. resolveMountainTunnel).
         if (y >= cY) {
+            BlockState tunnel = resolveMountainTunnel(wx, y, wz, groundY);
+            if (tunnel != null) return tunnel;
             return stoneBlock(wx, y, wz);
         }
 
