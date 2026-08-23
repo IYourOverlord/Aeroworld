@@ -384,9 +384,14 @@ public class UpperIslandGenerator {
     public int getCapTopY(int wx, int wz, IslandData d) {
         int capBaseY = d.bottomY + d.height() / 3;
 
-        // Быстрый XZ-reject: проверяем хотя бы один Y (верхушку)
+        // Быстрый XZ-reject: на самой topY isCapSolid ВСЕГДА false (t=1 →
+        // base=1-t²=0 → capRSq=0 при любом radius, единственное решение
+        // dx²+dz²≤0 — вырожденный случай почти нулевой вероятности из-за
+        // шумового сдвига capXZ.nx/nz). Поэтому reject-проверка идёт по
+        // capBaseY — там купол имеет полный радиус (base=1 при t=0), и
+        // отсутствие solid там надёжно означает "колонка вне купола вообще".
         CapXZCache capXZ = precomputeCapXZ(wx, wz);
-        if (!isCapSolid(wx, d.topY, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) {
+        if (!isCapSolid(wx, capBaseY, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) {
             return d.bottomY - 1;
         }
 
@@ -397,11 +402,7 @@ public class UpperIslandGenerator {
             if (isCapSolid(wx, mid, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) lo = mid;
             else hi = mid - 1;
         }
-        // Убеждаемся что Y+1 — воздух
-        if (isCapSolid(wx, lo + 1, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) {
-            return d.bottomY - 1;
-        }
-        return lo;
+        return lo; // lo уже гарантированно solid (нижняя граница поиска), верхний Y+1 по построению бинарного поиска не solid
     }
 
 
@@ -413,13 +414,10 @@ public class UpperIslandGenerator {
             return d.topY + 1;
         }
 
-        int lo = capBaseY, hi = d.topY;
-        while (lo < hi) {
-            int mid = (lo + hi) >>> 1;
-            if (isCapSolid(wx, mid, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) hi = mid;
-            else lo = mid + 1;
-        }
-        return lo;
+        // capBaseY уже solid (проверено выше) — купол в этой колонке всегда
+        // начинается ровно с capBaseY (isCapSolid отсекает wy < capBaseY
+        // безусловно), так что нижняя граница не требует поиска.
+        return capBaseY;
     }
 
 
