@@ -39,7 +39,10 @@ org.example.aeroworld
 ├── client/
 │   └── AeroWorldClientEvents.java — заглушка для клиентских UI-хуков (пока пусто)
 ├── command/
-│   └── AeroWorldCommands.java     — /aeroworld forcePlacePending, /aeroworld findIsland4
+│   └── AeroWorldCommands.java     — /aeroworld forcePlacePending, findIsland2/3/4 (спиральный поиск
+│       ближайшего острова по сетке соответствующего слоя: findIsland2 → LowerIslandGenerator,
+│       findIsland3 → HighIslandGenerator, findIsland4 → UpperIslandGenerator — три НЕЗАВИСИМЫХ
+│       IslandPlacer с разной солью seed'а, координаты островов разных слоёв не совпадают)
 ├── config/
 │   ├── AeroWorldConfig.java       — NeoForge ModConfigSpec (сейчас пустой, только регистрация)
 │   ├── AeroWorldSettings.java     — root-record {layer2, layer3, layer4}, сериализуется в dimension JSON
