@@ -2,6 +2,7 @@ package org.example.aeroworld.worldgen;
 
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.RegistryAccess;
@@ -34,6 +35,7 @@ import org.example.aeroworld.worldgen.structure.StructureCavityCarver;
 import org.example.aeroworld.worldgen.structure.ValidationResult;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -362,20 +364,43 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         }
 
         StructureSupportValidator validator = structureValidator;
-        if (validator == null) return;
+        if (validator == null) {
+            AeroWorld.LOGGER.warn(
+                    "[AeroWorld][StructureVal] createStructures вызван для чанка ({},{}), но structureValidator == null "
+                            + "даже после initializeWithSeed — валидация ПРОПУЩЕНА для этого чанка.",
+                    chunk.getPos().x, chunk.getPos().z);
+            return;
+        }
 
-        chunk.getAllReferences().forEach((structure, refs) -> {
-            if (refs.isEmpty()) return;
+        Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs = chunk.getAllReferences();
+        if (!allRefs.isEmpty()) {
+            AeroWorld.LOGGER.info(
+                    "[AeroWorld][StructureVal] createStructures: чанк ({},{}), всего структур с ссылками в чанке: {}.",
+                    chunk.getPos().x, chunk.getPos().z, allRefs.size());
+        }
 
+        allRefs.forEach((structure, refs) -> {
             ResourceLocation structureId = registryAccess
                     .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
                     .getKey(structure);
+
+            if (refs.isEmpty()) {
+                AeroWorld.LOGGER.info(
+                        "[AeroWorld][StructureVal]   {} в чанке ({},{}): refs пуст (структура ссылается СЮДА с другого чанка, но не отсюда) — пропущено.",
+                        structureId, chunk.getPos().x, chunk.getPos().z);
+                return;
+            }
             if (structureId == null) return;
 
             StructureStart start = structureManager.getStartForStructure(
                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),
                     structure, chunk);
-            if (start == null || start == StructureStart.INVALID_START) return;
+            if (start == null || start == StructureStart.INVALID_START) {
+                AeroWorld.LOGGER.info(
+                        "[AeroWorld][StructureVal]   {} в чанке ({},{}): start={} — нет валидного старта В ЭТОМ чанке, валидация невозможна отсюда.",
+                        structureId, chunk.getPos().x, chunk.getPos().z, start);
+                return;
+            }
 
             ValidationResult result = validator.validate(structureId, start);
             if (!result.accepted) {
