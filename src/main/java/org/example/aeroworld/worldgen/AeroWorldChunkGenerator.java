@@ -350,6 +350,17 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         super.createStructures(registryAccess, structureState, structureManager,
                 chunk, structureTemplateManager);
 
+        // Ленивая инициализация seed-зависимых полей (layer1/lowerIslands/…/
+        // structureValidator) — обычно происходит через init(randomState) из
+        // fillFromNoise, но createStructures может быть вызван раньше (структуры
+        // генерируются до заполнения шумом), и тогда structureValidator ещё null
+        // → вся валидация структур молча пропускается без единой записи в лог.
+        // ChunkGeneratorStructureState.getLevelSeed() даёт тот же seed без
+        // необходимости в RandomState.
+        if (!seedInitialized) {
+            initializeWithSeed(structureState.getLevelSeed());
+        }
+
         StructureSupportValidator validator = structureValidator;
         if (validator == null) return;
 
