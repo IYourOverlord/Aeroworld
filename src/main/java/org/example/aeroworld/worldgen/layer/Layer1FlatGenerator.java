@@ -692,10 +692,21 @@ public class Layer1FlatGenerator {
      */
     public boolean isOceanColumn(int wx, int wz) {
         int landHeight = computeLandHeight(wx, wz);
-        if (landHeight > WATER_MAX_LAND_Y) return false;
 
         double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
         double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
+        // ВАЖНО: раньше здесь стоял ранний выход `if (landHeight >
+        // WATER_MAX_LAND_Y) return false;` ДО проверки oceanW. Но
+        // columnProfile() намеренно разрешает океану подтапливать подножие
+        // высокой горы (см. комментарий у earlyOceanW в columnProfile —
+        // правка "гора обрывом уходит в воду"), т.е. landHeight ТАМ может
+        // быть выше WATER_MAX_LAND_Y и всё равно физически залит водой.
+        // Старая гейтинг-проверка это игнорировала: биом оставался сухим
+        // горным (windswept_hills/stony_peaks — без seagrass/coral в
+        // фичах), хотя рельеф был реально под водой → голое дно без
+        // водорослей/кораллов на затопленных склонах. Убрали гейтинг по
+        // landHeight, оставили только проверку oceanW — она уже сама по
+        // себе отсекает точки вдали от океана.
         if (oceanW <= 0.0) return false;
 
         double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
