@@ -199,7 +199,16 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
     @Override public int getMinY()     { return -64; }
     @Override public int getGenDepth() { return 2164; }
-    @Override public int getSeaLevel() { return -1; }
+    // ИСПРАВЛЕНО: было захардкожено -1 — практически "океана нет" для всех
+    // ванильных систем, завязанных на getSeaLevel() (структуры типа
+    // ocean_monument, размещение подводной растительности/кораллов через
+    // плейсмент-модификаторы фич, туман/рендер клиента и т.д.). Реальный
+    // мировой уровень воды генератора — WATER_LEVEL=44 в Layer1FlatGenerator
+    // (тот самый, что заливает океаны/реки/озёра). Несовпадение этих двух
+    // чисел — вероятная причина, почему на дне океана не появлялись
+    // seagrass/kelp/коралл: часть ванильной фиче-плейсмент логики тихо
+    // считала мир "безводным" и отбраковывала подводные фичи.
+    @Override public int getSeaLevel() { return Layer1FlatGenerator.WATER_LEVEL; }
 
     /**
      * Возвращает высоту верхней поверхности в колонке (x, z).

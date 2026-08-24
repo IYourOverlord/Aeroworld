@@ -61,7 +61,7 @@ public class Layer1FlatGenerator {
     // ── Реки / озёра ──────────────────────────────────────────────────────────
     // Фиксированный уровень воды — чуть ниже базовой равнины (48), чтобы вода
     // естественно скапливалась в низинах, а не резала склоны гор.
-    private static final int    WATER_LEVEL       = BASE_SURFACE_Y - 4; // 44
+    public static final int WATER_LEVEL = BASE_SURFACE_Y - 4; // 44 (public: нужен AeroWorldChunkGenerator.getSeaLevel())
     private static final double RIVER_HALF_WIDTH  = 0.075; // ширина полосы |noise|<X — река
     private static final double LAKE_THRESHOLD    = 0.55;  // порог по шуму — озеро
     private static final int    RIVER_BED_DEPTH   = 3;
