@@ -45,599 +45,185 @@ public class Layer1FlatGenerator {
     // Было 6 — почти незаметно с высоты полёта, подняли до 14.
     private static final int FLATLAND_BUMP    = 14;
 
-    // ── Региональная структура хребтов (Terralith-подобная драма + WWOO-подобная
-    //    мягкость переходов) ──────────────────────────────────────────────────
-    // Мир поделён на крупные регионы CELL_SIZE×CELL_SIZE блоков. Каждый регион
-    // детерминированно (по хэшу от координат региона + seed) получает СВОЙ
-    // стиль хребта: либо параллельные гряды под случайным углом (через них
-    // хочется наводить мосты), либо кольцевой массив-кальдера (внутри — тихая
-    // низина под лес/вишнёвую рощу), плюс шанс на гигантское ущелье, режущее
-    // хребет насквозь. Сама ГРАНИЦА "гора/не гора" по-прежнему берётся из
-    // mountainMask (широкий fbm) — она отвечает за мягкость переходов;
-    // региональная система отвечает только за ФОРМУУ хребта внутри горной зоны.
-    private static final double CELL_SIZE         = 640.0; // размер региона (блоков)
-    // Ширина полосы у ДАЛЬНЕГО (по +X/+Z) края ячейки, где ещё идёт плавный
-    // bilinear-бленд со следующей ячейкой (0..1 доля CELL_SIZE). Раньше
-    // fadeX/fadeZ = smoothstep(0,1,cellFx) растягивался на ВСЮ ширину
-    // ячейки — то есть даже в центре ячейки (cellFx=0.5) уже подмешивалось
-    // 50% чужого архетипа с соседней ячейки. Для локальных архетипов
-    // (TERRACE/PLATEAU/ALPINE/SHATTERED — у них своя подошва честно уходит
-    // в 0 на terraceRadius/plateauRadius/т.п.) это безобидно: 0*вес=0. Но
-    // "default" (параллельные гряды) — единственный БЕСКОНЕЧНЫЙ архетип,
-    // периодическая волна без затухания вдали от центра. Подмешиваясь на
-    // половину силы почти по всей ячейке, он поднимал "подошву" соседней
-    // локальной горы на несколько блоков ещё ДО начала её собственной кривой
-    // — именно тот "срез, гора висит над землёй" баг из репорта. Сузили
-    // полосу блендинга до края ячейки: внутренние ~(1-CELL_BLEND_WIDTH) —
-    // чистый архетип текущей ячейки без примеси соседей, переход остаётся
-    // гладким (smoothstep по-прежнему C¹, обрыва стиля на границе нет).
-    private static final double CELL_BLEND_WIDTH  = 0.28;
-    private static final double RIDGE_SPACING     = 260.0; // расстояние между параллельными гребнями (было 340 — с возросшим MAX_EXTRA_HEIGHT давало слишком пологие, "холмистые" гряды вместо гор)
-    private static final double RIDGE_WARP_AMPL   = 55.0;  // "волнистость" линии гребня (блоков)
-    private static final double RING_WIDTH        = 45.0;  // толщина кольцевого хребта
-    private static final double RING_RADIUS_MIN   = 90.0;
-    private static final double RING_RADIUS_MAX   = 210.0;
-    // Доли архетипов ниже пересчитаны пропорционально при добавлении
-    // SHATTERED, чтобы все 5 "особых" архетипов остались сопоставимы друг
-    // с другом (было 0.28/0.24/0.20/0.20 без SHATTERED, сумма 0.92 — почти
-    // не оставляло места PARALLEL). Теперь сумма специальных = 0.80,
-    // PARALLEL = 0.20 — заметная, не исчезающая доля обычных гряд.
-    private static final double RING_CHANCE       = 0.195; // доля горных регионов — кольцевые кальдеры
-    private static final double ALPINE_CHANCE     = 0.167; // доля горных регионов — альпийские пики (Terralith-style)
-    private static final double PLATEAU_CHANCE    = 0.139; // доля горных регионов — плато со крутыми бортами
-    private static final double TERRACE_CHANCE    = 0.139; // доля горных регионов — ступенчатый склон
-    private static final double SHATTERED_CHANCE  = 0.160; // доля горных регионов — разбитые скальные гряды (хаотичные обломки)
-    // Остаток (1 - RING - ALPINE - PLATEAU - TERRACE - SHATTERED = 0.20) — параллельные гряды.
-    private static final double CANYON_CHANCE     = 0.35;  // доля горных регионов — с гигантским ущельем
-    private static final double CANYON_HALF_WIDTH = 26.0;  // блоков от центра ущелья до края
-    private static final int    CANYON_FLOOR      = BASE_SURFACE_Y + 6; // дно ущелья — безопасно выше пещеры
-    private static final double CANYON_MEANDER_AMPL = 70.0; // амплитуда извива линии ущелья вдоль его длины (блоков)
-    private static final double CANYON_TALUS_MIN_RUN  = 34.0; // минимальная ширина осыпного шлейфа (блоков)
-    private static final double CANYON_TALUS_PER_DROP = 0.85; // доп. ширина шлейфа на каждый блок перепада высоты
-    private static final double CANYON_TALUS_MAX_FACTOR = 0.55; // макс. доля перепада, снимаемая в шлейфе (не доходит до дна)
 
-    // ── Реки / озёра ──────────────────────────────────────────────────────────
-    // Фиксированный уровень воды — чуть ниже базовой равнины (48), чтобы вода
-    // естественно скапливалась в низинах, а не резала склоны гор.
-    private static final int    WATER_LEVEL       = BASE_SURFACE_Y - 4; // 44
-    private static final double RIVER_HALF_WIDTH  = 0.075; // ширина полосы |noise|<X — река (было 0.045, толще на ~3 блока с каждой стороны)
-    private static final double LAKE_THRESHOLD    = 0.55;  // порог по шуму — озеро
-    private static final int    RIVER_BED_DEPTH   = 3;
-    private static final int    LAKE_BED_DEPTH    = 6;
-    // Реки/озёра карвятся только в низинах — там, где горная маска почти не
-    // подняла рельеф. Не резать русло сквозь склон горы.
-    private static final int    WATER_MAX_LAND_Y  = BASE_SURFACE_Y + 12;
-    // Ширина плавного перехода (в единицах шума) между сушей и водой —
-    // формирует пологий пляж/склон дна вместо резкого вертикального среза.
-    // Было 0.05 — на небольших островах переход укладывался в 1-3 блока и
-    // выглядел как обрыв. Расширили втрое.
-    private static final double SHORE_BLEND       = 0.14;
-
-    // ── Ступенчатый пляжный карниз ───────────────────────────────────────────
-    // Раньше высота суши у самой кромки воды бралась прямо из landHeight
-    // (с обычной микрохолмистостью FLATLAND_BUMP) и просто линейно
-    // сводилась к уровню дна океана через oceanW/SHORE_BLEND. У холмистого
-    // landHeight рядом с водой уже сами по себе есть перепады высоты в
-    // 1-3 блока — на песке они читаются как ступеньки прямо на пляже.
+    // ══════════════════════════════════════════════════════════════════════════
+    // ЭТАП 1 — Многослойный noise router (см. ТЗ "переход генератора рельефа
+    // AeroWorld на многослойный noise router").
     //
-    // Промежуточные версии держали весь карниз ровно на WATER_LEVEL — но
-    // это визуально читается как береговая линия, просто отодвинутая на
-    // несколько блоков вглубь суши (тот же уровень воды, просто дальше),
-    // а не как настоящее понижение рельефа. Нужен трёхступенчатый профиль:
-    //   1) BEACH_EDGE_WIDTH  (1 блок)  — вровень с водой, касается воды.
-    //   2) BEACH_LEDGE_WIDTH (6 блоков) — на 1 блок НИЖЕ, чем п.1 —
-    //      то есть уже под уровнем воды на 1 блок. Здесь вода, вытесняющая
-    //      песок, может растекаться по нижнему слою, не упираясь в стену.
-    //   3) BEACH_LEDGE_BLEND (плавный подъём) — от уровня п.2 обратно к
-    //      обычной высоте суши.
-    private static final double BEACH_EDGE_WIDTH   = 1.0;  // блоков — первая линия, вровень с водой
-    private static final double BEACH_LEDGE_WIDTH  = 6.0;  // блоков — карниз на 1 блок ниже первой линии
-    private static final double BEACH_LEDGE_BLEND  = 3.0;  // блоков дальше — переход от карниза к обычному рельефу (минимум для адаптивной ширины, см. BEACH_LEDGE_HEIGHT_RATIO)
-    // Дополнительная ширина зоны перехода (в блоках) на каждый блок высоты,
-    // которую нужно набрать от карниза до полного рельефа. При blendedY,
-    // близком к уровню воды (равнина/пляж), heightToClimb мало и адаптивная
-    // ширина не превышает BEACH_LEDGE_BLEND — поведение как раньше. У
-    // подножия высокой горы (heightToClimb в сотни блоков) ширина
-    // растягивается пропорционально, чтобы угол склона не превращался в
-    // отвесную стену. 0.4 ≈ уклон около 68° — всё ещё круто (это подножие
-    // горы, не пологий берег), но уже физически проходимый склон, а не
-    // вертикальный обрыв.
-    private static final double BEACH_LEDGE_HEIGHT_RATIO = 0.4;
-    // Высота первой линии — вровень с водой (соприкасается с ней).
-    private static final int    BEACH_EDGE_Y       = WATER_LEVEL;
-    // Высота карниза — на 1 блок НИЖЕ первой линии, то есть уже под водой.
-    private static final int    BEACH_LEDGE_Y      = WATER_LEVEL - 1;
-
-    // ── Полая песчаная кромка ────────────────────────────────────────────────
-    // На узкой прибрежной полосе (ColumnProfile.isShoreEdge, см. applyBeachFlat)
-    // вместо монолитного песчаного столба оставляем одну непроницаемую для
-    // воды линию блоков вровень с водой/карнизом, а сразу под ней — полую
-    // полость на несколько блоков вглубь (как будто берег подкопан прибоем).
-    // Ниже полости снова сплошная порода — полость не достаёт до пещер.
-    // Линию делаем из SANDSTONE, а не SAND — он не подчиняется гравитации,
-    // поэтому не обрушится при первом же обновлении соседнего блока.
-    private static final int    SHORE_HOLLOW_DEPTH = 6;  // блоков полости под линией кромки
-
-    // ── Океаны ────────────────────────────────────────────────────────────────
-    // Отдельный, гораздо более широкий шум (масштаб материков), чем
-    // реки/озёра. Ниже порога — открытый океан; глубина растёт по мере
-    // удаления от условного "берега" (порога), а не одинакова везде.
-    private static final double OCEAN_THRESHOLD  = -0.10; // ниже — океан
-    private static final double OCEAN_DEEP_AT    = -0.60; // тут уже максимальная глубина
-    private static final int    OCEAN_MIN_DEPTH  = 8;      // глубина у "берега"
-    private static final int    OCEAN_MAX_DEPTH  = 24;     // глубина в открытом океане
-    // Толщина grass/dirt (или sand/sandstone, terracotta) под поверхностью,
-    // которую buildSurface красит поверх (2 верхних блока) — как раньше.
-    private static final int SURFACE_SKIN     = 3;
-
-    private static final int DEEPSLATE_TOP = 0;
-
-    // ── Параметры пещеры ──────────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════════
-    // Горные туннели/арки ("noodle"-пещеры внутри тела горы, выше базовой
-    // подземной пещерной системы). Технически — классический приём "лапши":
-    // два независимых 3D-шума n1,n2, туннель там, где sqrt(n1²+n2²) < порог.
-    // Т.к. рельеф колонный (2D heightmap), туннель автоматически "прорезает"
-    // гору насквозь и превращается в открытую арку там, где соседняя колонка
-    // ниже уровня туннеля (высота горы падает быстрее, чем сам туннель) —
-    // никакой отдельной логики для арок не требуется.
-    // ══════════════════════════════════════════════════════════════════════════
-    private static final int    MTUN_MIN_GROUND_Y  = BASE_SURFACE_Y + 65; // только настоящие горы
-    private static final int    MTUN_LOW_MARGIN    = 22;  // отступ вверх от потолка базовой пещеры
-    private static final int    MTUN_HIGH_MARGIN   = 24;  // отступ вниз от поверхности/пика
-    private static final double MTUN_FREQ_XZ       = 0.017; // частота по X/Z — определяет "толщину" туннеля
-    private static final double MTUN_FREQ_Y_MULT   = 0.55;  // туннель более пологий/горизонтальный
-    private static final double MTUN_THRESHOLD     = 0.42;  // порог sqrt(n1²+n2²) — ширина прохода
-    private static final double MTUN_WATER_SHORE_WOBBLE = 2.5; // лёгкая рябь берега (блоков), не форма горы
-    // MTUN_WATER_LEVEL_Y объявлен ниже, сразу после CEIL_BASE_Y/CEIL_VAR —
-    // ссылаться на них здесь нельзя (Java запрещает forward reference между
-    // static final полями одного класса, ошибка компиляции "illegal forward
-    // reference").
-
-    private static final int FLOOR_BASE_Y   = -14;   // базовый Y верхнего края пола
-    private static final int CEIL_BASE_Y    = 36;    // базовый Y нижнего края потолка
-    private static final int FLOOR_VAR      = 5;     // амплитуда холмов пола (блоков)
-    private static final int CEIL_VAR       = 5;     // амплитуда холмов потолка (блоков)
-    // РАНЬШЕ: уровень воды считался как ДОЛЯ (MTUN_WATER_FRAC) локального
-    // диапазона [lowY,highY], а highY = groundY-margin — то есть зависел от
-    // высоты горы В ЭТОЙ КОЛОНКЕ. Гора имеет форму купола, значит highY
-    // (и вместе с ним "уровень воды") плавно поднимался к центру массива —
-    // вода повторяла силуэт горы и выглядела выпуклой линзой/параболой, а
-    // не водой (у неё всегда ровная горизонтальная поверхность).
-    // ТЕПЕРЬ: единый ФИКСИРОВАННЫЙ мировой Y для всей туннельной системы —
-    // как и положено воде, "просто заполняющей объём" до одной отметки.
-    // Взят низко (ближе к потолку базовых пещер, а не к середине горы) —
-    // проще плавать/передвигаться, не упираясь в потолок сразу над водой.
-    private static final int    MTUN_WATER_LEVEL_Y = CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN + 14;
-    private static final int STALAGMITE_MAX = 14;    // макс. высота сталагмита
-    private static final int STALACTITE_MAX = 14;    // макс. длина сталактита
-
-    // ── Параметры колонн ──────────────────────────────────────────────────────
-    // Колонны — форма ПЕСОЧНЫХ ЧАСОВ:
-    //   у пола и потолка — широкие (BASE_RADIUS блоков),
-    //   в середине — узкие (WAIST_RADIUS блоков).
-    // BASE_RADIUS — радиус основания (у пола/потолка)
-    // WAIST_RADIUS — радиус талии (в середине)
-    private static final int    COLUMN_GRID_SIZE  = 30;   // шаг сетки (блоков)
-    private static final double COLUMN_CHANCE     = 0.55; // вероятность колонны в ячейке
-    private static final int    COLUMN_BASE_MIN   = 8;    // мин. радиус основания
-    private static final int    COLUMN_BASE_MAX   = 18;   // макс. радиус основания
-    // Талия = BASE * WAIST_FRACTION (0.18–0.30 → 2–4 блока при base=8..18)
-    private static final double COLUMN_WAIST_FRAC = 0.22; // доля от base-радиуса
-    // Для совместимости со старым кодом (reach-расчёт)
-    private static final int    COLUMN_RADIUS_MAX = COLUMN_BASE_MAX;
-
-    // ── Кэшированные BlockState (пункт S) ────────────────────────────────────
-    // defaultBlockState() возвращает singleton, но каждый вызов проходит
-    // через виртуальный метод. При 150+ вызовах на чанк в горячих путях
-    // (resolveBlock, deepslateBlock, stoneBlock, fillChunk, generateOres)
-    // замена на прямое чтение поля даёт заметное ускорение.
-    private static final BlockState BS_AIR             = Blocks.AIR            .defaultBlockState();
-    private static final BlockState BS_BEDROCK         = Blocks.BEDROCK        .defaultBlockState();
-    private static final BlockState BS_STONE           = Blocks.STONE          .defaultBlockState();
-    private static final BlockState BS_DEEPSLATE       = Blocks.DEEPSLATE      .defaultBlockState();
-    private static final BlockState BS_GRANITE         = Blocks.GRANITE        .defaultBlockState();
-    private static final BlockState BS_DIORITE         = Blocks.DIORITE        .defaultBlockState();
-    private static final BlockState BS_ANDESITE        = Blocks.ANDESITE       .defaultBlockState();
-    private static final BlockState BS_TUFF            = Blocks.TUFF           .defaultBlockState();
-    private static final BlockState BS_GRAVEL          = Blocks.GRAVEL         .defaultBlockState();
-    private static final BlockState BS_DIRT            = Blocks.DIRT           .defaultBlockState();
-    private static final BlockState BS_SANDSTONE       = Blocks.SANDSTONE      .defaultBlockState();
-    private static final BlockState BS_SAND            = Blocks.SAND           .defaultBlockState();
-    private static final BlockState BS_WATER           = Blocks.WATER          .defaultBlockState();
-    private static final BlockState BS_TERRACOTTA      = Blocks.TERRACOTTA     .defaultBlockState();
-    private static final BlockState BS_COAL_ORE        = Blocks.COAL_ORE       .defaultBlockState();
-    private static final BlockState BS_IRON_ORE        = Blocks.IRON_ORE       .defaultBlockState();
-    private static final BlockState BS_DEEPSLATE_IRON  = Blocks.DEEPSLATE_IRON_ORE .defaultBlockState();
-    private static final BlockState BS_COPPER_ORE      = Blocks.COPPER_ORE     .defaultBlockState();
-    private static final BlockState BS_DEEPSLATE_COPPER= Blocks.DEEPSLATE_COPPER_ORE.defaultBlockState();
-    private static final BlockState BS_GOLD_ORE        = Blocks.GOLD_ORE       .defaultBlockState();
-    private static final BlockState BS_DEEPSLATE_GOLD  = Blocks.DEEPSLATE_GOLD_ORE .defaultBlockState();
-    private static final BlockState BS_REDSTONE_ORE    = Blocks.REDSTONE_ORE   .defaultBlockState();
-    private static final BlockState BS_DEEPSLATE_RED   = Blocks.DEEPSLATE_REDSTONE_ORE.defaultBlockState();
-
-    // ── Seed-константы ────────────────────────────────────────────────────────
-    private static final long SEED_STONE = 0xAA01L;
-    private static final long SEED_FLOOR = 0xF100_BEEF_1234L;
-    private static final long SEED_CEIL  = 0xC100_DEAD_5678L;
-    private static final long SEED_STAG  = 0x5714_6717_9999L;
-    private static final long SEED_STAC  = 0x4C71_1234_ABCDL;
-    private static final long SEED_ORE   = 0xAA02L;
-    private static final long SEED_HEIGHT = 0x4E1687_71ADL;
-    private static final long SEED_MTUN_A = 0x7A0D_1E11_A001L;
-    private static final long SEED_MTUN_B = 0x7A0D_1E11_B002L;
-    private static final long SEED_MTUN_W = 0x7A0D_1E11_C003L;
-
-    // ── Шумовые генераторы ────────────────────────────────────────────────────
-    private final AeroNoise stoneVariance;
-    private final AeroNoise oreNoise;
-    private final AeroNoise floorNoise;
-    private final AeroNoise ceilNoise;
-    private final AeroNoise stalagNoise;
-    private final AeroNoise stalacNoise;
-    private final AeroNoise heightNoise;
-    private final AeroNoise mtunNoiseA;
-    private final AeroNoise mtunNoiseB;
-    private final AeroNoise mtunWaterNoise;
-
-    private final long seed;
-
-    public Layer1FlatGenerator(long worldSeed) {
-        this.seed     = worldSeed;
-        stoneVariance = new AeroNoise(worldSeed ^ SEED_STONE);
-        oreNoise      = new AeroNoise(worldSeed ^ SEED_ORE);
-        floorNoise    = new AeroNoise(worldSeed ^ SEED_FLOOR);
-        ceilNoise     = new AeroNoise(worldSeed ^ SEED_CEIL);
-        stalagNoise   = new AeroNoise(worldSeed ^ SEED_STAG);
-        stalacNoise   = new AeroNoise(worldSeed ^ SEED_STAC);
-        heightNoise   = new AeroNoise(worldSeed ^ SEED_HEIGHT);
-        mtunNoiseA    = new AeroNoise(worldSeed ^ SEED_MTUN_A);
-        mtunNoiseB    = new AeroNoise(worldSeed ^ SEED_MTUN_B);
-        mtunWaterNoise= new AeroNoise(worldSeed ^ SEED_MTUN_W);
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // Региональные параметры хребтов (детерминированный хэш от координат региона)
+    // Архитектура по образцу Minecraft 1.18+ density functions: несколько
+    // НЕЗАВИСИМЫХ низкочастотных скалярных полей шума + явные spline-таблицы
+    // (input, output), которые их комбинируют в итоговую высоту. Значение
+    // высоты в любой точке (wx, wz) — ЧИСТАЯ функция этих полей, без понятия
+    // "региональная ячейка"/"архетип" и без блендинга между ячейками (то,
+    // что раньше упиралось в CELL_BLEND_WIDTH/homeRidge-подавление, теперь
+    // отсутствует как класс проблем — рельеф везде считается одной и той же
+    // формулой).
+    //
+    // Что ВРЕМЕННО отсутствует на этом этапе (см. ТЗ, "Этап 2"):
+    //   • Региональные архетипы хребтов (PARALLEL/RING/ALPINE/PLATEAU/
+    //     TERRACE/SHATTERED) и вся система CELL_SIZE-ячеек — удалены
+    //     безвозвратно, они и были источником швов.
+    //   • Каньон (CANYON_*, hasCanyon) — временно недоступен, возвращается
+    //     на этапе 2 как модификатор поверх erosion/PV, а не отдельная
+    //     региональная фича.
+    //   • riverMountainRepel()/расширенная адаптивная coastalShoreBlend —
+    //     не требуются: базовая высота уже физически низкая на низком
+    //     continentalness (океан) и высокая на высоком PV (горы), поэтому
+    //     существующий SHORE_BLEND/BEACH_LEDGE-код ниже по файлу продолжает
+    //     работать как есть, без специальных случаев.
     // ══════════════════════════════════════════════════════════════════════════
 
-    private static final class RegionParams {
-        final double angle;        // ориентация параллельных гряд, радианы
-        final RidgeArchetype archetype; // какой архетип рельефа у этого региона
-        final double ringCx, ringCz, ringRadius;
-        final boolean hasCanyon;
-        final double canyonAngle, canyonOffset;
-        final boolean cherryGrove; // внутри кольца: вишнёвая роща вместо обычного леса
-        // ── Alpine: несколько отдельных пиков внутри региона (координаты
-        //    центров + индивидуальный "рост" каждого — не все пики одной
-        //    высоты, как в реальных горных цепях). ────────────────────────
-        final double[] peakCx, peakCz, peakHeight;
-        // ── Plateau: положение и радиус плоской платформы + случайный
-        //    "изгрыз" контура (не идеальный круг). ────────────────────────
-        final double plateauCx, plateauCz, plateauRadius, plateauEdgeSeed;
-        // ── Terrace: положение/радиус ступенчатой горы + сид неровности
-        //    контура (тот же приём, что у Plateau, отдельный сид, чтобы
-        //    контуры двух архетипов не совпадали при случайном соседстве
-        //    региональных ячеек одинакового типа). ─────────────────────────
-        final double terraceCx, terraceCz, terraceRadius, terraceEdgeSeed;
-        // ── Shattered: несколько угловатых обломков внутри региона —
-        //    координаты центров + индивидуальный радиус и "сид" углова-
-        //    тости каждого (не все обломки одной формы). ──────────────────
-        final double[] shatterCx, shatterCz, shatterRadius, shatterJagSeed;
+    // ── Поле 1: continentalness ──────────────────────────────────────────
+    // "Насколько вглубь материка": -1 = океан/побережье, +1 = глубокий
+    // материк. Самая низкая частота в файле — континенты должны быть
+    // КРУПНЕЕ прежних океанских пятен (raw fbm2D диапазон примерно ±0.7 при
+    // 4 октавах, нормализуем делением на NORM ниже до ~[-1,1]).
+    private static final double CONTINENTALNESS_FREQ = 0.00050;
+    private static final int    CONTINENTALNESS_OCTAVES = 4;
+    private static final double CONTINENTALNESS_NORM  = 0.75; // делитель raw fbm -> примерно [-1,1]
 
-        RegionParams(double angle, RidgeArchetype archetype, double ringCx, double ringCz, double ringRadius,
-                     boolean hasCanyon, double canyonAngle, double canyonOffset, boolean cherryGrove,
-                     double[] peakCx, double[] peakCz, double[] peakHeight,
-                     double plateauCx, double plateauCz, double plateauRadius, double plateauEdgeSeed,
-                     double terraceCx, double terraceCz, double terraceRadius, double terraceEdgeSeed,
-                     double[] shatterCx, double[] shatterCz, double[] shatterRadius, double[] shatterJagSeed) {
-            this.angle = angle;
-            this.archetype = archetype;
-            this.ringCx = ringCx;
-            this.ringCz = ringCz;
-            this.ringRadius = ringRadius;
-            this.hasCanyon = hasCanyon;
-            this.canyonAngle = canyonAngle;
-            this.canyonOffset = canyonOffset;
-            this.cherryGrove = cherryGrove;
-            this.peakCx = peakCx;
-            this.peakCz = peakCz;
-            this.peakHeight = peakHeight;
-            this.plateauCx = plateauCx;
-            this.plateauCz = plateauCz;
-            this.plateauRadius = plateauRadius;
-            this.plateauEdgeSeed = plateauEdgeSeed;
-            this.terraceCx = terraceCx;
-            this.terraceCz = terraceCz;
-            this.terraceRadius = terraceRadius;
-            this.terraceEdgeSeed = terraceEdgeSeed;
-            this.shatterCx = shatterCx;
-            this.shatterCz = shatterCz;
-            this.shatterRadius = shatterRadius;
-            this.shatterJagSeed = shatterJagSeed;
-        }
+    // ── Поле 2: erosion ────────────────────────────────────────────────
+    // "Насколько рельеф сглажен": +1 = плоские равнины, -1 = резкий,
+    // изрезанный рельеф с большим разбросом высот. Частота выше, чем у
+    // continentalness, но ниже, чем у PV — своя, независимая, отдельный seed.
+    private static final double EROSION_FREQ    = 0.0018;
+    private static final int    EROSION_OCTAVES = 3;
+    private static final double EROSION_NORM    = 0.72;
 
-        /** Совместимость со старым кодом, который проверял "кольцо или гряды". */
-        boolean isRing() { return archetype == RidgeArchetype.RING; }
-    }
+    // ── Поле 3: peaksAndValleys (PV) ──────────────────────────────────────
+    // Локальная "пикообразность" [-1,1]: -1 глубокая долина, 0 предгорья,
+    // +1 острый пик. Более высокая частота, чем у erosion — формирует
+    // силуэт отдельных гор/долин напрямую (замена mountainMask+ridge).
+    private static final double PV_FREQ    = 0.0055;
+    private static final int    PV_OCTAVES = 4;
+
+    // ── Поле 4: weirdness ──────────────────────────────────────────────
+    // Вспомогательное поле для асимметрии PV — тот же приём, что в ваниле:
+    // PV' = 1 - |3|weirdness| - 2|. Собственная частота/seed, независимая
+    // от остальных трёх полей.
+    private static final double WEIRDNESS_FREQ    = 0.0027;
+    private static final int    WEIRDNESS_OCTAVES = 3;
+    private static final double WEIRDNESS_NORM    = 0.72;
+
+    // ── Сплайн 1: baseByContinentalness(continentalness) → базовая высота ──
+    // Точки (x=continentalness, y=высота в блоках). BASE_SURFACE_Y=48 —
+    // текущая равнина при continentalness≈0, как и раньше.
+    private static final double[][] BASE_BY_CONTINENTALNESS = {
+            { -1.00, -40 },  // глубокий океан
+            { -0.55, -12 },  // шельф
+            { -0.30,  40 },  // берег
+            {  0.00,  48 },  // равнина = BASE_SURFACE_Y
+            {  0.40,  55 },  // предгорья
+            {  1.00,  60 },  // глубокий материк
+    };
+
+    // ── Сплайн 2: amplitudeByErosion(erosion) → амплитуда рельефа ─────────
+    // Высокая erosion (сглажено) => мало амплитуды; низкая (изрезано) =>
+    // максимальная амплитуда MAX_EXTRA_HEIGHT, как раньше у гор.
+    private static final double[][] AMPLITUDE_BY_EROSION = {
+            { -1.00, MAX_EXTRA_HEIGHT },  // максимально изрезано
+            { -0.30, 150 },
+            {  0.00,  90 },               // средне
+            {  0.55,  30 },
+            {  1.00,   5 },               // почти плоско
+    };
+
+    // ── Сплайн 3: peakShape(PV) → форма пика [-0.2..1.0] ───────────────────
+    private static final double[][] PEAK_SHAPE_BY_PV = {
+            { -1.00, -0.20 }, // лёгкая ложбина
+            { -0.30,  0.00 },
+            {  0.00,  0.00 }, // средний рельеф/предгорья
+            {  0.60,  0.50 }, // предгорье
+            {  1.00,  1.00 }, // полный пик
+    };
+
+    // ── Сплайн 4: roughnessSpline(erosion) → амплитуда мелкого шума ──────
+    // Заменяет старый roughFactor/hills01/FLATLAND_BUMP одной кривой: чем
+    // ниже erosion (изрезаннее регион), тем сильнее мелкая рябь поверх
+    // базовой сплайновой высоты.
+    private static final double[][] ROUGHNESS_BY_EROSION = {
+            { -1.00, 1.00 },  // сильно изрезано — максимум мелкого шума
+            {  0.00, 0.55 },
+            {  1.00, 0.15 },  // почти плоско — минимум ряби
+    };
+    // Амплитуда мелкого шума в блоках при roughnessSpline()=1.0 (масштабируется
+    // самой сплайн-кривой ниже 1.0 на равнинах). Заменяет старый FLATLAND_BUMP.
+    private static final double ROUGHNESS_MAX_AMPL = FLATLAND_BUMP;
 
     /**
-     * Архетип рельефа региона — аналог того, как Terralith переключает
-     * СТИЛЬ горы по биому (Alpine Highlands, Rocky Shrubland, Amethyst
-     * Rock и т.д.), а не использует один и тот же профиль хребта везде.
-     * Каждый архетип имеет свою форму профиля в {@link #sampleRidge}.
-     */
-    private enum RidgeArchetype {
-        PARALLEL,   // параллельные гряды (существующее поведение)
-        RING,       // кольцевая кальдера (существующее поведение)
-        ALPINE,     // несколько острых изрезанных пиков — Terralith "Alpine Highlands"
-        PLATEAU,    // плоская приподнятая платформа с крутыми бортами — Terralith "Rocky Shrubland" / mesa-плато
-        TERRACE,    // ступенчатый склон — несколько плоских "полок" вместо одного гладкого подъёма
-        SHATTERED   // разбитые скальные гряды — хаотичная россыпь угловатых обломков/останцов разной высоты
-    }
-
-    private static final int ALPINE_PEAK_COUNT = 3; // пиков на регион
-    private static final double ALPINE_PEAK_SPREAD = 0.30; // доля CELL_SIZE — как далеко от центра региона могут быть пики
-    // Было 70-130 — при регионе 640 блоков это лишь ~20% площади реально
-    // закрывалось пиками, и на фоне общей волнистости они не читались как
-    // отдельные "иглы". Расширили радиус влияния — пики стали крупнее и
-    // заметнее, но всё ещё локальны (не сливаются в сплошной хребет).
-    private static final double ALPINE_PEAK_RADIUS_MIN = 110.0;  // блоков — минимальный "радиус влияния" пика
-    private static final double ALPINE_PEAK_RADIUS_MAX = 190.0;
-    // >1 = острее вершина, чем стандартный купол. Подняли с 1.9 — раньше
-    // пик визуально был почти неотличим от обычного холма той же высоты,
-    // острота проявлялась только в самых верхних 10-15% профиля.
-    private static final double ALPINE_SHARPNESS = 2.6;
-    // Множитель, который поднимает alpine-пики ЗАМЕТНО выше, чем обычный
-    // ridge/plateau того же региона — иначе при одинаковом MAX_EXTRA_HEIGHT
-    // все архетипы выходят на одну и ту же максимальную высоту, и разница
-    // между "холмом" и "горой" остаётся только в форме силуэта, а не в
-    // масштабе, из-за чего пик легко потерять на фоне соседних холмов.
-    private static final double ALPINE_HEIGHT_BOOST = 1.22;
-
-    private static final double PLATEAU_RADIUS_MIN = 130.0;
-    private static final double PLATEAU_RADIUS_MAX = 240.0;
-    // Было 34 — при MAX_EXTRA_HEIGHT=190 и полной высоте плато набор высоты
-    // на этой ширине борта означал уклон порядка 190/34 ≈ 5.6 блока вверх на
-    // 1 блок вбок, то есть практически отвесная стена. Именно такой уклон
-    // на воксельной сетке даёт "рифлёный" вид: каждый шаг высоты в 1 блок
-    // соответствует лишь доле блока по горизонтали, поэтому грань каждой
-    // ступени становится видимой горизонтальной полосой травы/камня.
-    // Расширили почти вдвое — тот же диапазон высоты теперь растягивается
-    // на больше блоков по горизонтали, уклон становится физически более
-    // пологим, а не только "математически гладким".
-    private static final double PLATEAU_EDGE_WIDTH = 62.0;   // ширина "борта" от полной высоты до 0
-    private static final double PLATEAU_EDGE_ROUGH_AMPL = 18.0; // неровность контура плато (блоков)
-    private static final double PLATEAU_TOP_FLAT = 0.85; // доля высоты, где верх уже почти не растёт (плоская "крыша")
-
-    // ── Terrace: ступенчатый склон ────────────────────────────────────────
-    // Контур региона — тот же приём, что у PLATEAU (круглая область с
-    // неровным краем через тот же edgeNoise-подход), но профиль ВНУТРИ
-    // контура не гладкий купол/плато, а серия плоских "полок" — гора
-    // поднимается уступами, а не одним непрерывным склоном.
-    private static final double TERRACE_RADIUS_MIN = 140.0;
-    private static final double TERRACE_RADIUS_MAX = 230.0;
-    private static final double TERRACE_EDGE_ROUGH_AMPL = 16.0; // неровность внешнего контура (блоков)
-    // Сколько ступеней у горы (от подножия до вершины). Каждая ступень —
-    // плоская "полка" ridge01, разделённая коротким крутым подъёмом до
-    // следующей полки — визуально как террасное земледелие / рисовые
-    // террасы, только в масштабе горы.
-    private static final int    TERRACE_STEP_COUNT = 5;
-    // Доля [0,1] каждой ступени, которая остаётся ПЛОСКОЙ (полка) — остаток
-    // идёт на подъём к следующей ступени. 0.7 = полка держится 70% пути,
-    // подъём к следующей полке занимает оставшиеся 30% — короткий и
-    // заметный, но не отвесный (сглажен smoothstep, как и все остальные
-    // архетипы, чтобы не давать ровно вертикальных стен).
-    private static final double TERRACE_STEP_FLAT_FRAC = 0.7;
-    // Небольшая волнистость контура каждой отдельной ступени по азимуту —
-    // без неё все уступы читаются как идеальные концентрические окружности,
-    // что для рукотворных террас нормально, но для природной горы выглядит
-    // слишком искусственно. Амплитуда в единицах "доли ступени" (не блоков).
-    private static final double TERRACE_STEP_WOBBLE = 0.10;
-
-    // ── Shattered: разбитые скальные гряды (хаотичные обломки) ────────────
-    // Россыпь угловатых останцов-обломков в регионе — как canyon-стиль
-    // Badlands (резкие грани, никакой округлости), но крупнее и выше самого
-    // ущелья: это не прорезь в рельефе, а сам рельеф из "разбитых" скальных
-    // глыб разной высоты. Похоже по структуре на ALPINE (несколько локальных
-    // пиков, берём максимум по всем), но профиль каждого останца не гладкий
-    // купол — расстояние до центра ИСКАЖАЕТСЯ угловатым шумом ДО того, как
-    // проходит через smoothstep, из-за чего контур каждого обломка становится
-    // зубчатым/угловатым вместо круглого, а верх — плоский скол, а не пик.
-    private static final int    SHATTERED_COUNT = 6; // обломков на регион (больше, чем ALPINE_PEAK_COUNT — это россыпь, а не отдельные пики)
-    private static final double SHATTERED_SPREAD = 0.34; // доля CELL_SIZE — разброс обломков вокруг центра региона
-    private static final double SHATTERED_RADIUS_MIN = 55.0;  // блоков — минимальный радиус отдельного обломка
-    private static final double SHATTERED_RADIUS_MAX = 105.0;
-    // Амплитуда угловатого искажения контура, в блоках. Применяется к
-    // расстоянию до центра обломка ДО smoothstep — высокочастотный шум даёт
-    // рваный, "сколотый" край вместо гладкой окружности alpine-пика.
-    private static final double SHATTERED_JAGGED_AMPL = 22.0;
-    // Доля верхней части профиля (после smoothstep), которая срезается в
-    // плоский "скол" — обломок выглядит как отбитая глыба с плоской гранью
-    // сверху, а не как купол или острый пик. Меньше, чем PLATEAU_TOP_FLAT —
-    // скол должен читаться резче, площадка меньше.
-    private static final double SHATTERED_TOP_FLAT = 0.90;
-    // Множитель высоты — обломки должны быть заметно выше обычного каньона
-    // (CANYON_FLOOR у самого подножия), это отдельный высокий скальный
-    // рельеф, а не прорезь. Сопоставимо с ALPINE_HEIGHT_BOOST.
-    private static final double SHATTERED_HEIGHT_BOOST = 1.15;
-
-
-
-    /** Детерминированный 64-битный хэш от координат региона + мировой seed. */
-    private long cellHash(int cellX, int cellZ) {
-        long h = seed;
-        h = h * 6364136223846793005L + cellX * 1442695040888963407L + 0x9E3779B97F4A7C15L;
-        h = h * 6364136223846793005L + cellZ * 1442695040888963407L + 0x85EBCA6B_C2B2AE35L;
-        h ^= (h >>> 33);
-        h *= 0xFF51AFD7ED558CCDL;
-        h ^= (h >>> 33);
-        return h;
-    }
-
-    /** Псевдослучайное число 0..1 из хэша региона + "соль" (разные значения из одного региона). */
-    private static double hashDouble(long regionHash, int salt) {
-        long v = regionHash * 1000003L + salt * 0xC2B2AE3D27D4EB4FL;
-        v ^= (v >>> 29);
-        v *= 0xBF58476D1CE4E5B9L;
-        v ^= (v >>> 32);
-        return ((v >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
-    }
-
-    private RegionParams regionParams(int cellX, int cellZ) {
-        long h = cellHash(cellX, cellZ);
-        double angle = hashDouble(h, 1) * Math.PI;
-
-        // ── Выбор архетипа рельефа региона ───────────────────────────────
-        // Раньше был единственный бинарный выбор isRing (RING_CHANCE) /
-        // parallel. Теперь это 4-way выбор по накопленным вероятностям —
-        // RING_CHANCE и оставшаяся часть делятся между PARALLEL/ALPINE/
-        // PLATEAU. ALPINE_CHANCE и PLATEAU_CHANCE держим достаточно
-        // высокими, чтобы новые архетипы реально встречались, а не
-        // терялись как редкость.
-        double archRoll = hashDouble(h, 2);
-        RidgeArchetype archetype;
-        if (archRoll < RING_CHANCE) {
-            archetype = RidgeArchetype.RING;
-        } else if (archRoll < RING_CHANCE + ALPINE_CHANCE) {
-            archetype = RidgeArchetype.ALPINE;
-        } else if (archRoll < RING_CHANCE + ALPINE_CHANCE + PLATEAU_CHANCE) {
-            archetype = RidgeArchetype.PLATEAU;
-        } else if (archRoll < RING_CHANCE + ALPINE_CHANCE + PLATEAU_CHANCE + TERRACE_CHANCE) {
-            archetype = RidgeArchetype.TERRACE;
-        } else if (archRoll < RING_CHANCE + ALPINE_CHANCE + PLATEAU_CHANCE + TERRACE_CHANCE + SHATTERED_CHANCE) {
-            archetype = RidgeArchetype.SHATTERED;
-        } else {
-            archetype = RidgeArchetype.PARALLEL;
-        }
-
-        double ringCx = (cellX + 0.25 + hashDouble(h, 3) * 0.5) * CELL_SIZE;
-        double ringCz = (cellZ + 0.25 + hashDouble(h, 4) * 0.5) * CELL_SIZE;
-        double ringRadius = RING_RADIUS_MIN + hashDouble(h, 5) * (RING_RADIUS_MAX - RING_RADIUS_MIN);
-        boolean hasCanyon = hashDouble(h, 6) < CANYON_CHANCE;
-        double canyonAngle = hashDouble(h, 7) * Math.PI;
-        double canyonOffset = (hashDouble(h, 8) - 0.5) * CELL_SIZE * 0.5;
-        boolean cherryGrove = hashDouble(h, 9) < 0.5;
-
-        // ── Alpine: 3 пика, разбросанных вокруг центра региона ───────────
-        double regionCx = (cellX + 0.5) * CELL_SIZE;
-        double regionCz = (cellZ + 0.5) * CELL_SIZE;
-        double[] peakCx = new double[ALPINE_PEAK_COUNT];
-        double[] peakCz = new double[ALPINE_PEAK_COUNT];
-        double[] peakHeight = new double[ALPINE_PEAK_COUNT];
-        for (int i = 0; i < ALPINE_PEAK_COUNT; i++) {
-            int salt = 20 + i * 3;
-            double ox = (hashDouble(h, salt) - 0.5) * 2.0 * ALPINE_PEAK_SPREAD * CELL_SIZE;
-            double oz = (hashDouble(h, salt + 1) - 0.5) * 2.0 * ALPINE_PEAK_SPREAD * CELL_SIZE;
-            peakCx[i] = regionCx + ox;
-            peakCz[i] = regionCz + oz;
-            // Высота пика 0.55..1.0 от полного размаха — не все пики цепи
-            // одинаковой высоты, как в реальном горном массиве.
-            peakHeight[i] = 0.55 + 0.45 * hashDouble(h, salt + 2);
-        }
-
-        // ── Plateau: одна платформа в центре региона ──────────────────────
-        double plateauCx = regionCx + (hashDouble(h, 40) - 0.5) * 0.3 * CELL_SIZE;
-        double plateauCz = regionCz + (hashDouble(h, 41) - 0.5) * 0.3 * CELL_SIZE;
-        double plateauRadius = PLATEAU_RADIUS_MIN + hashDouble(h, 42) * (PLATEAU_RADIUS_MAX - PLATEAU_RADIUS_MIN);
-        double plateauEdgeSeed = hashDouble(h, 43) * 1000.0;
-
-        // ── Terrace: одна ступенчатая гора в центре региона ────────────────
-        // Соли 50-53 — отдельный диапазон от plateau (40-43), чтобы позиция
-        // и радиус двух архетипов не коррелировали между собой при общем h.
-        double terraceCx = regionCx + (hashDouble(h, 50) - 0.5) * 0.3 * CELL_SIZE;
-        double terraceCz = regionCz + (hashDouble(h, 51) - 0.5) * 0.3 * CELL_SIZE;
-        double terraceRadius = TERRACE_RADIUS_MIN + hashDouble(h, 52) * (TERRACE_RADIUS_MAX - TERRACE_RADIUS_MIN);
-        double terraceEdgeSeed = hashDouble(h, 53) * 1000.0;
-
-        // ── Shattered: россыпь угловатых обломков вокруг центра региона ────
-        // Соли 60+ — отдельный диапазон от alpine (20-28), plateau (40-43) и
-        // terrace (50-53), чтобы позиции обломков не коррелировали с ними.
-        double[] shatterCx      = new double[SHATTERED_COUNT];
-        double[] shatterCz      = new double[SHATTERED_COUNT];
-        double[] shatterRadius  = new double[SHATTERED_COUNT];
-        double[] shatterJagSeed = new double[SHATTERED_COUNT];
-        for (int i = 0; i < SHATTERED_COUNT; i++) {
-            int salt = 60 + i * 4;
-            double ox = (hashDouble(h, salt) - 0.5) * 2.0 * SHATTERED_SPREAD * CELL_SIZE;
-            double oz = (hashDouble(h, salt + 1) - 0.5) * 2.0 * SHATTERED_SPREAD * CELL_SIZE;
-            shatterCx[i]      = regionCx + ox;
-            shatterCz[i]      = regionCz + oz;
-            shatterRadius[i]  = SHATTERED_RADIUS_MIN
-                    + hashDouble(h, salt + 2) * (SHATTERED_RADIUS_MAX - SHATTERED_RADIUS_MIN);
-            shatterJagSeed[i] = hashDouble(h, salt + 3) * 1000.0;
-        }
-
-        return new RegionParams(angle, archetype, ringCx, ringCz, ringRadius,
-                hasCanyon, canyonAngle, canyonOffset, cherryGrove,
-                peakCx, peakCz, peakHeight,
-                plateauCx, plateauCz, plateauRadius, plateauEdgeSeed,
-                terraceCx, terraceCz, terraceRadius, terraceEdgeSeed,
-                shatterCx, shatterCz, shatterRadius, shatterJagSeed);
-    }
-
-    /**
-     * true, если (wx, wz) находится ВНУТРИ низины кольцевой кальдеры (не на
-     * самом хребте, а в защищённой долине внутри него). Используется
-     * {@code AeroBiomeSource}, чтобы гарантированно поставить туда лес или
-     * вишнёвую рощу вместо того, что выпадет по обычной климатической таблице.
+     * Линейная интерполяция по явной таблице точек {@code (x, y)},
+     * ОТСОРТИРОВАННОЙ по x по возрастанию. За пределами диапазона таблицы —
+     * значение крайней точки (clamp), без экстраполяции.
      *
-     * <p>Повторяет ту же формулу (включая warp), что и {@link #computeLandHeight},
-     * чтобы граница биома совпадала с фактической границей низины в рельефе.
+     * <p>Единственная точка входа для всех сплайнов этапа 1 — намеренно
+     * тривиальная реализация (линейная, не smoothstep), чтобы таблицы можно
+     * было калибровать по скриншотам без изменения структуры кода (см. ТЗ,
+     * п.5 общих принципов).
+     */
+    private static double splineLinear(double[][] points, double x) {
+        if (x <= points[0][0]) return points[0][1];
+        int last = points.length - 1;
+        if (x >= points[last][0]) return points[last][1];
+        for (int i = 0; i < last; i++) {
+            double x0 = points[i][0],     y0 = points[i][1];
+            double x1 = points[i + 1][0], y1 = points[i + 1][1];
+            if (x >= x0 && x <= x1) {
+                double t = (x1 == x0) ? 0.0 : (x - x0) / (x1 - x0);
+                return y0 + (y1 - y0) * t;
+            }
+        }
+        return points[last][1]; // недостижимо при отсортированной таблице
+    }
+
+    /**
+     * Всегда false на этапе 1 — кольцевые кальдеры (RidgeArchetype.RING)
+     * упразднены вместе со всей региональной системой архетипов (см. ТЗ,
+     * п.1.4). Метод оставлен как совместимая заглушка, т.к. вызывается
+     * извне из {@link org.example.aeroworld.worldgen.biome.AeroBiomeSource}
+     * (см. javadoc там же) — убирать сигнатуру без правки вызывающего кода
+     * нельзя. Вернётся к реальной логике, если на будущем этапе кольцевые
+     * низины будут пересажены на новую основу (сейчас в ТЗ не запланировано).
      */
     public boolean isInsideRingValley(int wx, int wz) {
-        int cellX = (int) Math.floor(wx / CELL_SIZE);
-        int cellZ = (int) Math.floor(wz / CELL_SIZE);
-        RegionParams p = regionParams(cellX, cellZ);
-        if (!p.isRing()) return false;
-
-        double warp = heightNoise.fbm2D(wx * 0.003 + 41000, wz * 0.003 + 41000, 3, 2.0, 0.5)
-                * RIDGE_WARP_AMPL;
-        double dx = wx - p.ringCx + warp;
-        double dz = wz - p.ringCz + warp;
-        double dist = Math.sqrt(dx * dx + dz * dz);
-        return dist < p.ringRadius - RING_WIDTH;
+        return false;
     }
 
     /**
-     * Какой биом должен быть внутри кольцевой долины в этой точке — "forest"
-     * или "cherry_grove". Вызывать только после {@link #isInsideRingValley}
-     * вернувшего true (иначе результат не имеет смысла — точка не в кольце).
-     * Один и тот же выбор для всей долины целиком (не покольонный микс).
+     * См. {@link #isInsideRingValley} — не вызывается ни при каких условиях,
+     * пока {@link #isInsideRingValley} возвращает false, но сигнатура
+     * сохранена для совместимости с {@code AeroBiomeSource}.
      */
     public String ringValleyBiome(int wx, int wz) {
-        int cellX = (int) Math.floor(wx / CELL_SIZE);
-        int cellZ = (int) Math.floor(wz / CELL_SIZE);
-        return regionParams(cellX, cellZ).cherryGrove ? "cherry_grove" : "forest";
+        return "forest";
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Высота поверхности (горы/холмы) — многооктавный шум
+    // Высота поверхности (горы/холмы) — noise router (4 скалярных поля + сплайны)
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
      * Высота поверхности (верхний твёрдый блок) в колонке (wx, wz).
      *
-     * <p>Раньше это была константа {@code SURFACE_Y=48} — плоский мир.
-     * Теперь — настоящая шумовая heightmap, ближе по духу к ванильной:
+     * <p>Этап 1 переход на noise router (см. ТЗ): вместо региональных ячеек
+     * и архетипов хребтов высота теперь — чистая функция четырёх независимых
+     * скалярных полей (continentalness, erosion, peaksAndValleys, weirdness)
+     * и явных spline-таблиц, которые их комбинируют:
      *
-     * <ol>
-     *   <li><b>mountainMask</b> — очень широкий (континентальный) шум,
-     *       пропущенный через smoothstep-порог. У большей части карты
-     *       он равен 0 (равнины/холмы), и только в отдельных РЕГИОНАХ
-     *       плавно поднимается к 1 (горный хребет). Это ключевое отличие
-     *       от первой версии: раньше хребты примешивались почти ВЕЗДЕ,
-     *       из-за чего весь мир выглядел одинаково зубчатым и скрывал
-     *       разницу между биомами.</li>
-     *   <li><b>ridge</b> — форма самого хребта ({@code 1-|noise|}), но
-     *       используется только там, где mountainMask > 0.</li>
-     *   <li><b>hills</b> — мелкая холмистость, применяется ВЕЗДЕ (и на
-     *       равнинах тоже) — небольшая амплитуда, чтобы равнины не были
-     *       идеально плоским столом, но горами не выглядели.</li>
-     * </ol>
+     * <pre>
+     *   height = baseByContinentalness(continentalness)
+     *          + amplitudeByErosion(erosion) * peakShape(PV')
+     * </pre>
      *
-     * <p>Значение только поднимается над базовым уровнем равнин
-     * ({@link #BASE_SURFACE_Y}) — вниз не проседает, чтобы не залезать
-     * в пещерную систему (потолок пещеры максимум ~{@code CEIL_BASE_Y+CEIL_VAR}).
+     * где PV' — peaksAndValleys, скорректированный weirdness по стандартной
+     * ванильной формуле {@code PV' = 1 - |3|weirdness| - 2|}, дающей PV
+     * асимметрию (пики не идеально симметричны относительно 0).
+     *
+     * <p>Пещеры/горные туннели (FLOOR_*, CEIL_*, MTUN_*) не тронуты — они
+     * читают только итоговый {@code groundY}, а не внутреннее устройство
+     * этого метода. Реки/озёра/океан (columnProfile) тоже не тронуты на
+     * этом этапе — они по-прежнему сравнивают {@code computeLandHeight}
+     * с {@code WATER_MAX_LAND_Y} постфактум (Этап 2 пересадит их на
+     * continentalness/erosion/PV напрямую).
      *
      * <p>ВАЖНО: этот метод — источник истины для высоты поверхности.
      * {@code AeroWorldChunkGenerator} (getBaseHeight/getBaseColumn/
@@ -647,333 +233,61 @@ public class Layer1FlatGenerator {
      * с фактическим рельефом, который рисует {@link #fillChunk}.
      */
     private int computeLandHeight(int wx, int wz) {
-        // ── Маска горных регионов ────────────────────────────────────────────
-        // ВАЖНО: тут было 4 октавы шума — высокочастотные октавы добавляют
-        // мелкую рябь ПОВЕРХ широкой формы, и из-за неё порог smoothstep
-        // мог пересекаться очень быстро в пространстве (за 20-40 блоков),
-        // даже когда общая структура шума широкая. Математически переход
-        // гладкий (непрерывная производная), но ФИЗИЧЕСКИ узкий — именно
-        // это и выглядело как отвесная стена на стыке горы/равнины.
-        // Убрали октавы (осталось 2 — только базовая широкая форма) и сильно
-        // расширили сам диапазон smoothstep, чтобы переход растягивался на
-        // многие сотни блоков, а не десятки.
-        double maskRaw = heightNoise.fbm2D(wx * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
-        // Доп. страховка: усредняем маску с несколькими точками вокруг
-        // (дешёвый box-blur, всего 2 октавы на каждый сэмпл) — это ЖЁСТКО
-        // ограничивает, насколько быстро маска может измениться в пространстве,
-        // независимо от того, что делает сам шум локально.
-        double blurR = 40.0;
-        double maskN = heightNoise.fbm2D(wx * 0.00035, (wz + blurR) * 0.00035, 2, 2.0, 0.5);
-        double maskS = heightNoise.fbm2D(wx * 0.00035, (wz - blurR) * 0.00035, 2, 2.0, 0.5);
-        double maskE = heightNoise.fbm2D((wx + blurR) * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
-        double maskW = heightNoise.fbm2D((wx - blurR) * 0.00035, wz * 0.00035, 2, 2.0, 0.5);
-        double maskBlurred = (maskRaw + maskN + maskS + maskE + maskW) / 5.0;
-        // Было smoothstep(-0.45, 0.65) — диапазон шириной 1.1 при типичном
-        // размахе 2-октавного fbm (примерно ±0.7) означает, что значение 1.0
-        // достигается только в крайне редком хвосте распределения шума.
-        // Практически ВСЯ карта попадала в промежуточную зону маски (между
-        // 0.1 и 0.9) — то есть "настоящей" полной высоты гора почти нигде
-        // не набирала, и весь ландшафт выглядел как один сплошной перекат
-        // из невысоких холмов, а не как чередование равнин и гор.
-        // Сузили диапазон почти вдвое — теперь маска увереннее доходит до
-        // 1.0 на значимой части каждого горного региона, при этом ширина
-        // перехода (0.6 единиц шума) всё ещё растягивается на многие сотни
-        // блоков благодаря низкой частоте шума (0.00035) — резких стен на
-        // границе не будет, просто "плато" полной высоты станет шире.
-        double mountainMask = smoothstep(-0.20, 0.40, maskBlurred);
+        // ── 4 независимых скалярных поля, каждое — свой участок частотного
+        //    спектра и свой офсет шума (дешёвый способ развести поля без
+        //    отдельных AeroNoise-инстансов на каждое, как уже принято в
+        //    этом файле для detailLarge/detailMed/detailFine и т.п.) ──────
+        double continentalnessRaw = heightNoise.fbm2D(
+                wx * CONTINENTALNESS_FREQ + 700000, wz * CONTINENTALNESS_FREQ + 700000,
+                CONTINENTALNESS_OCTAVES, 2.0, 0.5);
+        double continentalness = clamp11(continentalnessRaw / CONTINENTALNESS_NORM);
 
-        // ── "Волнистость" линии гребня — ДВА масштаба искажения вместо одного:
-        //    крупный (плавные извивы всей линии) + мелкий (рваность, ломает
-        //    ощущение "идеальной параболы"). Складываются вместе.
-        double warpBig = heightNoise.fbm2D(wx * 0.0012 + 41000, wz * 0.0012 + 41000, 3, 2.0, 0.5)
-                * (RIDGE_WARP_AMPL * 1.6);
-        double warpSmall = heightNoise.fbm2D(wx * 0.008 + 61000, wz * 0.008 + 61000, 3, 2.0, 0.5)
-                * (RIDGE_WARP_AMPL * 0.35);
-        double warp = warpBig + warpSmall;
+        double erosionRaw = heightNoise.fbm2D(
+                wx * EROSION_FREQ + 800000, wz * EROSION_FREQ + 800000,
+                EROSION_OCTAVES, 2.0, 0.5);
+        double erosion = clamp11(erosionRaw / EROSION_NORM);
 
-        // ── Форма гребня — билинейный бленд 4 СОСЕДНИХ региональных ячеек
-        //    (а не жёсткий выбор одной ближайшей). Раньше на границе двух
-        //    ячеек стиль хребта (угол/тип) менялся МГНОВЕННО — визуально это
-        //    и был тот самый "обрезанный" перепад высот. Теперь между углами
-        //    ячейки идёт плавный smoothstep-переход по обеим осям.
-        double cellFx = frac(wx / CELL_SIZE);
-        double cellFz = frac(wz / CELL_SIZE);
-        // Раньше: smoothstep(0.0, 1.0, cellFx) — бленд на всю ширину ячейки
-        // (см. комментарий у CELL_BLEND_WIDTH). Теперь бленд сжат в полосу
-        // у дальнего края; внутри ячейки — чистый архетип без примеси.
-        double fadeX = smoothstep(1.0 - CELL_BLEND_WIDTH, 1.0, cellFx);
-        double fadeZ = smoothstep(1.0 - CELL_BLEND_WIDTH, 1.0, cellFz);
+        double pvRaw = heightNoise.fbm2D(
+                wx * PV_FREQ + 900000, wz * PV_FREQ + 900000,
+                PV_OCTAVES, 2.0, 0.5);
+        double pv = clamp11(pvRaw); // fbm2D уже отдаёт примерно [-1,1] при 4 октавах, доп. нормализация не нужна
 
-        int cx0 = (int) Math.floor(wx / CELL_SIZE);
-        int cz0 = (int) Math.floor(wz / CELL_SIZE);
-        int cx1 = cx0 + 1;
-        int cz1 = cz0 + 1;
+        double weirdnessRaw = heightNoise.fbm2D(
+                wx * WEIRDNESS_FREQ + 1000000, wz * WEIRDNESS_FREQ + 1000000,
+                WEIRDNESS_OCTAVES, 2.0, 0.5);
+        double weirdness = clamp11(weirdnessRaw / WEIRDNESS_NORM);
 
-        // Ближайшая региональная ячейка — нужна раньше, чем раньше (см. ниже
-        // homeRidge): без неё нечем подавить утечку соседнего архетипа.
-        int nearCellX = (int) Math.round(wx / CELL_SIZE);
-        int nearCellZ = (int) Math.round(wz / CELL_SIZE);
-        RegionParams nearest = regionParams(nearCellX, nearCellZ);
+        // Стандартная ванильная формула "peaks and valleys from weirdness":
+        // даёт асимметрию PV (пики острее долин, как в реальном рельефе)
+        // вместо идеально симметричного профиля вокруг 0.
+        double pvPrime = 1.0 - Math.abs(3.0 * Math.abs(weirdness) - 2.0);
+        // Смешиваем "сырой" PV с его weirdness-скорректированной версией —
+        // полностью заменять pv на pvPrime не нужно (PV и так несёт
+        // основную пространственную структуру силуэта), нужна только
+        // асимметрия поверх неё.
+        double pvFinal = clamp11(0.6 * pv + 0.4 * pvPrime);
 
-        RidgeSample s00 = sampleRidge(cx0, cz0, wx, wz, warp);
-        RidgeSample s10 = sampleRidge(cx1, cz0, wx, wz, warp);
-        RidgeSample s01 = sampleRidge(cx0, cz1, wx, wz, warp);
-        RidgeSample s11 = sampleRidge(cx1, cz1, wx, wz, warp);
+        // ── Сплайны: базовая высота + амплитуда * форма пика ────────────
+        double base      = splineLinear(BASE_BY_CONTINENTALNESS, continentalness);
+        double amplitude = splineLinear(AMPLITUDE_BY_EROSION, erosion);
+        double peakShape  = splineLinear(PEAK_SHAPE_BY_PV, pvFinal);
 
-        double ridgeTop    = lerp(s00.ridge, s10.ridge, fadeX);
-        double ridgeBottom = lerp(s01.ridge, s11.ridge, fadeX);
-        double ridge = lerp(ridgeTop, ridgeBottom, fadeZ);
+        double landHeightD = base + amplitude * peakShape;
 
-        // ── Подавление утечки соседней ячейки на склоне СВОЕЙ горы ─────────
-        // Проблема осталась даже после сужения CELL_BLEND_WIDTH: у крупных
-        // гор (большой radius + офсет центра к краю ячейки) собственный
-        // склон всё равно может физически дотягиваться до полосы блендинга.
-        // Там бленд честно подмешивает соседнюю ячейку — а "default"
-        // (параллельные гряды) единственный БЕЗ затухания архетип: если
-        // сосед — default, он может оказаться на гребне своей волны прямо
-        // в этой точке и добавить лишние блоки высоты ПОД уже сформированным
-        // склоном нашей горы. Визуально — "пьедестал"/ступенька у крупных
-        // гор из бага-репорта (у мелких гор их собственный склон физически
-        // не достаёт до полосы блендинга, поэтому там фикс CELL_BLEND_WIDTH
-        // уже помог).
-        //
-        // Фикс: если мы и так уже заметно на склоне СВОЕЙ (ближайшей) горы —
-        // homeRidge существенно больше 0 — берём высоту именно с неё,
-        // полностью игнорируя примесь соседа. Если homeRidge≈0 (мы вне
-        // подошвы своей горы, настоящая межрегиональная граница) — ведём
-        // себя как раньше, честный 4-угловой бленд. Между этими режимами
-        // smoothstep, без излома.
-        RidgeSample homeSample = sampleRidge(nearCellX, nearCellZ, wx, wz, warp);
-        double homeSuppression = smoothstep(0.0, 0.08, homeSample.ridge);
-        ridge = lerp(ridge, homeSample.ridge, homeSuppression);
-
-        double ringTop    = lerp(s00.insideRing ? 1.0 : 0.0, s10.insideRing ? 1.0 : 0.0, fadeX);
-        double ringBottom = lerp(s01.insideRing ? 1.0 : 0.0, s11.insideRing ? 1.0 : 0.0, fadeX);
-        double insideRingFactor = lerp(ringTop, ringBottom, fadeZ); // 0..1
-        insideRingFactor = lerp(insideRingFactor, homeSample.insideRing ? 1.0 : 0.0, homeSuppression);
-
-        // ── Неровность гребня вдоль его длины — отдельный шум, ломает
-        //    идеально гладкую симметричную "параболу". Часть гребня выше
-        //    и острее, часть — размыта и почти сходит на нет, как в природе.
-        //
-        // Раньше: 2-октавный шум напрямую зажимался в [0,1] через
-        // max(0, roughRaw) и линейно умножал ridge. max(0, x) на самом шуме
-        // даёт те же изломы, что мы только что убрали из формы гребня —
-        // там, где roughRaw пересекает ноль, множитель имеет угловую точку,
-        // и она проявляется как внезапный "уступ" высоты вдоль хребта.
-        // Плюс всего 2 октавы означают, что эта неровность меняется почти
-        // на том же пространственном масштабе, что и сам гребень — из-за
-        // этого весь профиль "дрожит" крупными скачками, а не мелкой рябью.
-        //
-        // Теперь: 4 октавы (более естественный, самоподобный эрозионный
-        // узор) и smoothstep вместо max(0, ...) — убирает угловую точку на
-        // нуле. Диапазон сужен до 0.65..1.0: горы стали чуть "мясистее"
-        // (меньше регионов, где хребет почти обнуляется), а сам множитель
-        // теперь плавно проезжает через весь диапазон без излома.
-        double roughRaw = heightNoise.fbm2D(wx * 0.006 + 81000, wz * 0.006 + 81000, 4, 2.0, 0.5);
-        double roughFactor = 0.65 + 0.35 * smoothstep(-1.0, 1.0, roughRaw); // 0.65..1.0
-        ridge *= roughFactor;
-
-        // Внутри кольцевой низины гор почти нет (пропорционально степени
-        // "внутренности" — тоже плавно, без резкой границы).
-        double localMountainMask = mountainMask * (1.0 - insideRingFactor * 0.88);
-
-        // ── Мелкая холмистость — везде, но с малой амплитудой ────────────────
+        // ── roughnessSpline(erosion): мелкий шум поверх сплайновой высоты,
+        //    везде (в т.ч. на равнинах), но амплитуда зависит от erosion —
+        //    заменяет старые roughFactor/hills01/FLATLAND_BUMP одной кривой.
+        double roughness01 = splineLinear(ROUGHNESS_BY_EROSION, erosion);
         double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
-        double hills01  = Math.max(0.0, hillsRaw); // 0..1
+        landHeightD += hillsRaw * ROUGHNESS_MAX_AMPL * roughness01;
 
-        // nearCellX/nearCellZ/nearest уже посчитаны выше (нужны были раньше
-        // для homeRidge-подавления утечки блендинга).
+        int h = (int) Math.round(landHeightD);
 
-        // Горная часть: полный размах MAX_EXTRA_HEIGHT, включена только
-        // пропорционально localMountainMask.
-        //
-        // ridge уже смягчён (smoothstep-профиль вместо pow(cos)), но
-        // произведение localMountainMask * ridge всё ещё может расти почти
-        // линейно с высотой на небольшом числе блоков там, где ridge уже
-        // близок к 1, а mountainMask только начинает подниматься от 0 —
-        // визуально это тоже читалось как резкий "трамплин" у подножия.
-        // Дополнительный smoothstep по итоговому произведению растягивает
-        // именно нижнюю и верхнюю часть кривой набора высоты, оставляя
-        // середину почти как было — то есть общая высота гор не меняется,
-        // меняется только "разгон" в начале подъёма и "торможение" у пика.
-        double combined = localMountainMask * ridge;
-        double combinedSmoothed = smoothstep(0.0, 1.0, combined);
-        // Alpine- и Shattered-регионы намеренно поднимаются выше остальных
-        // архетипов той же mountainMask — иначе пик/обломок той же высоты,
-        // что окружающие холмы, визуально в них тонет. Буст применяется к
-        // БЛИЖАЙШЕЙ ячейке, а не к билинейно смешанной, поэтому на границе
-        // с соседним архетипом он тоже плавно спадает вместе с
-        // localMountainMask/ridge — резкого скачка высоты на стыке
-        // регионов не возникает.
-        double heightBoost = switch (nearest.archetype) {
-            case ALPINE -> ALPINE_HEIGHT_BOOST;
-            case SHATTERED -> SHATTERED_HEIGHT_BOOST;
-            default -> 1.0;
-        };
-        double rawMountainExtra = combinedSmoothed * MAX_EXTRA_HEIGHT * heightBoost;
-
-        // ── Внутрихребтовая рябь (пики/впадины внутри самого массива) ────────
-        // До этого момента вся высота внутри контура горы приходила из
-        // ГЛАДКОЙ геометрической функции (smoothstep от dist/u) — это давало
-        // идеальный купол/волну без единого случайного зубца, поэтому силуэт
-        // хребта читался как "нарисованный по формуле", а не как реальный
-        // горный массив с неровным гребнем, локальными выступами и седловинами
-        // МЕЖДУ основными пиками архетипа (а не только вдоль всей длины
-        // хребта — roughFactor выше уже даёт это, но он лишь МАСШТАБИРУЕТ
-        // существующую гладкую форму, не добавляет новую высокочастотную
-        // геометрию).
-        //
-        // Решение: складываем несколько октав шума РАЗНОГО масштаба прямо
-        // к высоте (не к форме/расстоянию, как делает SHATTERED с jag) —
-        // от крупных вторичных вершин (~40-90 блоков, "соседний пик поменьше")
-        // до мелкой скальной ряби (~8-15 блоков, отдельные уступы/козырьки).
-        // Сумма октав не центрирована на 0 — берём max(0, ...) и часть шума
-        // складываем, а не вычитаем, потому что реальные горы почти нигде не
-        // проваливаются НИЖЕ гладкой огибающей (она уже и есть верхняя
-        // граница массива) — они добавляют выступы поверх неё либо
-        // прорезаются узкими локальными впадинами, а не проседают целиком.
-        double detailLarge = heightNoise.fbm2D(wx * 0.014 + 151000, wz * 0.014 + 151000, 3, 2.0, 0.5);
-        double detailMed   = heightNoise.fbm2D(wx * 0.045 + 171000, wz * 0.045 + 171000, 3, 2.0, 0.55);
-        double detailFine  = heightNoise.fbm2D(wx * 0.11  + 191000, wz * 0.11  + 191000, 2, 2.0, 0.5);
-        // Крупная составляющая может и приподнять, и слегка просечь (вторичные
-        // гребни/седловины), средняя и мелкая — только приподнимают (уступы),
-        // поэтому у мелких октав вес асимметричен через max(0, ...).
-        double detailNoise = detailLarge * MOUNTAIN_DETAIL_LARGE_AMPL
-                + Math.max(0.0, detailMed)  * MOUNTAIN_DETAIL_MED_AMPL
-                + Math.max(0.0, detailFine) * MOUNTAIN_DETAIL_FINE_AMPL;
-
-        // Огибающая для detail-шума: 0 на равнине/у подножия (иначе рябь
-        // видна и там, где горы уже нет — выглядело бы как случайный шум на
-        // плоской земле), полная сила только там, где combinedSmoothed уже
-        // заметно поднялся (середина склона и выше) — имитирует то, что
-        // скальные выступы и вторичные пики в реальности сосредоточены
-        // ближе к верхней части массива, а не у самого основания.
-        double detailEnvelope = smoothstep(0.15, 0.55, combinedSmoothed) * localMountainMask;
-        rawMountainExtra += detailNoise * detailEnvelope;
-        rawMountainExtra = Math.max(0.0, rawMountainExtra);
-
-        // ── Мягкое ограничение высоты у потолка слоя ─────────────────────────
-        // Раньше итоговая высота h просто клэмпилась через Math.min(h, ceiling)
-        // в конце метода. При heightBoost > 1.0 (ALPINE) rawMountainExtra
-        // регулярно превышал ceiling - BASE_SURFACE_Y, и Math.min срезал
-        // вершину ГОРИЗОНТАЛЬНОЙ плоскостью — визуально "срубленные" горы
-        // с плоской крышей вместо острого пика (см. баг-репорт со скриншотом).
-        //
-        // Вместо этого сжимаем rawMountainExtra ДО округления в int, пока он
-        // ещё непрерывная величина: в зоне [softZoneStart, maxAllowedExtra]
-        // рост высоты плавно гасится к maxAllowedExtra через smoothstep,
-        // так что кривая сама выполаживается в купол/пик, а не обрубается.
-        // Вне горячей зоны (обычные ridge и низкие альпийские пики) поведение
-        // не меняется вообще.
-        double maxAllowedExtra = (LAYER_MAX_Y - PEAK_SKY_BUFFER) - BASE_SURFACE_Y;
-        double softZoneStart   = maxAllowedExtra - 40.0; // блоков до потолка, где начинаем гасить рост
-        double clampedMountainExtra;
-        if (rawMountainExtra <= softZoneStart) {
-            clampedMountainExtra = rawMountainExtra;
-        } else {
-            double t = Math.min(1.0, (rawMountainExtra - softZoneStart) / (maxAllowedExtra - softZoneStart));
-            double eased = 1.0 - (1.0 - t) * (1.0 - t); // ease-out quad — быстрое торможение к потолку
-            clampedMountainExtra = softZoneStart + (maxAllowedExtra - softZoneStart) * eased;
-        }
-        int mountainExtra = (int) Math.round(clampedMountainExtra);
-
-        // Равнинная холмистость: скромные ±FLATLAND_BUMP блоков, гасится
-        // внутри горных регионов (там рельеф и так задран хребтом).
-        int flatExtra = (int) Math.round(hills01 * FLATLAND_BUMP * (1.0 - localMountainMask));
-
-        int h = BASE_SURFACE_Y + Math.max(0, mountainExtra) + flatExtra;
-
-        // ── Гигантское ущелье, режущее хребет насквозь ───────────────────────
-        // Только в регионах с hasCanyon, и только там, где реально есть гора
-        // (mountainMask масштабирует эффект — на равнине каньон невидим).
-        //
-        // РАНЬШЕ: carve зависел только от canyonDist (перпендикулярное
-        // расстояние до идеально прямой линии) и mountainMask — то есть
-        // поперечное сечение (ширина/глубина/профиль ската) было АБСОЛЮТНО
-        // одинаковым на всей длине ущелья — по сути прямая экструзия одной
-        // и той же формы вдоль прямой линии. Именно это и читалось как
-        // "ровный неестественный срез" (см. баг-репорт со скриншотами) —
-        // никакая реальная река/каньон так не выглядит: ширина гуляет,
-        // русло петляет, дно то выше, то ниже, края рваные, а не гладкая
-        // труба постоянного диаметра.
-        //
-        // ТЕПЕРЬ: считаем координату "вдоль ущелья" (along) — перпендикуляр
-        // к нормали canyonAngle — и гоняем по ней независимый набор шумов:
-        // меандр самой линии (центр гуляет из стороны в сторону), ширину
-        // и глубину дна. Плюс мелкая рябь по краю профиля, чтобы скат не
-        // был идеально гладким. Каньон не блендится между ячейками (это
-        // единичная резкая структура) — берём параметры БЛИЖАЙШЕЙ ячейки.
-        if (nearest.hasCanyon && mountainMask > 0.05) {
-            double cosA = Math.cos(nearest.canyonAngle);
-            double sinA = Math.sin(nearest.canyonAngle);
-            // Координата вдоль длины ущелья (перпендикулярна нормали canyonAngle).
-            // Множитель angle*NNN в офсетах шума ниже — дешёвый способ развести
-            // шум разных региональных ущелий (у каждого свой canyonAngle) без
-            // отдельного набора seed-полей, как уже принято в этом файле.
-            double along = -wx * sinA + wz * cosA;
-
-            // Меандр: крупный плавный извив линии + более тесная мелкая
-            // волна поверх него — как настоящее петляющее русло, а не
-            // синусоида одного масштаба.
-            double meanderBig = heightNoise.fbm2D(along * 0.0035 + 222000, nearest.canyonAngle * 500.0 + 222000, 4, 2.0, 0.5);
-            double meanderFine = heightNoise.fbm2D(along * 0.012 + 333000, nearest.canyonAngle * 700.0 + 333000, 3, 2.0, 0.5);
-            double meander = meanderBig * CANYON_MEANDER_AMPL + meanderFine * (CANYON_MEANDER_AMPL * 0.25);
-
-            double cu = wx * cosA + wz * sinA - nearest.canyonOffset + warp + meander;
-            double canyonDist = Math.abs(cu);
-
-            // Ширина и глубина дна плывут вдоль along — узкие теснины
-            // сменяются широкими долинами, дно то выше, то ниже.
-            double widthN = heightNoise.fbm2D(along * 0.006 + 444000, nearest.canyonAngle * 900.0 + 444000, 3, 2.0, 0.5);
-            double localHalfWidth = CANYON_HALF_WIDTH * (0.55 + 0.55 * Math.max(0.0, Math.min(1.0, widthN * 0.5 + 0.5)));
-
-            if (canyonDist < localHalfWidth) {
-                double depthN = heightNoise.fbm2D(along * 0.005 + 555000, nearest.canyonAngle * 1100.0 + 555000, 3, 2.0, 0.5);
-                int localFloor = CANYON_FLOOR + (int) Math.round(depthN * 10.0);
-
-                double t = 1.0 - canyonDist / localHalfWidth; // 1 в центре, 0 на краях
-                // Мелкая рябь по краю профиля (высокочастотный шум прямо по
-                // wx/wz, не по along) — рвёт идеально гладкий скат, край
-                // выглядит выщербленным/каменистым, а не отфрезерованным.
-                double edgeJag = heightNoise.fbm2D(wx * 0.05 + 666000, wz * 0.05 + 666000, 2, 2.0, 0.5) * 0.12;
-                double tj = Math.max(0.0, Math.min(1.0, t + edgeJag * (1.0 - t)));
-                double carve = Math.pow(tj, 1.4) * mountainMask;
-                h = (int) Math.round(h - (h - localFloor) * carve);
-            } else {
-                // ── Осыпной шлейф (talus apron) ──────────────────────────────
-                // Сразу за краем "коренного" русла высота раньше падала до
-                // localFloor практически вертикально — на пик высотой ~190
-                // блоков приходилось всего ~15-28 блоков по горизонтали, т.е.
-                // отвесная голая скала (см. скриншот с "ровным срезом" —
-                // именно это и была причина, а не форма самой линии реки).
-                // Природные ущелья так не выглядят: у подножия скального
-                // русла реальная гора осыпается пологим шлейфом щебня, на
-                // котором успевает закрепиться почва и лес — резкая стена
-                // исчезает задолго до вершины.
-                //
-                // Ширина шлейфа растёт вместе с перепадом высоты (чем выше
-                // гора над руслом — тем длиннее нужен пологий скат, иначе
-                // геометрически получится тот же отвес, просто чуть шире).
-                double dropHere = Math.max(0.0, h - CANYON_FLOOR);
-                double taperRun = CANYON_TALUS_MIN_RUN + dropHere * CANYON_TALUS_PER_DROP;
-                double outerHalfWidth = localHalfWidth + taperRun;
-                if (canyonDist < outerHalfWidth) {
-                    double t2 = 1.0 - (canyonDist - localHalfWidth) / taperRun; // 1 у края русла, 0 на внешней границе
-                    double smooth2 = smoothstep(0.0, 1.0, t2);
-                    // Мелкая рябь — шлейф тоже не идеально гладкая линия.
-                    double apronJag = heightNoise.fbm2D(wx * 0.03 + 777000, wz * 0.03 + 777000, 2, 2.0, 0.5) * 0.10;
-                    double smooth2j = Math.max(0.0, Math.min(1.0, smooth2 + apronJag * smooth2));
-                    // Ограничен CANYON_TALUS_MAX_FACTOR — шлейф понижает склон,
-                    // но никогда не доводит его до дна русла, поэтому граница
-                    // с "коренной" зоной не даёт видимого излома.
-                    double carve = smooth2j * smooth2j * CANYON_TALUS_MAX_FACTOR * mountainMask;
-                    h = (int) Math.round(h - dropHere * carve);
-                }
-            }
-        }
-
-        // Запас неба над самым высоким пиком
+        // Запас неба над самым высоким пиком — тот же приём, что и раньше
+        // (мягкий clamp не требуется здесь: сплайн AMPLITUDE_BY_EROSION уже
+        // ограничен MAX_EXTRA_HEIGHT сверху, поэтому итоговая высота не
+        // подходит к потолку слоя резко/линейно так, как это делал старый
+        // heightBoost у ALPINE/SHATTERED архетипов — их больше нет).
         return Math.min(h, LAYER_MAX_Y - PEAK_SKY_BUFFER);
     }
 
@@ -983,284 +297,15 @@ public class Layer1FlatGenerator {
         return t * t * (3.0 - 2.0 * t);
     }
 
-    private static double frac(double x) {
-        return x - Math.floor(x);
-    }
-
     private static double lerp(double a, double b, double t) {
         return a + (b - a) * t;
     }
 
-    /** Результат расчёта формы гребня ОДНОЙ региональной ячейки в точке (wx, wz). */
-    private record RidgeSample(double ridge, boolean insideRing) {}
-
-    /**
-     * Форма гребня, КАК ЕСЛИ БЫ вся карта использовала стиль ячейки
-     * (cellX, cellZ) — используется как один из 4 углов билинейного бленда
-     * в {@link #computeLandHeight}, а не как самостоятельное значение.
-     */
-    private RidgeSample sampleRidge(int cellX, int cellZ, int wx, int wz, double warp) {
-        RegionParams p = regionParams(cellX, cellZ);
-        switch (p.archetype) {
-            case RING -> {
-                // ── Кольцевая кальдера: хребет по окружности радиуса ringRadius,
-                //    внутри — низина (место под лес/вишнёвую рощу).
-                // Профиль поперёк хребта раньше строился как pow(linear, 1.1) —
-                // почти треугольный скат с острым переломом на вершине. Заменили
-                // на smoothstep: тот же общий "холм" по форме, но производная
-                // непрерывно уходит к нулю у подножия И на пике, поэтому склон
-                // выкатывается наружу вместо излома, а вершина — купол, а не угол.
-                double dx = wx - p.ringCx + warp;
-                double dz = wz - p.ringCz + warp;
-                double dist = Math.sqrt(dx * dx + dz * dz);
-                double raw = Math.max(0.0, 1.0 - Math.abs(dist - p.ringRadius) / RING_WIDTH);
-                double ridge = smoothstep(0.0, 1.0, raw);
-                boolean insideRing = dist < p.ringRadius - RING_WIDTH;
-                return new RidgeSample(ridge, insideRing);
-            }
-            case ALPINE -> {
-                return sampleAlpine(p, wx, wz, warp);
-            }
-            case PLATEAU -> {
-                return samplePlateau(p, wx, wz, warp);
-            }
-            case TERRACE -> {
-                return sampleTerrace(p, wx, wz, warp);
-            }
-            case SHATTERED -> {
-                return sampleShattered(p, wx, wz, warp);
-            }
-            default -> {
-                // ── Параллельные гряды: проекция координат на ось, перпендикулярную
-                //    направлению хребтов (angle), даёт периодическую волну —
-                //    гребень/долина/гребень/долина, все параллельны друг другу.
-                //
-                // Раньше: pow(max(0, cos(u)), 1.15). У max(0, cos) есть слом
-                // первой производной ровно там, где cos пересекает ноль (это
-                // и есть подножие горы) — визуально резкий "обрыв" на границе
-                // хребет/долина. pow() близко к 1 почти не меняет форму пика,
-                // только слегка заостряет верхушку.
-                //
-                // Теперь: сначала растягиваем band из [-1,1] в [0,1], затем
-                // прогоняем через smoothstep вместо pow. smoothstep(0,1,t) имеет
-                // нулевую производную на ОБОИХ концах (t=0 и t=1) — то есть и
-                // подножие, и вершина выходят на горизонталь плавно. Получается
-                // покатый, куполообразный профиль вместо пилы. Небольшая
-                // остаточная pow(...,1.06) сохраняет чуть более острый гребень
-                // на самой верхушке, не возвращая резкости у подножия.
-                double u = wx * Math.cos(p.angle) + wz * Math.sin(p.angle) + warp;
-                double band01 = 0.5 + 0.5 * Math.cos(u * (2.0 * Math.PI / RIDGE_SPACING));
-                double ridge = smoothstep(0.0, 1.0, band01);
-                ridge = Math.pow(ridge, 1.06);
-                return new RidgeSample(ridge, false);
-            }
-        }
+    /** Зажимает x в диапазон [-1, 1] — используется полями noise router'а этапа 1. */
+    private static double clamp11(double x) {
+        return Math.max(-1.0, Math.min(1.0, x));
     }
 
-    /**
-     * Alpine-архетип (Terralith "Alpine Highlands"): несколько отдельных
-     * острых пиков в регионе вместо одного протяжённого хребта. Каждый пик —
-     * купол с более крутым профилем (ALPINE_SHARPNESS > 1), пики
-     * перекрываются по принципу "берём максимум", как горная цепь с
-     * несколькими вершинами разной высоты, а не одна гладкая гряда.
-     *
-     * <p>В отличие от parallel/ring, тут нет периодической волны — каждый
-     * пик локален (влияние падает до 0 за пределами своего радиуса), что и
-     * даёт характерный "россыпь вершин" силуэт вместо сплошного хребта.
-     */
-    private RidgeSample sampleAlpine(RegionParams p, int wx, int wz, double warp) {
-        double best = 0.0;
-        for (int i = 0; i < p.peakCx.length; i++) {
-            double dx = wx - p.peakCx[i] + warp;
-            double dz = wz - p.peakCz[i] + warp;
-            double dist = Math.sqrt(dx * dx + dz * dz);
-            // Радиус влияния варьируется по пику (используем peakHeight как
-            // вторичный источник вариации — выше пик, чуть шире его подошва).
-            double radius = ALPINE_PEAK_RADIUS_MIN
-                    + (ALPINE_PEAK_RADIUS_MAX - ALPINE_PEAK_RADIUS_MIN) * p.peakHeight[i];
-            double t = Math.max(0.0, 1.0 - dist / radius); // 1 в центре пика, 0 на радиусе
-            double dome = smoothstep(0.0, 1.0, t);
-            // Заостряем вершину сильнее, чем у стандартного купола — альпийские
-            // пики в Terralith именно острые сверху при том, что подножие
-            // всё равно плавно уходит в ноль (smoothstep выше уже это дал).
-            dome = Math.pow(dome, ALPINE_SHARPNESS);
-            double contribution = dome * p.peakHeight[i];
-            best = Math.max(best, contribution);
-        }
-        // Между пиками добавляем тонкую "перемычку" — иначе несколько
-        // соседних пиков выглядят как полностью изолированные острова
-        // высоты с провалом до нуля между ними, что в реальных горных
-        // цепях бывает редко. Небольшой шум держит дно седловины немного
-        // выше нуля, но заметно ниже самих пиков.
-        double saddleNoise = 0.12 + 0.06 * Math.max(0.0,
-                heightNoise.fbm2D(wx * 0.01 + 91000, wz * 0.01 + 91000, 3, 2.0, 0.5));
-        double ridge = Math.max(best, best > 0.02 ? saddleNoise * (best > 0.5 ? 1.0 : best * 2.0) : 0.0);
-        return new RidgeSample(Math.min(1.0, ridge), false);
-    }
-
-    /**
-     * Plateau-архетип (Terralith "Rocky Shrubland" / mesa-подобные плато):
-     * плоская, приподнятая над округой платформа со крутыми, но не
-     * вертикальными бортами. В отличие от alpine (острый купол) и ridge
-     * (волна), тут верхняя часть профиля намеренно СЖИМАЕТСЯ к плоскому
-     * "потолку" — {@link #PLATEAU_TOP_FLAT} — вместо непрерывного роста к
-     * единственной точке-пику.
-     */
-    private RidgeSample samplePlateau(RegionParams p, int wx, int wz, double warp) {
-        // Неровный контур платформы — без этого шума граница была бы
-        // идеальным кругом, что в природном рельефе смотрится искусственно.
-        double edgeNoise = heightNoise.fbm2D(
-                wx * 0.01 + p.plateauEdgeSeed, wz * 0.01 + p.plateauEdgeSeed, 3, 2.0, 0.5)
-                * PLATEAU_EDGE_ROUGH_AMPL;
-
-        double dx = wx - p.plateauCx + warp;
-        double dz = wz - p.plateauCz + warp;
-        double dist = Math.sqrt(dx * dx + dz * dz) - edgeNoise;
-
-        // Профиль по дистанции: 1.0 внутри (dist much less than radius),
-        // плавный спад к 0 в полосе шириной PLATEAU_EDGE_WIDTH у границы.
-        double raw = 1.0 - smoothstep(p.plateauRadius - PLATEAU_EDGE_WIDTH, p.plateauRadius, dist);
-        raw = Math.max(0.0, Math.min(1.0, raw));
-
-        // "Сплющиваем" верх: всё, что выше PLATEAU_TOP_FLAT от полной высоты,
-        // подтягиваем к 1.0 быстрее, чем растёт линейно — получаем плоскую
-        // "крышу" вместо купола, при этом борт остаётся плавным (тот же
-        // smoothstep, что и у остальных архетипов, не резкий обрыв).
-        double ridge;
-        if (raw > PLATEAU_TOP_FLAT) {
-            double topT = (raw - PLATEAU_TOP_FLAT) / (1.0 - PLATEAU_TOP_FLAT);
-            ridge = PLATEAU_TOP_FLAT + (1.0 - PLATEAU_TOP_FLAT) * smoothstep(0.0, 1.0, topT);
-        } else {
-            ridge = raw;
-        }
-        return new RidgeSample(ridge, false);
-    }
-
-    /**
-     * Terrace-архетип: ступенчатый склон — гора поднимается несколькими
-     * плоскими "полками" вместо одного гладкого купола/плато. Контур
-     * региона считается тем же способом, что у {@link #samplePlateau}
-     * (круглая область + неровный край через шум), но профиль ВНУТРИ
-     * контура квантуется в {@link #TERRACE_STEP_COUNT} ступеней.
-     *
-     * <p>Каждая ступень — это plateau в миниатюре: {@link #TERRACE_STEP_FLAT_FRAC}
-     * доли ступени рельеф стоит на месте (полка), остаток — smoothstep-подъём
-     * к следующей полке. Использование smoothstep (а не резкого шага) для
-     * подъёма между полками — намеренное решение: мы уже один раз чинили
-     * ровно такую же проблему (вертикальные стены-обрывы, см. историю правок
-     * {@link #applyBeachFlat} и клэмпа высоты пика) и не хотим повторить её
-     * внутри нового архетипа. Подъём между полками короткий и заметный
-     * (это и даёт "ступенчатый" силуэт), но не бесконечно резкий по Y.
-     */
-    private RidgeSample sampleTerrace(RegionParams p, int wx, int wz, double warp) {
-        // Контур — идентичный приём с PLATEAU (свой edgeSeed, чтобы контуры
-        // двух архетипов не совпадали пространственно при соседстве ячеек).
-        double edgeNoise = heightNoise.fbm2D(
-                wx * 0.01 + p.terraceEdgeSeed, wz * 0.01 + p.terraceEdgeSeed, 3, 2.0, 0.5)
-                * TERRACE_EDGE_ROUGH_AMPL;
-
-        double dx = wx - p.terraceCx + warp;
-        double dz = wz - p.terraceCz + warp;
-        double dist = Math.sqrt(dx * dx + dz * dz) - edgeNoise;
-
-        // raw01: 1.0 в центре горы, плавно уходит к 0.0 за пределами
-        // terraceRadius — тот же гладкий "сырой" купол, что служит базой
-        // и для plateau, ДО ступенчатого квантования.
-        double raw = 1.0 - smoothstep(p.terraceRadius * 0.35, p.terraceRadius, dist);
-        raw = Math.max(0.0, Math.min(1.0, raw));
-
-        // ── Небольшая волнистость границ ступеней по азимуту ──────────────
-        // Без неё все уступы — идеальные концентрические окружности вокруг
-        // terraceCx/terraceCz, что для природной горы выглядит слишком
-        // геометрично. Шум зависит от угла+расстояния (не только от XZ
-        // напрямую), чтобы волнистость вращалась вместе с контуром, а не
-        // создавала отдельный, несвязанный с горой узор.
-        double wobble = heightNoise.fbm2D(wx * 0.02 + 71000, wz * 0.02 + 71000, 2, 2.0, 0.5)
-                * TERRACE_STEP_WOBBLE;
-
-        // ── Квантование в ступени ──────────────────────────────────────────
-        // raw ∈ [0,1] делится на TERRACE_STEP_COUNT равных "слотов". Внутри
-        // каждого слота: первые TERRACE_STEP_FLAT_FRAC доли — плоская полка
-        // (высота = нижняя граница слота), остаток — smoothstep-подъём к
-        // верхней границе слота (= нижняя граница следующего).
-        double scaled = Math.max(0.0, Math.min(0.999999, raw + wobble)) * TERRACE_STEP_COUNT;
-        int    stepIdx    = (int) Math.floor(scaled);
-        double stepLocalT = scaled - stepIdx; // 0..1 внутри своей ступени
-
-        double stepBase = stepIdx / (double) TERRACE_STEP_COUNT;
-        double stepTop  = (stepIdx + 1) / (double) TERRACE_STEP_COUNT;
-
-        double ridge;
-        if (stepLocalT <= TERRACE_STEP_FLAT_FRAC) {
-            // На полке — высота фиксирована на нижней границе ступени.
-            ridge = stepBase;
-        } else {
-            // Подъём к следующей полке — smoothstep, не резкий шаг.
-            double climbT = (stepLocalT - TERRACE_STEP_FLAT_FRAC) / (1.0 - TERRACE_STEP_FLAT_FRAC);
-            ridge = stepBase + (stepTop - stepBase) * smoothstep(0.0, 1.0, climbT);
-        }
-        return new RidgeSample(ridge, false);
-    }
-
-    /**
-     * Shattered-архетип: разбитые скальные гряды — хаотичная россыпь
-     * угловатых обломков/останцов, каждый заметно выше обычного каньона
-     * (см. {@link #CANYON_FLOOR}, который лишь прорезает рельеф у подножия,
-     * а не формирует его). Структурно похож на {@link #sampleAlpine}
-     * (несколько локальных центров, берём максимум по всем — "россыпь", а
-     * не единый хребет), но с двумя ключевыми отличиями:
-     *
-     * <ol>
-     *   <li>Расстояние до центра каждого обломка ИСКАЖАЕТСЯ высокочастотным
-     *       шумом ДО того, как проходит через smoothstep — контур обломка
-     *       получается рваным/угловатым, а не гладкой окружностью купола.</li>
-     *   <li>Верх профиля среза́н в плоский "скол" (аналогично PLATEAU_TOP_FLAT,
-     *       но резче и площадка меньше) — обломок читается как отбитая
-     *       глыба с плоской гранью сверху, а не как пик или холм.</li>
-     * </ol>
-     *
-     * <p>Как и у остальных архетипов, сам переход "внутри обломка / снаружи"
-     * идёт через smoothstep (не резкий шаг) — угловатость здесь исключительно
-     * в ФОРМЕ контура (шум искажает расстояние), а не в резкости границы по
-     * высоте, поэтому подножие каждого обломка всё ещё плавно уходит в 0 и
-     * не создаёт вертикальных стен.
-     */
-    private RidgeSample sampleShattered(RegionParams p, int wx, int wz, double warp) {
-        double best = 0.0;
-        for (int i = 0; i < p.shatterCx.length; i++) {
-            double dx = wx - p.shatterCx[i] + warp;
-            double dz = wz - p.shatterCz[i] + warp;
-            double dist = Math.sqrt(dx * dx + dz * dz);
-
-            // Угловатое искажение расстояния — высокочастотный шум, отдельный
-            // сид на каждый обломок (shatterJagSeed), чтобы соседние обломки
-            // не выглядели одинаково "сколотыми". Искажаем САМО расстояние
-            // (а не итоговую высоту) — так угловатость видна именно в форме
-            // контура, а не в поверхности как рябь.
-            double jag = heightNoise.fbm2D(
-                    wx * 0.035 + p.shatterJagSeed[i], wz * 0.035 + p.shatterJagSeed[i], 3, 2.0, 0.5)
-                    * SHATTERED_JAGGED_AMPL;
-            double jaggedDist = dist - jag;
-
-            double radius = p.shatterRadius[i];
-            double t = Math.max(0.0, 1.0 - jaggedDist / radius); // 1 в центре, 0 на радиусе
-            double raw = smoothstep(0.0, 1.0, t);
-
-            // Плоский скол сверху — та же техника, что у PLATEAU_TOP_FLAT,
-            // но с меньшей площадкой (SHATTERED_TOP_FLAT ближе к 1.0) —
-            // визуально резче обрубленная вершина, а не широкое плато.
-            double dome;
-            if (raw > SHATTERED_TOP_FLAT) {
-                double topT = (raw - SHATTERED_TOP_FLAT) / (1.0 - SHATTERED_TOP_FLAT);
-                dome = SHATTERED_TOP_FLAT + (1.0 - SHATTERED_TOP_FLAT) * smoothstep(0.0, 1.0, topT);
-            } else {
-                dome = raw;
-            }
-
-            best = Math.max(best, dome);
-        }
-        return new RidgeSample(Math.min(1.0, best), false);
-    }
 
     /**
      * true, если (wx, wz) — часть переходной пляжной полосы у океана: суша,
