@@ -119,7 +119,12 @@ public class Layer1FlatGenerator {
     private static final int CEIL_VAR       = 5;     // амплитуда холмов потолка (блоков)
     // Единый ФИКСИРОВАННЫЙ мировой Y для уровня воды в горных туннелях —
     // вода всегда горизонтальна, не повторяет купол горы.
-    private static final int    MTUN_WATER_LEVEL_Y = CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN + 14;
+    // Раньше считался независимо от WATER_LEVEL (CEIL_BASE_Y+CEIL_VAR+
+    // MTUN_LOW_MARGIN+14 ≈ 77) — вода внутри горы зависала на своей
+    // отметке, не совпадающей с мировым уровнем океана (44), что выглядело
+    // как "вода висит в воздухе" на срезе горы. Приравнено к WATER_LEVEL —
+    // один и тот же мировой уровень воды везде.
+    private static final int    MTUN_WATER_LEVEL_Y = WATER_LEVEL;
     private static final int STALAGMITE_MAX = 14;    // макс. высота сталагмита
     private static final int STALACTITE_MAX = 14;    // макс. длина сталактита
 
@@ -1407,7 +1412,18 @@ public class Layer1FlatGenerator {
     private BlockState resolveMountainTunnel(int wx, int y, int wz, int groundY) {
         if (groundY < MTUN_MIN_GROUND_Y) return null;
 
-        int lowY  = CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN;
+        // lowY раньше был ЖЁСТКО CEIL_BASE_Y+CEIL_VAR+MTUN_LOW_MARGIN (≈63) —
+        // выше уровня воды туннелей (MTUN_WATER_LEVEL_Y = WATER_LEVEL = 44).
+        // Раз вода всегда была НАД этим полом, а не под ним, полоса туннеля
+        // никогда физически не могла достать до уровня воды: цикл ниже
+        // (y <= waterY) не выполнялся ни разу, и озеро внутри горы либо
+        // "висело" на собственной старой отметке (77, никак не связанной с
+        // морем), либо (после приравнивания к WATER_LEVEL) исчезало вовсе.
+        // Берём МЕНЬШЕЕ из двух — обычный запас от потолка базовой пещеры
+        // ИЛИ отметку чуть ниже WATER_LEVEL — чтобы полоса туннеля всегда
+        // захватывала уровень моря, и вода внутри горы физически совпадала
+        // с мировым уровнем океана.
+        int lowY  = Math.min(CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN, WATER_LEVEL - 8);
         int highY = groundY - MTUN_HIGH_MARGIN;
         if (highY - lowY < 20 || y < lowY || y > highY) return null;
 
