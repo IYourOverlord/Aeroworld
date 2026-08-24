@@ -56,6 +56,22 @@ public class Layer1FlatGenerator {
     // mountainMask (широкий fbm) — она отвечает за мягкость переходов;
     // региональная система отвечает только за ФОРМУУ хребта внутри горной зоны.
     private static final double CELL_SIZE         = 640.0; // размер региона (блоков)
+    // Ширина полосы у ДАЛЬНЕГО (по +X/+Z) края ячейки, где ещё идёт плавный
+    // bilinear-бленд со следующей ячейкой (0..1 доля CELL_SIZE). Раньше
+    // fadeX/fadeZ = smoothstep(0,1,cellFx) растягивался на ВСЮ ширину
+    // ячейки — то есть даже в центре ячейки (cellFx=0.5) уже подмешивалось
+    // 50% чужого архетипа с соседней ячейки. Для локальных архетипов
+    // (TERRACE/PLATEAU/ALPINE/SHATTERED — у них своя подошва честно уходит
+    // в 0 на terraceRadius/plateauRadius/т.п.) это безобидно: 0*вес=0. Но
+    // "default" (параллельные гряды) — единственный БЕСКОНЕЧНЫЙ архетип,
+    // периодическая волна без затухания вдали от центра. Подмешиваясь на
+    // половину силы почти по всей ячейке, он поднимал "подошву" соседней
+    // локальной горы на несколько блоков ещё ДО начала её собственной кривой
+    // — именно тот "срез, гора висит над землёй" баг из репорта. Сузили
+    // полосу блендинга до края ячейки: внутренние ~(1-CELL_BLEND_WIDTH) —
+    // чистый архетип текущей ячейки без примеси соседей, переход остаётся
+    // гладким (smoothstep по-прежнему C¹, обрыва стиля на границе нет).
+    private static final double CELL_BLEND_WIDTH  = 0.28;
     private static final double RIDGE_SPACING     = 260.0; // расстояние между параллельными гребнями (было 340 — с возросшим MAX_EXTRA_HEIGHT давало слишком пологие, "холмистые" гряды вместо гор)
     private static final double RIDGE_WARP_AMPL   = 55.0;  // "волнистость" линии гребня (блоков)
     private static final double RING_WIDTH        = 45.0;  // толщина кольцевого хребта
@@ -172,12 +188,27 @@ public class Layer1FlatGenerator {
     private static final double MTUN_FREQ_XZ       = 0.017; // частота по X/Z — определяет "толщину" туннеля
     private static final double MTUN_FREQ_Y_MULT   = 0.55;  // туннель более пологий/горизонтальный
     private static final double MTUN_THRESHOLD     = 0.42;  // порог sqrt(n1²+n2²) — ширина прохода
-    private static final double MTUN_WATER_FRAC    = 0.30;  // доля высоты туннеля, залитая водой (ручей/озеро)
+    private static final double MTUN_WATER_SHORE_WOBBLE = 2.5; // лёгкая рябь берега (блоков), не форма горы
+    // MTUN_WATER_LEVEL_Y объявлен ниже, сразу после CEIL_BASE_Y/CEIL_VAR —
+    // ссылаться на них здесь нельзя (Java запрещает forward reference между
+    // static final полями одного класса, ошибка компиляции "illegal forward
+    // reference").
 
     private static final int FLOOR_BASE_Y   = -14;   // базовый Y верхнего края пола
     private static final int CEIL_BASE_Y    = 36;    // базовый Y нижнего края потолка
     private static final int FLOOR_VAR      = 5;     // амплитуда холмов пола (блоков)
     private static final int CEIL_VAR       = 5;     // амплитуда холмов потолка (блоков)
+    // РАНЬШЕ: уровень воды считался как ДОЛЯ (MTUN_WATER_FRAC) локального
+    // диапазона [lowY,highY], а highY = groundY-margin — то есть зависел от
+    // высоты горы В ЭТОЙ КОЛОНКЕ. Гора имеет форму купола, значит highY
+    // (и вместе с ним "уровень воды") плавно поднимался к центру массива —
+    // вода повторяла силуэт горы и выглядела выпуклой линзой/параболой, а
+    // не водой (у неё всегда ровная горизонтальная поверхность).
+    // ТЕПЕРЬ: единый ФИКСИРОВАННЫЙ мировой Y для всей туннельной системы —
+    // как и положено воде, "просто заполняющей объём" до одной отметки.
+    // Взят низко (ближе к потолку базовых пещер, а не к середине горы) —
+    // проще плавать/передвигаться, не упираясь в потолок сразу над водой.
+    private static final int    MTUN_WATER_LEVEL_Y = CEIL_BASE_Y + CEIL_VAR + MTUN_LOW_MARGIN + 14;
     private static final int STALAGMITE_MAX = 14;    // макс. высота сталагмита
     private static final int STALACTITE_MAX = 14;    // макс. длина сталактита
 
@@ -667,13 +698,22 @@ public class Layer1FlatGenerator {
         //    ячейки идёт плавный smoothstep-переход по обеим осям.
         double cellFx = frac(wx / CELL_SIZE);
         double cellFz = frac(wz / CELL_SIZE);
-        double fadeX = smoothstep(0.0, 1.0, cellFx);
-        double fadeZ = smoothstep(0.0, 1.0, cellFz);
+        // Раньше: smoothstep(0.0, 1.0, cellFx) — бленд на всю ширину ячейки
+        // (см. комментарий у CELL_BLEND_WIDTH). Теперь бленд сжат в полосу
+        // у дальнего края; внутри ячейки — чистый архетип без примеси.
+        double fadeX = smoothstep(1.0 - CELL_BLEND_WIDTH, 1.0, cellFx);
+        double fadeZ = smoothstep(1.0 - CELL_BLEND_WIDTH, 1.0, cellFz);
 
         int cx0 = (int) Math.floor(wx / CELL_SIZE);
         int cz0 = (int) Math.floor(wz / CELL_SIZE);
         int cx1 = cx0 + 1;
         int cz1 = cz0 + 1;
+
+        // Ближайшая региональная ячейка — нужна раньше, чем раньше (см. ниже
+        // homeRidge): без неё нечем подавить утечку соседнего архетипа.
+        int nearCellX = (int) Math.round(wx / CELL_SIZE);
+        int nearCellZ = (int) Math.round(wz / CELL_SIZE);
+        RegionParams nearest = regionParams(nearCellX, nearCellZ);
 
         RidgeSample s00 = sampleRidge(cx0, cz0, wx, wz, warp);
         RidgeSample s10 = sampleRidge(cx1, cz0, wx, wz, warp);
@@ -684,9 +724,33 @@ public class Layer1FlatGenerator {
         double ridgeBottom = lerp(s01.ridge, s11.ridge, fadeX);
         double ridge = lerp(ridgeTop, ridgeBottom, fadeZ);
 
+        // ── Подавление утечки соседней ячейки на склоне СВОЕЙ горы ─────────
+        // Проблема осталась даже после сужения CELL_BLEND_WIDTH: у крупных
+        // гор (большой radius + офсет центра к краю ячейки) собственный
+        // склон всё равно может физически дотягиваться до полосы блендинга.
+        // Там бленд честно подмешивает соседнюю ячейку — а "default"
+        // (параллельные гряды) единственный БЕЗ затухания архетип: если
+        // сосед — default, он может оказаться на гребне своей волны прямо
+        // в этой точке и добавить лишние блоки высоты ПОД уже сформированным
+        // склоном нашей горы. Визуально — "пьедестал"/ступенька у крупных
+        // гор из бага-репорта (у мелких гор их собственный склон физически
+        // не достаёт до полосы блендинга, поэтому там фикс CELL_BLEND_WIDTH
+        // уже помог).
+        //
+        // Фикс: если мы и так уже заметно на склоне СВОЕЙ (ближайшей) горы —
+        // homeRidge существенно больше 0 — берём высоту именно с неё,
+        // полностью игнорируя примесь соседа. Если homeRidge≈0 (мы вне
+        // подошвы своей горы, настоящая межрегиональная граница) — ведём
+        // себя как раньше, честный 4-угловой бленд. Между этими режимами
+        // smoothstep, без излома.
+        RidgeSample homeSample = sampleRidge(nearCellX, nearCellZ, wx, wz, warp);
+        double homeSuppression = smoothstep(0.0, 0.08, homeSample.ridge);
+        ridge = lerp(ridge, homeSample.ridge, homeSuppression);
+
         double ringTop    = lerp(s00.insideRing ? 1.0 : 0.0, s10.insideRing ? 1.0 : 0.0, fadeX);
         double ringBottom = lerp(s01.insideRing ? 1.0 : 0.0, s11.insideRing ? 1.0 : 0.0, fadeX);
         double insideRingFactor = lerp(ringTop, ringBottom, fadeZ); // 0..1
+        insideRingFactor = lerp(insideRingFactor, homeSample.insideRing ? 1.0 : 0.0, homeSuppression);
 
         // ── Неровность гребня вдоль его длины — отдельный шум, ломает
         //    идеально гладкую симметричную "параболу". Часть гребня выше
@@ -718,11 +782,8 @@ public class Layer1FlatGenerator {
         double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
         double hills01  = Math.max(0.0, hillsRaw); // 0..1
 
-        // Ближайшая региональная ячейка — нужна и для alpine-буста высоты
-        // (ниже), и для каньона (дальше по методу). Вычисляем один раз здесь.
-        int nearCellX = (int) Math.round(wx / CELL_SIZE);
-        int nearCellZ = (int) Math.round(wz / CELL_SIZE);
-        RegionParams nearest = regionParams(nearCellX, nearCellZ);
+        // nearCellX/nearCellZ/nearest уже посчитаны выше (нужны были раньше
+        // для homeRidge-подавления утечки блендинга).
 
         // Горная часть: полный размах MAX_EXTRA_HEIGHT, включена только
         // пропорционально localMountainMask.
@@ -1926,11 +1987,12 @@ public class Layer1FlatGenerator {
 
         // Внутри туннеля: нижняя часть его сечения залита водой (ручей/
         // озеро, по которому можно проплыть на лодке), верх — воздух.
-        // "Уровень воды" в каждой точке (wx,wz) — почти плоская, слегка
-        // волнистая линия внутри полосы [lowY, highY], поэтому там, где
-        // туннель проходит низко, он затоплен, а где высоко — сухой проход.
-        double waterN   = mtunWaterNoise.fbm2D(wx * 0.01, wz * 0.01, 3, 2.0, 0.5); // -1..1
-        int    waterY   = lowY + (int) Math.round((highY - lowY) * (MTUN_WATER_FRAC + 0.12 * waterN));
+        // Уровень воды — ОДНА фиксированная мировая отметка на всю систему
+        // туннелей (см. MTUN_WATER_LEVEL_Y) с лёгкой рябью берега, а не доля
+        // локального диапазона — иначе поверхность повторяет купол горы и
+        // выглядит параболой вместо ровной воды.
+        double shoreWobble = mtunWaterNoise.fbm2D(wx * 0.015, wz * 0.015, 3, 2.0, 0.5) * MTUN_WATER_SHORE_WOBBLE;
+        int    waterY      = MTUN_WATER_LEVEL_Y + (int) Math.round(shoreWobble);
         if (y <= waterY) {
             return BS_WATER;
         }
