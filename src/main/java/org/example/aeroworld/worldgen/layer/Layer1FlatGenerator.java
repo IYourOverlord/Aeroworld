@@ -1027,6 +1027,19 @@ public class Layer1FlatGenerator {
             landHeight = blendedY;
         }
 
+        // ── Страховка от "сухой" суши ниже уровня воды ───────────────────
+        // BASE_BY_CONTINENTALNESS/roughness-шум — поля, НЕЗАВИСИМЫЕ от
+        // oceanN/riverN/lakeN (разные шумы, разные частоты/офсеты). Из-за
+        // этого landHeight иногда проваливается ниже WATER_LEVEL (например,
+        // в переходной зоне "берег" -55..-0.30, где база 40 < 44) в точке,
+        // где ни один из oceanW/riverW/lakeW не сработал — суша оставалась
+        // сухой ямой ниже уровня воды вместо честного мелководья. Ловим это
+        // здесь: если ни один водоём не поднял вопрос воды, но итоговая
+        // высота суши всё равно ниже WATER_LEVEL — считаем это мелководьем.
+        if (landHeight < WATER_LEVEL) {
+            return new ColumnProfile(landHeight, WATER_LEVEL, shoreEdge);
+        }
+
         return new ColumnProfile(landHeight, -1, shoreEdge);
     }
 
