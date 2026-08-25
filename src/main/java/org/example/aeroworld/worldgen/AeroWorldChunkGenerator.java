@@ -197,6 +197,30 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
     @Override protected MapCodec<? extends ChunkGenerator> codec() { return CODEC; }
 
+    @Override
+    public BiomeSource getBiomeSource() {
+        // КОРНЕВАЯ ПРИЧИНА "нет водорослей/кораллов/рыбы в океане": родительский
+        // ChunkGenerator.getBiomeSource() возвращает BiomeSource, переданный в
+        // super(...) конструктор ОДИН РАЗ — тот самый "исходный" AeroBiomeSource,
+        // у которого layer1 == null (withRingChecker(layer1) ещё не вызывался).
+        // initializeWithSeed() кладёт ОБНОВЛЁННЫЙ инстанс (с layer1, а значит и
+        // с isOceanColumn/isRiverColumn/isLakeColumn/isBeachColumn) только в
+        // aeroSource (AtomicReference) — но ничего не переопределяло
+        // getBiomeSource(), так что игра (F3, спавн мобов, реальная выдача
+        // биома чанка, а через это — vegetal_decoration и другие ванильные
+        // фичи биома) продолжала стучаться в СТАРЫЙ инстанс с layer1==null.
+        // В AeroBiomeSource.getNoiseBiome() блок `if (layer1 != null) {...}`
+        // (весь ocean/river/lake/beach/ring-valley резолвинг) из-за этого
+        // молча пропускался ВСЕГДА в реальной игре — оставалась только
+        // климатическая таблица (plains/taiga/meadow/...), у которой нет
+        // seagrass/kelp/coral. Внутренний buildBiomeResolver() (используется
+        // при заливке рельефа/поверхности) уже брал aeroSource.get() правильно
+        // — потому физический рельеф (сам факт наличия воды, песок на дне)
+        // был корректным, а вот итоговый БИОМ и, соответственно, фичи —- нет.
+        AeroBiomeSource src = aeroSource.get();
+        return src != null ? src : super.getBiomeSource();
+    }
+
     @Override public int getMinY()     { return -64; }
     @Override public int getGenDepth() { return 2164; }
     // ИСПРАВЛЕНО: было захардкожено -1 — практически "океана нет" для всех

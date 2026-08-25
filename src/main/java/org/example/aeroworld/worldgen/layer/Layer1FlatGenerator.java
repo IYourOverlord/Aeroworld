@@ -756,6 +756,49 @@ public class Layer1FlatGenerator {
         return blendedY < WATER_LEVEL;
     }
 
+    /**
+     * Есть ли в точке (wx, wz) озеро? Та же формула (lakeN/lakeW), что
+     * использует columnProfile для русла озера — только чтение, для решения
+     * о биоме.
+     *
+     * ВАЖНО: до этого метода вообще не существовало — AeroBiomeSource
+     * проверял только isBeachColumn/isOceanColumn/isRiverColumn. Физически
+     * озёра (lakeW-ветка columnProfile) заливались водой исправно, а биом
+     * при этом падал в обычную климатическую таблицу (plains/forest/meadow/
+     * ...) — у таких биомов нет seagrass/kelp в фичах. Отсюда голое дно у
+     * озёр (см. скриншот: biome=aeroworld:meadow прямо под водой).
+     */
+    public boolean isLakeColumn(int wx, int wz) {
+        TerrainFields f = computeTerrainFields(wx, wz);
+        int landHeight = f.landHeight;
+        if (landHeight > WATER_MAX_LAND_Y) return false;
+        if (isOceanColumn(wx, wz)) return false;  // океан имеет приоритет, как и в columnProfile
+        if (isRiverColumn(wx, wz)) return false;  // река имеет приоритет, как и в columnProfile
+
+        double lakeN = heightNoise.fbm2D(wx * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
+        double lakeW = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeN);
+        if (lakeW <= 0.0) return false;
+
+        int lakeFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
+        int blendedY = (int) Math.round(landHeight + (lakeFloorY - landHeight) * lakeW);
+        return blendedY < WATER_LEVEL;
+    }
+
+    /**
+     * Страховочный случай из columnProfile: ни одно из ocean/river/lake не
+     * сработало, но landHeight всё равно провалился ниже WATER_LEVEL (см.
+     * columnProfile — независимость continentalness-шума от oceanN/riverN/
+     * lakeN). columnProfile в этом случае честно ставит мелководье, но
+     * биом остаётся сухопутным без подводных фич. Открытый метод, чтобы
+     * AeroBiomeSource мог отличить такие "случайные лужи" и тоже завести
+     * им океанический биом (мелкий "ocean"/lukewarm — по аналогии с
+     * дежурным мелководьем, а не оставлять их голыми и без биома).
+     */
+    public boolean isStrandedShallowColumn(int wx, int wz) {
+        if (isOceanColumn(wx, wz) || isRiverColumn(wx, wz) || isLakeColumn(wx, wz)) return false;
+        return computeLandHeight(wx, wz) < WATER_LEVEL;
+    }
+
     /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */
     public static final class ColumnProfile {
         /** Верхний твёрдый блок (дно реки/озера, если waterY != -1; иначе сама поверхность). */

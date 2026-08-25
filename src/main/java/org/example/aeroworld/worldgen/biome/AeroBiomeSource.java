@@ -233,13 +233,34 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> ocean =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", oceanName));
                 if (ocean.isPresent()) return ocean.get();
-            } else if (layer1.isRiverColumn(bwx, bwz)) {
-                // Река: раньше физическая вода была, а биом — нет.
-                // frozen_river в холодных широтах, иначе обычная river.
+            } else if (layer1.isRiverColumn(bwx, bwz) || layer1.isLakeColumn(bwx, bwz)) {
+                // Река ИЛИ озеро: у ванили нет отдельного биома "озеро" —
+                // маленькие пруды в ваниле просто наследуют биом суши вокруг
+                // (без seagrass). Но здесь озёра из columnProfile — крупные,
+                // самостоятельные водоёмы (см. LAKE_THRESHOLD), а не мелкие
+                // decoration-пруды, поэтому логичнее обращаться с ними как с
+                // рекой: тот же river/frozen_river биом — у него уже есть
+                // seagrass_river в фичах. Раньше isLakeColumn не существовал
+                // вовсе, и озёра проваливались в обычную климатическую
+                // таблицу (plains/meadow/forest/...) — без единой водной
+                // фичи, отсюда голое дно под озёрами.
                 String riverName = (temp < -0.32) ? "frozen_river" : "river";
                 Optional<Holder<Biome>> river =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", riverName));
                 if (river.isPresent()) return river.get();
+            } else if (layer1.isStrandedShallowColumn(bwx, bwz)) {
+                // "Случайная лужа" — landHeight провалился ниже WATER_LEVEL
+                // сам по себе (шум continentalness/roughness), без участия
+                // ocean/river/lake шумов (см. columnProfile — страховка от
+                // сухой суши ниже уровня воды). columnProfile честно ставит
+                // туда физическую воду, но раньше биом не совпадал вообще
+                // никак — оставался сухопутным. Трактуем как мелкий ocean/
+                // lukewarm_ocean по температуре, чтобы у воды тоже была хоть
+                // какая-то подводная фича вместо голого дна.
+                String shallowName = (temp < -0.096) ? "ocean" : "lukewarm_ocean";
+                Optional<Holder<Biome>> shallow =
+                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", shallowName));
+                if (shallow.isPresent()) return shallow.get();
             }
         }
 
