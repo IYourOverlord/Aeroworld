@@ -137,8 +137,13 @@ public final class StructureSupportValidator {
                 logRejection(structureId, bounds, "водная структура попала на небесный остров");
                 return ValidationResult.waterStructure(structureId, bounds);
             }
+            // Подводные структуры (ocean_monument) стоят на дне, а bounds.minY()
+            // может быть на несколько блоков выше самого дна (толща воды над
+            // основанием монумента) — SUPPORT_SCAN_DEPTH=6 в hasSolidBelow этого
+            // не всегда достаёт. Сканируем от maxY бокса вниз, глубина скана там
+            // покрывает всю высоту структуры + запас.
             return sampleSupport(structureId, StructureCategory.WATER, bounds, sampler,
-                    bounds.minY(), SURFACE_SUPPORT_THRESHOLD);
+                    bounds.maxY(), SURFACE_SUPPORT_THRESHOLD);
         }
 
         // ── 3. Пустота между слоями — структура гарантированно в воздухе ──────
