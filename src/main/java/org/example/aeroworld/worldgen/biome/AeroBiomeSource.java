@@ -171,17 +171,13 @@ public class AeroBiomeSource extends BiomeSource {
     // Верхняя граница Layer 1 в noise-координатах (четверти блока):
     // LAYER_MAX_Y(300) / 4 = 75. Раньше порог был 12 (блок 48) — это ниже
     // уровня моря (WATER_LEVEL=44) почти вплотную, и вся толща воды выше
-    // Y=48 (поверхность океана, где живут рыбы/kelp/seagrass, и bounding
-    // box Ocean Monument, который поднимается заметно выше дна) уходила в
-    // delegateWithSafety → ванильный Climate.Sampler для кастомного
-    // генератора (см. FIX-комментарий класса — sampler всегда возвращает
-    // нули), из-за чего верх водного столба резолвился в случайный НЕ-ocean
-    // биом. Итог: seagrass/kelp/coral/рыбы не размещались (biome features
-    // не совпадали с фактической водой), а Ocean Monument не проходил
-    // биомную проверку Mojang (весь объём структуры должен лежать в
-    // биомах из тега has_structure/ocean_monument). Порог поднят до полного
-    // диапазона Layer 1, включая горы — единственный источник истины для Y
-    // здесь тот же, что и у рельефа (Layer1FlatGenerator.LAYER_MAX_Y).
+    // Y=48 (в т.ч. вглубь открытого океана, где живут рыбы/kelp/seagrass, и
+    // bounding box Ocean Monument) уходила в delegateWithSafety →
+    // ванильный Climate.Sampler для кастомного генератора (см. FIX-
+    // комментарий класса — sampler всегда возвращает нули), из-за чего
+    // столб воды выше Y=48 резолвился в случайный НЕ-ocean биом. Итог:
+    // seagrass/kelp/coral/рыбы не размещались, а Ocean Monument не проходил
+    // биомную проверку Mojang. Порог поднят до полного диапазона Layer 1.
     private static final int LAYER1_MAX_NOISE_Y =
             org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MAX_Y / 4;
 
