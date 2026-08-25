@@ -127,7 +127,18 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                 : biomeSource);
         this.vanillaGenerator = vanillaGenerator;
         this.settings         = settings;
-        this.aeroSource       = new AtomicReference<>((AeroBiomeSource) getBiomeSource());
+        // ИСПРАВЛЕНО (NPE "this.aeroSource is null" при создании мира):
+        // раньше здесь вызывался виртуальный getBiomeSource() — переопределённый
+        // метод (см. ниже), который сам читает поле this.aeroSource. Поле
+        // aeroSource в момент этого вызова ещё НЕ присвоено (Java инициализирует
+        // final-поля строго по порядку объявления/присвоения в конструкторе),
+        // поэтому getBiomeSource() получал aeroSource == null и падал/возвращал
+        // null. Берём biome source из super(...) напрямую через getBiomeSourceRaw
+        // эквивалент — используем поле, установленное родительским конструктором,
+        // без обращения к переопределённому методу.
+        BiomeSource resolved = super.getBiomeSource();
+        this.aeroSource = new AtomicReference<>(
+                resolved instanceof AeroBiomeSource abs ? abs : null);
     }
 
     public AeroWorldChunkGenerator(BiomeSource biomeSource,
@@ -183,8 +194,17 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
         // oreFilteredChunks removed — no per-world state to reset here.
 
-        AeroBiomeSource updated = aeroSource.get().withSeed(seed).withRingChecker(layer1);
-        aeroSource.set(updated);
+        // Защита от NPE: aeroSource может быть null, если исходный biomeSource,
+        // переданный в конструктор (например, из data pack world preset), не был
+        // MultiNoiseBiomeSource и поэтому не был обёрнут в AeroBiomeSource — см.
+        // конструктор выше. В таком случае мир создаётся с "чужим" источником
+        // биомов, и остров-специфичная логика (ring-valley/ocean/river/lake)
+        // просто не применяется, вместо падения всей загрузки реестра.
+        AeroBiomeSource current = aeroSource.get();
+        if (current != null) {
+            AeroBiomeSource updated = current.withSeed(seed).withRingChecker(layer1);
+            aeroSource.set(updated);
+        }
     }
 
     private void init(RandomState randomState) {
@@ -540,7 +560,10 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     }
 
     private Layer1FlatGenerator.BiomeResolver buildBiomeResolver(RandomState randomState) {
-        AeroBiomeSource src = aeroSource.get();
+        // Fallback на super.getBiomeSource(), если aeroSource == null (biomeSource
+        // не был MultiNoiseBiomeSource, см. конструктор) — иначе NPE на src.getNoiseBiome(...).
+        AeroBiomeSource cached = aeroSource.get();
+        BiomeSource src = cached != null ? cached : super.getBiomeSource();
         Climate.Sampler sampler = randomState.sampler();
         return (wx, wz) -> {
             Holder<Biome> biome = src.getNoiseBiome(wx >> 2, 12, wz >> 2, sampler);
