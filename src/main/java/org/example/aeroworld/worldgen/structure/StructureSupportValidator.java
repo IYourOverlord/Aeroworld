@@ -126,10 +126,19 @@ public final class StructureSupportValidator {
             return ValidationResult.denied(structureId, category, bounds);
         }
 
-        // ── 2. Водные структуры — нет смысла в AeroWorld ──────────────────────
+        // ── 2. Водные структуры — Layer 1 имеет полноценные океаны (WATER_LEVEL,
+        //    см. getSeaLevel()), поэтому больше не отклоняются безусловно.
+        //    Требуем твёрдое дно/опору под подошвой структуры (тот же порог,
+        //    что и для наземных SURFACE), только если фактический слой — Layer 1
+        //    (actualLayer == 1) или не определён (actualLayer < 0, часто бывает
+        //    прямо на воде, где сэмплер не видит тверди в толще над дном).
         if (category == StructureCategory.WATER) {
-            logRejection(structureId, bounds, "водная структура, нет океана в AeroWorld");
-            return ValidationResult.waterStructure(structureId, bounds);
+            if (actualLayer == 2 || actualLayer == 3 || actualLayer == 4) {
+                logRejection(structureId, bounds, "водная структура попала на небесный остров");
+                return ValidationResult.waterStructure(structureId, bounds);
+            }
+            return sampleSupport(structureId, StructureCategory.WATER, bounds, sampler,
+                    bounds.minY(), SURFACE_SUPPORT_THRESHOLD);
         }
 
         // ── 3. Пустота между слоями — структура гарантированно в воздухе ──────

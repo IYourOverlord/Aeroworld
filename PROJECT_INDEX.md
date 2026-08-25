@@ -340,6 +340,21 @@ spawn_potentials (zombie/skeleton/spider/husk) одинаковы на всех 
    в комментариях (например, в `LowerIslandGenerator.getDeformedTopY`),
    как задел на будущее.
 
+7a. **`StructureCategoryResolver.WATER_TOKENS` (ocean/monument/shipwreck/ruins/
+   underwater) раньше отклонялся безусловно в `StructureSupportValidator`**
+   («нет океана в AeroWorld») — но Layer 1 имеет полноценные океаны
+   (`getSeaLevel()` = `Layer1FlatGenerator.WATER_LEVEL`), поэтому Ocean
+   Monument/Shipwreck/Ocean Ruins никогда не появлялись. Исправлено:
+   WATER-структуры теперь валидируются как SURFACE (порог
+   `SURFACE_SUPPORT_THRESHOLD`, опора на дно через `hasSolidBelow`), кроме
+   случая, когда фактический слой (`actualLayer`) — небесный остров (2/3/4),
+   тогда всё ещё отклоняются. Подводная растительность (seagrass/kelp)
+   отдельно НЕ была затронута багом — фичи уже есть в клонах биомов
+   (`worldgen/biome/*ocean*.json`, шаг `vegetal_decoration`) и идут через
+   штатный `super.applyBiomeDecoration()`; если её всё ещё нет в мире —
+   смотреть `getBiomeSource()`/`AeroBiomeSource` (правильный биом в точке)
+   раньше, чем валидатор структур.
+
 7. **Разные форматы структур на одном слое рядом.** `tank21` (Layer 2) —
    обычный NBT/`PhysicalStructures`. `HAUL-01` (Layer 3) — `.excraft`/Toolgun.
    При добавлении новой структуры важно не перепутать пайплайн: для
