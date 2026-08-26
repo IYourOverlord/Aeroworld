@@ -627,7 +627,7 @@ public class Layer1FlatGenerator {
         // 0 на границе порогов, до 1 при экстремальных erosion/PV — чтобы
         // граница зоны каньона не была резкой ступенькой.
         double eligibility = smoothstep(CANYON_EROSION_MAX, CANYON_EROSION_MAX - 0.20, erosion)
-                            * smoothstep(CANYON_PV_MIN, CANYON_PV_MIN + 0.20, pvFinal);
+                * smoothstep(CANYON_PV_MIN, CANYON_PV_MIN + 0.20, pvFinal);
         if (eligibility <= 0.0) return baseHeight;
 
         // ── Линия каньона: тот же приём, что у рек (|шум| < половина
@@ -695,6 +695,21 @@ public class Layer1FlatGenerator {
      * <p>Только чтение — не изменяет и не дублирует физическую генерацию
      * рельефа, лишь переиспользует тот же 2D-шум для решения о биоме.
      */
+    // ── DEBUG (временно, убрать после диагностики) ───────────────────────
+    /** Сырое значение океанского шума в точке — только для диагностики. */
+    public double debugOceanN(int wx, int wz) {
+        return heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
+    }
+    /** Вес океана (0..1) в точке — только для диагностики. */
+    public double debugOceanW(int wx, int wz) {
+        double oceanN = debugOceanN(wx, wz);
+        return smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
+    }
+    /** landHeight в точке — только для диагностики. */
+    public int debugLandHeight(int wx, int wz) {
+        return computeLandHeight(wx, wz);
+    }
+
     public boolean isOceanColumn(int wx, int wz) {
         int landHeight = computeLandHeight(wx, wz);
 
@@ -1322,7 +1337,7 @@ public class Layer1FlatGenerator {
                     BlockState rock = (isWaterCol || hollowShore)
                             ? (y < DEEPSLATE_TOP ? BS_DEEPSLATE : BS_STONE)
                             : resolveBlock(wx, y, wz, fY, cY, stgY, stcY,
-                                    inColumnBase, colTSq, colBaseRv, groundY);
+                            inColumnBase, colTSq, colBaseRv, groundY);
                     chunk.setBlockState(pos, rock, false);
                 }
 

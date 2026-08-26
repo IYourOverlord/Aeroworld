@@ -168,18 +168,18 @@ public class AeroBiomeSource extends BiomeSource {
         static final int MIN_Y = org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MIN_Y;
     }
 
-    // Верхняя граница Layer 1 в noise-координатах (четверти блока):
-    // LAYER_MAX_Y(300) / 4 = 75. Раньше порог был 12 (блок 48) — это ниже
-    // уровня моря (WATER_LEVEL=44) почти вплотную, и вся толща воды выше
-    // Y=48 (в т.ч. вглубь открытого океана, где живут рыбы/kelp/seagrass, и
-    // bounding box Ocean Monument) уходила в delegateWithSafety →
-    // ванильный Climate.Sampler для кастомного генератора (см. FIX-
-    // комментарий класса — sampler всегда возвращает нули), из-за чего
-    // столб воды выше Y=48 резолвился в случайный НЕ-ocean биом. Итог:
-    // seagrass/kelp/coral/рыбы не размещались, а Ocean Monument не проходил
-    // биомную проверку Mojang. Порог поднят до полного диапазона Layer 1.
     private static final int LAYER1_MAX_NOISE_Y =
             org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MAX_Y / 4;
+
+    // ── DEBUG (временно) ────────────────────────────────────────────────────
+    // Throttled-лог: пишет в консоль не чаще раза в DEBUG_LOG_INTERVAL_MS на
+    // поток, только когда точка попадает в блок ring-valley/beach/ocean/
+    // river/lake ЛИБО падает в обычную климатическую таблицу — чтобы поймать
+    // расхождение "физически вода, а биом сухопутный". Убрать после диагностики.
+    private static volatile long lastDebugLogMs = 0;
+    private static final long DEBUG_LOG_INTERVAL_MS = 1000;
+    private static final org.slf4j.Logger DEBUG_LOGGER =
+            org.slf4j.LoggerFactory.getLogger("AeroWorld/BiomeDebug");
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
@@ -274,6 +274,37 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> shallow =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", shallowName));
                 if (shallow.isPresent()) return shallow.get();
+            }
+        }
+
+        // ── DEBUG (временно, убрать после диагностики) ───────────────────────
+        // Точка не попала ни в одну ветку layer1 (ring-valley/beach/ocean/
+        // river/lake/stranded) — сейчас упадёт в обычную климатическую
+        // таблицу. Throttled, чтобы не зафлудить лог (getNoiseBiome дёргается
+        // тысячи раз за тик) — не чаще раза в секунду.
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
+            lastDebugLogMs = nowMs;
+            int bwx = (int) wx;
+            int bwz = (int) wz;
+            if (layer1 != null) {
+                double oceanN = layer1.debugOceanN(bwx, bwz);
+                double oceanW = layer1.debugOceanW(bwx, bwz);
+                int landHeight = layer1.debugLandHeight(bwx, bwz);
+                DEBUG_LOGGER.info(
+                        "[AeroWorld][BiomeDebug] wx={} wz={} noiseXYZ=({},{},{}) blockY={} "
+                                + "layer1!=null=true landHeight={} oceanN={} oceanW={} "
+                                + "isBeach={} isOcean={} isRiver={} isLake={} isStranded={} "
+                                + "temp={} -> FALLBACK climate table",
+                        bwx, bwz, x, y, z, blockY, landHeight, oceanN, oceanW,
+                        layer1.isBeachColumn(bwx, bwz), layer1.isOceanColumn(bwx, bwz),
+                        layer1.isRiverColumn(bwx, bwz), layer1.isLakeColumn(bwx, bwz),
+                        layer1.isStrandedShallowColumn(bwx, bwz), temp);
+            } else {
+                DEBUG_LOGGER.info(
+                        "[AeroWorld][BiomeDebug] wx={} wz={} noiseXYZ=({},{},{}) blockY={} "
+                                + "layer1==null (!) -> FALLBACK climate table",
+                        bwx, bwz, x, y, z, blockY);
             }
         }
 
