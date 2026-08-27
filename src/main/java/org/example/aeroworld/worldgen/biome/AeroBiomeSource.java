@@ -168,18 +168,46 @@ public class AeroBiomeSource extends BiomeSource {
         static final int MIN_Y = org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MIN_Y;
     }
 
+    // Верхняя граница Layer 1 в noise-координатах (четверти блока):
+    // LAYER_MAX_Y(300) / 4 = 75. Раньше порог был 12 (блок 48) — это ниже
+    // уровня моря (WATER_LEVEL=44) почти вплотную, и вся толща воды выше
+    // Y=48 (поверхность океана, где живут рыбы/kelp/seagrass, и bounding
+    // box Ocean Monument, который поднимается заметно выше дна) уходила в
+    // delegateWithSafety → ванильный Climate.Sampler для кастомного
+    // генератора (см. FIX-комментарий класса — sampler всегда возвращает
+    // нули), из-за чего верх водного столба резолвился в случайный НЕ-ocean
+    // биом. Итог: seagrass/kelp/coral/рыбы не размещались (biome features
+    // не совпадали с фактической водой), а Ocean Monument не проходил
+    // биомную проверку Mojang (весь объём структуры должен лежать в
+    // биомах из тега has_structure/ocean_monument). Порог поднят до полного
+    // диапазона Layer 1, включая горы — единственный источник истины для Y
+    // здесь тот же, что и у рельефа (Layer1FlatGenerator.LAYER_MAX_Y).
     private static final int LAYER1_MAX_NOISE_Y =
             org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MAX_Y / 4;
 
-    // ── DEBUG (временно) ────────────────────────────────────────────────────
-    // Throttled-лог: пишет в консоль не чаще раза в DEBUG_LOG_INTERVAL_MS на
-    // поток, только когда точка попадает в блок ring-valley/beach/ocean/
-    // river/lake ЛИБО падает в обычную климатическую таблицу — чтобы поймать
-    // расхождение "физически вода, а биом сухопутный". Убрать после диагностики.
+    // ── DEBUG (временно, убрать после диагностики) ────────────────────────
     private static volatile long lastDebugLogMs = 0;
     private static final long DEBUG_LOG_INTERVAL_MS = 1000;
     private static final org.slf4j.Logger DEBUG_LOGGER =
             org.slf4j.LoggerFactory.getLogger("AeroWorld/BiomeDebug");
+
+    // ── DEBUG (временно, убрать после диагностики) ────────────────────────
+    // isXxxColumn()==true (физически вода/пляж подтверждены), но findBiome
+    // не нашёл соответствующий клон в реестре — это ПРОВАЛ сквозь return:
+    // управление уходит в обычную климатическую таблицу ниже вместо воды.
+    // Если это логируется — AeroBiomeRegistryCache.get() реально не находит
+    // aeroworld:<name> даже после фикса ожидания реестра (либо биом
+    // отсутствует в датапаке, либо реестр так и не прогрелся за таймаут).
+    private static void logFindBiomeMiss(int bwx, int bwz, String kind, String name) {
+        long now = System.currentTimeMillis();
+        if (now - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
+            lastDebugLogMs = now;
+            DEBUG_LOGGER.info(
+                    "[AeroWorld][BiomeDebug] FINDBIOME MISS kind={} wx={} wz={} "
+                            + "id=aeroworld:{} (клон не найден в реестре — падаем в fallback)",
+                    kind, bwx, bwz, name);
+        }
+    }
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
@@ -227,6 +255,7 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> beach =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", beachName));
                 if (beach.isPresent()) return beach.get();
+                logFindBiomeMiss(bwx, bwz, "beach", beachName);
             } else if (layer1.isOceanColumn(bwx, bwz)) {
                 // ── Океан: раньше физически была вода, но биом всегда
                 // резолвился в сухопутный (plains/forest/...) — из-за этого
@@ -246,6 +275,7 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> ocean =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", oceanName));
                 if (ocean.isPresent()) return ocean.get();
+                logFindBiomeMiss(bwx, bwz, "ocean", oceanName);
             } else if (layer1.isRiverColumn(bwx, bwz) || layer1.isLakeColumn(bwx, bwz)) {
                 // Река ИЛИ озеро: у ванили нет отдельного биома "озеро" —
                 // маленькие пруды в ваниле просто наследуют биом суши вокруг
@@ -261,6 +291,7 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> river =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", riverName));
                 if (river.isPresent()) return river.get();
+                logFindBiomeMiss(bwx, bwz, "river/lake", riverName);
             } else if (layer1.isStrandedShallowColumn(bwx, bwz)) {
                 // "Случайная лужа" — landHeight провалился ниже WATER_LEVEL
                 // сам по себе (шум continentalness/roughness), без участия
@@ -274,37 +305,29 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> shallow =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", shallowName));
                 if (shallow.isPresent()) return shallow.get();
-            }
-        }
-
-        // ── DEBUG (временно, убрать после диагностики) ───────────────────────
-        // Точка не попала ни в одну ветку layer1 (ring-valley/beach/ocean/
-        // river/lake/stranded) — сейчас упадёт в обычную климатическую
-        // таблицу. Throttled, чтобы не зафлудить лог (getNoiseBiome дёргается
-        // тысячи раз за тик) — не чаще раза в секунду.
-        long nowMs = System.currentTimeMillis();
-        if (nowMs - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
-            lastDebugLogMs = nowMs;
-            int bwx = (int) wx;
-            int bwz = (int) wz;
-            if (layer1 != null) {
-                double oceanN = layer1.debugOceanN(bwx, bwz);
-                double oceanW = layer1.debugOceanW(bwx, bwz);
-                int landHeight = layer1.debugLandHeight(bwx, bwz);
-                DEBUG_LOGGER.info(
-                        "[AeroWorld][BiomeDebug] wx={} wz={} noiseXYZ=({},{},{}) blockY={} "
-                                + "layer1!=null=true landHeight={} oceanN={} oceanW={} "
-                                + "isBeach={} isOcean={} isRiver={} isLake={} isStranded={} "
-                                + "temp={} -> FALLBACK climate table",
-                        bwx, bwz, x, y, z, blockY, landHeight, oceanN, oceanW,
-                        layer1.isBeachColumn(bwx, bwz), layer1.isOceanColumn(bwx, bwz),
-                        layer1.isRiverColumn(bwx, bwz), layer1.isLakeColumn(bwx, bwz),
-                        layer1.isStrandedShallowColumn(bwx, bwz), temp);
-            } else {
-                DEBUG_LOGGER.info(
-                        "[AeroWorld][BiomeDebug] wx={} wz={} noiseXYZ=({},{},{}) blockY={} "
-                                + "layer1==null (!) -> FALLBACK climate table",
-                        bwx, bwz, x, y, z, blockY);
+                logFindBiomeMiss(bwx, bwz, "stranded", shallowName);
+            } else if (layer1.debugLandHeight(bwx, bwz) < org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.WATER_LEVEL) {
+                // ── DEBUG (временно) ──────────────────────────────────────
+                // Физически вода (landHeight < WATER_LEVEL), но НИ ОДНА из
+                // веток ocean/river/lake/beach/stranded выше не сработала.
+                // Не должно происходить по логике columnProfile — если это
+                // сработало, значит есть расхождение между computeLandHeight
+                // здесь и тем, что реально решает isOceanColumn/isLakeColumn/
+                // isStrandedShallowColumn. Throttled, раз в секунду.
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
+                    lastDebugLogMs = nowMs;
+                    DEBUG_LOGGER.info(
+                            "[AeroWorld][BiomeDebug] UNHANDLED WATER wx={} wz={} landHeight={} "
+                                    + "WATER_LEVEL={} isBeach={} isOcean={} isRiver={} isLake={} "
+                                    + "isStranded={} oceanN={} oceanW={}",
+                            bwx, bwz, layer1.debugLandHeight(bwx, bwz),
+                            org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.WATER_LEVEL,
+                            layer1.isBeachColumn(bwx, bwz), layer1.isOceanColumn(bwx, bwz),
+                            layer1.isRiverColumn(bwx, bwz), layer1.isLakeColumn(bwx, bwz),
+                            layer1.isStrandedShallowColumn(bwx, bwz),
+                            layer1.debugOceanN(bwx, bwz), layer1.debugOceanW(bwx, bwz));
+                }
             }
         }
 

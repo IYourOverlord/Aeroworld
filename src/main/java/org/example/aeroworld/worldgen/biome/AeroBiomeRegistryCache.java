@@ -34,16 +34,53 @@ public final class AeroBiomeRegistryCache {
 
     private static volatile Registry<Biome> registry;
 
+    // ФИКС: раньше get() тихо возвращал Optional.empty(), если реестр ещё не
+    // заполнен (registry == null) — это молчаливо предполагало, что
+    // ServerAboutToStartEvent ГАРАНТИРОВАННО отрабатывает раньше первого
+    // обращения к биомам. С многопоточной генерацией чанков (C2ME) это не
+    // гарантия: worker-поток может успеть вызвать collectPossibleBiomes()
+    // (через AeroWorldChunkGenerator.createBiomes → getBiomeSource() →
+    // possibleBiomes(), который в базовом BiomeSource кэшируется через
+    // Suppliers.memoize НАВСЕГДА при первом вызове) до того, как основной
+    // поток сервера дойдёт до ServerAboutToStartEvent. Если это произошло —
+    // часть клонов aeroworld:*ocean* исчезает из possibleBiomes() навсегда
+    // для всего мира → ChunkGenerator.applyBiomeDecoration строит
+    // FeatureSorter без индексов для этих биомов → IndexOutOfBoundsException
+    // ("Index -1 out of bounds for length 1") при декорации/спавне на любом
+    // чанке с таким биомом, что приводит к падению генерации чанков
+    // (зависание клиента, ожидающего чанки от упавшего сервера).
+    //
+    // Фикс: get() теперь ждёт (короткий busy-wait, реестр готовится за
+    // миллисекунды на старте сервера) вместо немедленного Optional.empty().
+    // Таймаут — защита от дедлока, если событие по какой-то причине не
+    // произойдёт вовсе (тогда ведём себя как раньше — Optional.empty()).
+    private static final long WAIT_TIMEOUT_MS = 10_000;
+
     private AeroBiomeRegistryCache() {}
 
     public static void onServerAboutToStart(ServerAboutToStartEvent event) {
         registry = event.getServer().registryAccess().registryOrThrow(Registries.BIOME);
     }
 
-    /** Ищет биом по id в полном реестре. Пусто, если реестр ещё не заполнен или id не найден. */
+    /** Ищет биом по id в полном реестре. Ждёт прогрева реестра (см. класс-javadoc). */
     public static Optional<Holder<Biome>> get(ResourceLocation id) {
-        Registry<Biome> reg = registry;
+        Registry<Biome> reg = awaitRegistry();
         if (reg == null) return Optional.empty();
         return reg.getHolder(ResourceKey.create(Registries.BIOME, id)).map(h -> (Holder<Biome>) h);
+    }
+
+    private static Registry<Biome> awaitRegistry() {
+        Registry<Biome> reg = registry;
+        if (reg != null) return reg;
+        long deadline = System.currentTimeMillis() + WAIT_TIMEOUT_MS;
+        while (registry == null && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return registry;
+            }
+        }
+        return registry;
     }
 }

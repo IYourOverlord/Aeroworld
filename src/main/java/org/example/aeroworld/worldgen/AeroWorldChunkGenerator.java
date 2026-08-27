@@ -475,6 +475,27 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     }
 
     @Override
+    public CompletableFuture<ChunkAccess> createBiomes(
+            RandomState randomState, Blender blender,
+            StructureManager structureManager, ChunkAccess chunk) {
+        // ФИКС гонки "нет водорослей/кораллов/рыбы/монумента в океане" (второй
+        // слой бага после исправления layer1==null в getNoiseBiome): порядок
+        // этапов генерации чанка — createBiomes ПЕРВЫЙ, затем fillFromNoise.
+        // init(randomState) раньше вызывался только из fillFromNoise (и других
+        // поздних этапов), поэтому на момент createBiomes aeroSource ещё
+        // содержал исходный AeroBiomeSource с layer1==null (см. комментарий в
+        // getBiomeSource() выше) — ocean/river/lake/beach резолвинг молча
+        // пропускался для КАЖДОГО чанка при его первой генерации биомов.
+        // С многопоточной генерацией (C2ME) гонка проявлялась почти всегда,
+        // т.к. createBiomes разных чанков стартует параллельно раньше, чем
+        // fillFromNoise того же чанка успевает вызвать init(). init() сам
+        // содержит fast-path (randomState == lastRandomState) — повторный
+        // вызов отсюда безопасен и дешев.
+        init(randomState);
+        return super.createBiomes(randomState, blender, structureManager, chunk);
+    }
+
+    @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(
             Blender blender, RandomState randomState,
             StructureManager structureManager, ChunkAccess chunk) {

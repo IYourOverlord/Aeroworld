@@ -22,6 +22,18 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// ФИКС: на Windows платформенная кодировка javac по умолчанию — windows-1252
+// (или зависит от системной локали), а исходники содержат кириллицу в UTF-8.
+// Без явного encoding javac выдаёт "unmappable character" warnings и молча
+// заменяет повреждённые байты на '?' вместо падения сборки (BUILD SUCCESSFUL
+// печатается даже с сотнями таких warnings) — из-за этого любые строковые
+// литералы/комментарии с кириллицей рядом с изменённым кодом могли собраться
+// повреждёнными без явной ошибки, маскируя реальные причины расхождений
+// между исходником и скомпилированным классом.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 neoForge {
 
     version = project.neo_version
@@ -31,11 +43,11 @@ neoForge {
         minecraftVersion = project.parchment_minecraft_version
     }
 
-      runs {
+    runs {
         client {
             client()
 
-             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
         server {
@@ -44,7 +56,7 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
-           gameTestServer {
+        gameTestServer {
             type = "gameTestServer"
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
@@ -52,18 +64,18 @@ neoForge {
         data {
             data()
 
-                 programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
         }
 
         configureEach {
-                     systemProperty 'forge.logging.markers', 'REGISTRIES'
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
 
-              logLevel = org.slf4j.event.Level.DEBUG
+            logLevel = org.slf4j.event.Level.DEBUG
         }
     }
 
     mods {
-           "${mod_id}" {
+        "${mod_id}" {
             sourceSet(sourceSets.main)
         }
     }
