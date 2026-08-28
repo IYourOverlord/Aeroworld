@@ -39,7 +39,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class AeroWorldChunkGenerator extends ChunkGenerator {
+public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
     public static final MapCodec<AeroWorldChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(instance ->
             instance.group(
@@ -146,7 +146,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
                                    AeroWorldSettings settings) {
         super(biomeSource instanceof MultiNoiseBiomeSource mnbs
                 ? new AeroBiomeSource(mnbs)
-                : biomeSource);
+                : biomeSource, vanillaGenerator.generatorSettings());
         this.vanillaGenerator = vanillaGenerator;
         this.settings         = settings;
         // ИСПРАВЛЕНО (NPE "this.aeroSource is null" при создании мира):
@@ -581,23 +581,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         final int chunkMinY = chunk.getMinBuildHeight();
         final int chunkMaxY = chunk.getMaxBuildHeight();
 
-        Layer1FlatGenerator.BiomeResolver biomeResolver = buildBiomeResolver(randomState);
-
-        // Layer 1: Y -64..50
+        // Layer 1: делегируем ванильному NoiseBasedChunkGenerator целиком —
+        // полноценный overworld-рельеф (горы, 3D-пещеры, аквиферы, deepslate
+        // и т.д.) вместо самописного плоского заполнения. Ванильный генератор
+        // заполняет блоки в диапазоне своих noise settings (-64..320), блоки
+        // выше 320 не трогает — Layer 2/3/4 пишут поверх без конфликта.
         if (chunkMinY <= Layer1FlatGenerator.LAYER_MAX_Y
                 && chunkMaxY >= Layer1FlatGenerator.LAYER_MIN_Y) {
-            layer1.fillChunk(chunk, chunkX, chunkZ, biomeResolver);
-
-            // Вырезаем воздушную полость под структурами (см. StructureCavityCarver) —
-            // ДО этого момента рельеф Layer 1 залил сплошной камень везде, включая
-            // объём будущих jigsaw-структур (деревни, ancient_city и т.д.). Сама
-            // структура печатается позже, в applyBiomeDecoration → super() →
-            // StructureStart.placeInChunk, но заменяет камень только там, где стоят
-            // её пьесы — пространство МЕЖДУ пьесами (естественно открытое в
-            // оригинале) иначе остаётся сплошным камнем, и к каждой комнате
-            // приходится прокапываться. Carve здесь даёт структуре ту же "уже
-            // пористую" почву, которую в ваниле обеспечивает density-рельеф.
-            StructureCavityCarver.carveForChunk(chunk, structureManager, Layer1FlatGenerator.LAYER_MAX_Y);
+            vanillaGenerator.fillFromNoise(blender, randomState, structureManager, chunk).join();
 
             // Карстовые воронки под островами слоёв 2/3/4 — карвятся ПОСЛЕ
             // основного рельефа слоя 1, чтобы "прорезать" уже готовую землю,
@@ -668,7 +659,10 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     public void buildSurface(WorldGenRegion region, StructureManager structureManager,
                              RandomState random, ChunkAccess chunk) {
         init(random);
-        applyLayer1Surface(chunk, buildBiomeResolver(random));
+        // Делегируем ванильному генератору — правильные surface rules по
+        // биомам (снег, подзол, мицелий, гравийные берега, песок, терракота
+        // и т.д.) вместо упрощённых 3-х типов (grass/sand/badlands).
+        vanillaGenerator.buildSurface(region, structureManager, random, chunk);
     }
 
     private void applyLayer1Surface(ChunkAccess chunk, Layer1FlatGenerator.BiomeResolver biomeResolver) {

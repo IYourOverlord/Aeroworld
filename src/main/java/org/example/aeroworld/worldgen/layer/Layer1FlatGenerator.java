@@ -4,7 +4,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.LevelHeightAccessor;
-import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
@@ -390,38 +389,17 @@ public class Layer1FlatGenerator {
             return new ColumnProfile(BASE_SURFACE_Y, -1);
         }
 
-        NoiseColumn column = gen.getBaseColumn(wx, wz, VANILLA_COLUMN_HEIGHT, random);
+        // ЗАМЕНА getBaseColumn (см. диагностику из другой сессии: снаружи
+        // полного пайплайна генерации чанка getBaseColumn/iterateNoiseColumn
+        // у ванильного генератора не годится — метод protected и строит
+        // весь столбец без раннего выхода). VanillaColumnSampler напрямую
+        // воспроизводит ту же NoiseChunk/DensityFunction логику через
+        // публичный конструктор NoiseChunk, с top-down сканом и ранним
+        // выходом на первом твёрдом блоке.
+        VanillaColumnSampler.Result result = VanillaColumnSampler.sample(
+                gen, random, VANILLA_COLUMN_HEIGHT, wx, wz, LAYER_MIN_Y);
 
-        int minY = VANILLA_COLUMN_HEIGHT.getMinBuildHeight();
-        int maxY = minY + VANILLA_COLUMN_HEIGHT.getHeight() - 1;
-
-        // Сканируем СВЕРХУ ВНИЗ: первый непустой блок — либо вода (тогда
-        // это waterY, продолжаем искать дно ниже), либо сразу твёрдая
-        // порода (тогда это groundY, воды нет).
-        int waterY  = -1;
-        int groundY = LAYER_MIN_Y; // safety fallback, если колонка целиком воздух
-
-        for (int y = maxY; y >= minY; y--) {
-            BlockState state = column.getBlock(y);
-            if (state.isAir()) continue;
-
-            if (!state.getFluidState().isEmpty() && waterY == -1) {
-                // Верхний блок жидкости — фиксируем как поверхность воды и
-                // продолжаем сканировать вниз в поисках твёрдого дна.
-                waterY = y;
-                continue;
-            }
-            if (state.getFluidState().isEmpty()) {
-                // Первый по-настоящему твёрдый (не жидкий, не воздух) блок —
-                // это дно.
-                groundY = y;
-                break;
-            }
-            // Ещё жидкость ниже уже найденной поверхности воды (толща воды) —
-            // просто продолжаем спуск, дно ещё не найдено.
-        }
-
-        return new ColumnProfile(groundY, waterY);
+        return new ColumnProfile(result.groundY, result.waterY);
     }
 
     /**
