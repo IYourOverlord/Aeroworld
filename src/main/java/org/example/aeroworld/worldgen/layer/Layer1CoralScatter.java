@@ -47,10 +47,20 @@ public final class Layer1CoralScatter {
             for (int lz = 0; lz < 16; lz++) {
                 int wx = baseX + lx;
                 int wz = baseZ + lz;
-                if (!layer1.isBeachColumn(wx, wz)) continue;
+
+                // isBeachColumn (самописный шум) убран вместе с остальной
+                // кастомной водной маской (см. Layer1FlatGenerator, блок
+                // "Ванильный рельеф/вода") — "пляж" здесь теперь просто:
+                // сухая колонка (waterY == -1) с песком на поверхности,
+                // рядом с водой (nearWater ниже). Биом как таковой не
+                // проверяем — ванильная генерация сама кладёт песок только
+                // там, где это уместно (пляж/пустыня), этого достаточно как
+                // фильтра "тут вообще есть смысл ставить коралл".
+                Layer1FlatGenerator.ColumnProfile selfProfile = layer1.columnProfile(wx, wz);
+                if (selfProfile.waterY != -1) continue; // сама колонка не может быть под водой
                 if (!nearWater(layer1, wx, wz)) continue; // только у самой кромки, не по всему пляжу
 
-                int topY = layer1.surfaceHeight(wx, wz);
+                int topY = selfProfile.groundY;
                 pos.set(wx, topY, wz);
                 if (!chunk.getBlockState(pos).is(Blocks.SAND)) continue;
 

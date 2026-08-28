@@ -185,30 +185,6 @@ public class AeroBiomeSource extends BiomeSource {
     private static final int LAYER1_MAX_NOISE_Y =
             org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MAX_Y / 4;
 
-    // ── DEBUG (временно, убрать после диагностики) ────────────────────────
-    private static volatile long lastDebugLogMs = 0;
-    private static final long DEBUG_LOG_INTERVAL_MS = 1000;
-    private static final org.slf4j.Logger DEBUG_LOGGER =
-            org.slf4j.LoggerFactory.getLogger("AeroWorld/BiomeDebug");
-
-    // ── DEBUG (временно, убрать после диагностики) ────────────────────────
-    // isXxxColumn()==true (физически вода/пляж подтверждены), но findBiome
-    // не нашёл соответствующий клон в реестре — это ПРОВАЛ сквозь return:
-    // управление уходит в обычную климатическую таблицу ниже вместо воды.
-    // Если это логируется — AeroBiomeRegistryCache.get() реально не находит
-    // aeroworld:<name> даже после фикса ожидания реестра (либо биом
-    // отсутствует в датапаке, либо реестр так и не прогрелся за таймаут).
-    private static void logFindBiomeMiss(int bwx, int bwz, String kind, String name) {
-        long now = System.currentTimeMillis();
-        if (now - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
-            lastDebugLogMs = now;
-            DEBUG_LOGGER.info(
-                    "[AeroWorld][BiomeDebug] FINDBIOME MISS kind={} wx={} wz={} "
-                            + "id=aeroworld:{} (клон не найден в реестре — падаем в fallback)",
-                    kind, bwx, bwz, name);
-        }
-    }
-
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
         // Островные слои (выше Layer 1) — делегируем ванили
@@ -231,14 +207,13 @@ public class AeroBiomeSource extends BiomeSource {
             }
         }
 
-        // Считаем температуру заранее — нужна и для океана (вариант по
-        // температуре: warm/lukewarm/ocean/cold/frozen), и для обычной
-        // климатической таблицы ниже. Одно вычисление, не дублируем fbm2D.
-        double temp = tempNoise.fbm2D(wx * TEMP_SCALE, wz * TEMP_SCALE, 4, 2.0, 0.5);
-
         // Кольцевые горные долины (см. Layer1FlatGenerator) гарантированно
         // получают forest/cherry_grove — независимо от того, что выпало бы
-        // по обычной климатической таблице ниже.
+        // по обычной климатической таблице ниже. isInsideRingValley сейчас
+        // всегда false (см. Layer1FlatGenerator), но проверка оставлена как
+        // есть — это отдельная, не связанная с водой фича (см. ТЗ на
+        // переход водной маски на ванильную генерацию — ring-valley явно
+        // выведена из скоупа изменений).
         if (layer1 != null) {
             int bwx = (int) wx;
             int bwz = (int) wz;
@@ -247,117 +222,33 @@ public class AeroBiomeSource extends BiomeSource {
                 Optional<Holder<Biome>> forcedBiome =
                         findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", forced));
                 if (forcedBiome.isPresent()) return forcedBiome.get();
-            } else if (layer1.isBeachColumn(bwx, bwz)) {
-                // Пляж переходит либо в обычный "beach", либо в "snowy_beach"
-                // в холодных широтах — как и в ваниле (snowy_beach требует
-                // холодного климата). Раньше snowy_beach был недостижим нигде.
-                String beachName = (temp < -0.32) ? "snowy_beach" : "beach";
-                Optional<Holder<Biome>> beach =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", beachName));
-                if (beach.isPresent()) return beach.get();
-                logFindBiomeMiss(bwx, bwz, "beach", beachName);
-            } else if (layer1.isOceanColumn(bwx, bwz)) {
-                // ── Океан: раньше физически была вода, но биом всегда
-                // резолвился в сухопутный (plains/forest/...) — из-за этого
-                // ВСЕ ocean-биомы были недостижимы, и структуры, привязанные
-                // к ним напрямую (ocean_monument, ocean_ruin_warm/cold,
-                // shipwreck), не могли заспавниться. Теперь биом синхронизирован
-                // с фактической водой из columnProfile через isOceanColumn/
-                // oceanDepth01 (та же формула, читается, не дублирует рельеф).
-                double depth01 = layer1.oceanDepth01(bwx, bwz);
-                boolean deep = depth01 > 0.55; // ближе к OCEAN_DEEP_AT → deep_*
-                String oceanName;
-                if (temp < -0.32)      oceanName = deep ? "deep_frozen_ocean"   : "frozen_ocean";
-                else if (temp < -0.096) oceanName = deep ? "deep_cold_ocean"    : "cold_ocean";
-                else if (temp <  0.096) oceanName = deep ? "deep_ocean"         : "ocean";
-                else if (temp <  0.32)  oceanName = deep ? "deep_lukewarm_ocean": "lukewarm_ocean";
-                else                    oceanName = "warm_ocean"; // тёплый океан не бывает "deep_" в ваниле
-                Optional<Holder<Biome>> ocean =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", oceanName));
-                if (ocean.isPresent()) return ocean.get();
-                logFindBiomeMiss(bwx, bwz, "ocean", oceanName);
-            } else if (layer1.isRiverColumn(bwx, bwz) || layer1.isLakeColumn(bwx, bwz)) {
-                // Река ИЛИ озеро: у ванили нет отдельного биома "озеро" —
-                // маленькие пруды в ваниле просто наследуют биом суши вокруг
-                // (без seagrass). Но здесь озёра из columnProfile — крупные,
-                // самостоятельные водоёмы (см. LAKE_THRESHOLD), а не мелкие
-                // decoration-пруды, поэтому логичнее обращаться с ними как с
-                // рекой: тот же river/frozen_river биом — у него уже есть
-                // seagrass_river в фичах. Раньше isLakeColumn не существовал
-                // вовсе, и озёра проваливались в обычную климатическую
-                // таблицу (plains/meadow/forest/...) — без единой водной
-                // фичи, отсюда голое дно под озёрами.
-                String riverName = (temp < -0.32) ? "frozen_river" : "river";
-                Optional<Holder<Biome>> river =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", riverName));
-                if (river.isPresent()) return river.get();
-                logFindBiomeMiss(bwx, bwz, "river/lake", riverName);
-            } else if (layer1.isStrandedShallowColumn(bwx, bwz)) {
-                // "Случайная лужа" — landHeight провалился ниже WATER_LEVEL
-                // сам по себе (шум continentalness/roughness), без участия
-                // ocean/river/lake шумов (см. columnProfile — страховка от
-                // сухой суши ниже уровня воды). columnProfile честно ставит
-                // туда физическую воду, но раньше биом не совпадал вообще
-                // никак — оставался сухопутным. Трактуем как мелкий ocean/
-                // lukewarm_ocean по температуре, чтобы у воды тоже была хоть
-                // какая-то подводная фича вместо голого дна.
-                String shallowName = (temp < -0.096) ? "ocean" : "lukewarm_ocean";
-                Optional<Holder<Biome>> shallow =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", shallowName));
-                if (shallow.isPresent()) return shallow.get();
-                logFindBiomeMiss(bwx, bwz, "stranded", shallowName);
-            } else if (layer1.debugLandHeight(bwx, bwz) < org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.WATER_LEVEL) {
-                // ── DEBUG (временно) ──────────────────────────────────────
-                // Физически вода (landHeight < WATER_LEVEL), но НИ ОДНА из
-                // веток ocean/river/lake/beach/stranded выше не сработала.
-                // Не должно происходить по логике columnProfile — если это
-                // сработало, значит есть расхождение между computeLandHeight
-                // здесь и тем, что реально решает isOceanColumn/isLakeColumn/
-                // isStrandedShallowColumn. Throttled, раз в секунду.
-                long nowMs = System.currentTimeMillis();
-                if (nowMs - lastDebugLogMs >= DEBUG_LOG_INTERVAL_MS) {
-                    lastDebugLogMs = nowMs;
-                    DEBUG_LOGGER.info(
-                            "[AeroWorld][BiomeDebug] UNHANDLED WATER wx={} wz={} landHeight={} "
-                                    + "WATER_LEVEL={} isBeach={} isOcean={} isRiver={} isLake={} "
-                                    + "isStranded={} oceanN={} oceanW={}",
-                            bwx, bwz, layer1.debugLandHeight(bwx, bwz),
-                            org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.WATER_LEVEL,
-                            layer1.isBeachColumn(bwx, bwz), layer1.isOceanColumn(bwx, bwz),
-                            layer1.isRiverColumn(bwx, bwz), layer1.isLakeColumn(bwx, bwz),
-                            layer1.isStrandedShallowColumn(bwx, bwz),
-                            layer1.debugOceanN(bwx, bwz), layer1.debugOceanW(bwx, bwz));
-                }
             }
         }
 
-        double hum  = humNoise .fbm2D(wx * HUM_SCALE,  wz * HUM_SCALE,  4, 2.0, 0.5);
-        double rare = rareNoise.fbm2D(wx * TEMP_SCALE * 1.5, wz * HUM_SCALE * 1.5, 2, 2.0, 0.5);
-
-        // ── Квантильное распределение индексов ───────────────────────────────
-        // Perlin FBM возвращает значения с нормальным (гауссовым) распределением,
-        // std ≈ 0.38. Линейное t = (v+1)/2 даёт крайним индексам (desert/frozen)
-        // лишь ~6% площади. Квантильный метод: делим нормальное распределение
-        // на 5 равных квантилей → каждый биомный пояс ровно ~20% площади.
+        // ── Вода/пляж/океан/река/озеро для Layer 1 ────────────────────────
+        // РАНЬШЕ здесь стояла отдельная, независимая от physical-рельефа
+        // ветка (isOceanColumn/isRiverColumn/isLakeColumn/isBeachColumn/
+        // isStrandedShallowColumn читали СВОЙ собственный кастомный шум
+        // Layer1FlatGenerator) — параллельная система, которая регулярно
+        // расходилась с тем, что реально стоит физически (см.
+        // NEXT_SESSION_PROMPT.md: то биом резолвился в лес прямо в воде, то
+        // ocean-биом покрывал только часть физической воды).
         //
-        // Границы квантилей FBM(std=0.38): -0.32 / -0.096 / 0.096 / 0.32
-        int ti = quantileIndex5(temp);
-        int hi = quantileIndex3(hum);
-        double r = (rare + 1.0) * 0.5;   // для редких достаточно линейного
-
-        String biomeName = (r > RARE_THRESHOLD) ? RARE_TABLE[ti][hi] : BIOME_TABLE[ti][hi];
-
-        // ВАЖНО: слой 1 (поверхность) теперь резолвится в наши клоны aeroworld:*,
-        // а НЕ в ванильные minecraft:*. У клонов NeoForge biome modifier
-        // (data/aeroworld/neoforge/biome_modifier/remove_ores.json) вырезал
-        // все placed_feature руды из generation settings ещё на этапе загрузки
-        // датапака — то есть руда физически не значится в списке фич биома
-        // и просто не пытается разместиться, а не "спавнится и потом чистится".
-        // Реальный minecraft:plains (используемый настоящим Overworld) при этом
-        // не тронут — модификатор целится только в тег #aeroworld:aero_biomes.
-        return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", biomeName))
-                .orElseGet(() -> findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains"))
-                        .orElseGet(() -> delegateWithSafety(x, 20, z, sampler)));
+        // ТЕПЕРЬ (после перехода Layer1FlatGenerator.columnProfile на
+        // ванильный NoiseBasedChunkGenerator — см. Layer1FlatGenerator, блок
+        // "Ванильный рельеф/вода") И физическая вода, И биом для одной и той
+        // же колонки (wx,wz) читаются из ОДНОГО и того же ванильного
+        // источника: расхождение структурно невозможно. delegateWithSafety
+        // — тот же вызов, что уже используется для островных слоёв выше
+        // LAYER1_MAX_NOISE_Y (см. ветку `if (y > LAYER1_MAX_NOISE_Y)` в
+        // начале метода) — ванильный Climate.Sampler здесь уже реальный
+        // (не заглушка с нулями, вопреки старому FIX-комментарию класса —
+        // см. RandomState в AeroWorldChunkGenerator.buildBiomeResolver,
+        // тот же sampler питает и физический рельеф через
+        // Layer1FlatGenerator.setVanillaSource), поэтому ocean/river/beach/
+        // ...биом, который он вернёт, будет ТОЧНО тем же местом, где
+        // physически стоит вода/песок.
+        return delegateWithSafety(x, y, z, sampler);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

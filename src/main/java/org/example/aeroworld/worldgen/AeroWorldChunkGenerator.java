@@ -210,6 +210,13 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private void init(RandomState randomState) {
         if (randomState == lastRandomState) return; // fast-path: same instance → already initialised
         initializeWithSeed(seedFrom(randomState));
+        // Прокидываем ванильный генератор + актуальный RandomState в Layer1 —
+        // источник истины высоты/воды после перехода на ванильный рельеф
+        // (см. Layer1FlatGenerator, блок "Ванильный рельеф/вода"). layer1
+        // уже создан выше, внутри initializeWithSeed().
+        if (layer1 != null) {
+            layer1.setVanillaSource(vanillaGenerator, randomState);
+        }
         lastRandomState = randomState;
     }
 
@@ -243,16 +250,22 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
     @Override public int getMinY()     { return -64; }
     @Override public int getGenDepth() { return 2164; }
-    // ИСПРАВЛЕНО: было захардкожено -1 — практически "океана нет" для всех
-    // ванильных систем, завязанных на getSeaLevel() (структуры типа
-    // ocean_monument, размещение подводной растительности/кораллов через
-    // плейсмент-модификаторы фич, туман/рендер клиента и т.д.). Реальный
-    // мировой уровень воды генератора — WATER_LEVEL=44 в Layer1FlatGenerator
-    // (тот самый, что заливает океаны/реки/озёра). Несовпадение этих двух
-    // чисел — вероятная причина, почему на дне океана не появлялись
-    // seagrass/kelp/коралл: часть ванильной фиче-плейсмент логики тихо
-    // считала мир "безводным" и отбраковывала подводные фичи.
-    @Override public int getSeaLevel() { return Layer1FlatGenerator.WATER_LEVEL; }
+    // ИСПРАВЛЕНО (история): было захардкожено -1 — практически "океана нет"
+    // для всех ванильных систем, завязанных на getSeaLevel() (ocean_monument,
+    // размещение подводной растительности/кораллов, туман/рендер клиента).
+    //
+    // ОБНОВЛЕНО (переход Layer1FlatGenerator на ванильный рельеф/воду —
+    // см. Layer1FlatGenerator, блок "Ванильный рельеф/вода"): физическая
+    // вода Layer 1 теперь строится тем же vanillaGenerator, что и
+    // возвращает getSeaLevel() — берём уровень моря НАПРЯМУЮ у него, а не у
+    // устаревшей константы Layer1FlatGenerator.WATER_LEVEL (=44), которая
+    // была уровнем воды старой самописной системы и с новым (ванильным,
+    // обычно 63) рельефом уже не совпадает. Несовпадение этих двух чисел —
+    // тот же класс бага, что и раньше: часть ванильной фиче-плейсмент
+    // логики может тихо считать мир "безводным на этом Y" и отбраковывать
+    // подводные фичи, если getSeaLevel() расходится с фактическим уровнем
+    // воды в рельефе.
+    @Override public int getSeaLevel() { return vanillaGenerator.getSeaLevel(); }
 
     /**
      * Возвращает высоту верхней поверхности в колонке (x, z).

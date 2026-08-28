@@ -3,9 +3,13 @@ package org.example.aeroworld.worldgen.layer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.RandomState;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 
 
@@ -205,628 +209,64 @@ public class Layer1FlatGenerator {
         canyonNoise   = new AeroNoise(worldSeed ^ SEED_CANYON);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // ЭТАП 1 — Многослойный noise router (см. ТЗ "переход генератора рельефа
-    // AeroWorld на многослойный noise router").
-    //
-    // Архитектура по образцу Minecraft 1.18+ density functions: несколько
-    // НЕЗАВИСИМЫХ низкочастотных скалярных полей шума + явные spline-таблицы
-    // (input, output), которые их комбинируют в итоговую высоту. Значение
-    // высоты в любой точке (wx, wz) — ЧИСТАЯ функция этих полей, без понятия
-    // "региональная ячейка"/"архетип" и без блендинга между ячейками (то,
-    // что раньше упиралось в CELL_BLEND_WIDTH/homeRidge-подавление, теперь
-    // отсутствует как класс проблем — рельеф везде считается одной и той же
-    // формулой).
-    //
-    // Что удалено БЕЗВОЗВРАТНО этапом 1 (не восстанавливается этапом 2):
-    //   • Региональные архетипы хребтов (PARALLEL/RING/ALPINE/PLATEAU/
-    //     TERRACE/SHATTERED) и вся система CELL_SIZE-ячеек — они и были
-    //     источником швов.
-    //
-    // ЭТАП 2 (см. ТЗ, "Этап 2 — Реки, каньоны, побережья, мелкие детали
-    // поверх основы") ЗАВЕРШЁН:
-    //   • Каньон (CANYON_*, см. applyCanyonModifier) — вернулся не как
-    //     региональная фича со своими ячейками, а как модификатор,
-    //     читающий erosion/PV: появляется там, где erosion экстремально
-    //     низкий И PV высокий — ландшафт и так предрасположен к резким
-    //     формам. Меандр/переменная ширина/осыпной шлейф (CANYON_TALUS_*)
-    //     перенесены как есть из старой региональной системы.
-    //   • Река (см. riverEligibility) — вместо постфактум-отталкивания
-    //     riverMountainRepel() теперь честный множитель вероятности
-    //     riverEligibility(PV, erosion) прямо в формуле ширины реки:
-    //     рекам физически "не из чего" течь на настоящем пике.
-    //   • Побережье/океан/озеро (п.2.3 ТЗ) — специальный код НЕ упрощался
-    //     дополнительно: дно/глубина уже строятся от continentalness через
-    //     BASE_BY_CONTINENTALNESS (низкий continentalness → физически
-    //     низкая суша), а SHORE_BLEND/BEACH_LEDGE-код продолжает работать
-    //     как раньше без отдельных "особых случаев" под горы. Озеро
-    //     (lakeN) остаётся отдельным независимым полем, как и в ТЗ.
-    // ══════════════════════════════════════════════════════════════════════════
-
-    // ── Поле 1: continentalness ──────────────────────────────────────────
-    // "Насколько вглубь материка": -1 = океан/побережье, +1 = глубокий
-    // материк. Самая низкая частота в файле — континенты должны быть
-    // КРУПНЕЕ прежних океанских пятен (raw fbm2D диапазон примерно ±0.7 при
-    // 4 октавах, нормализуем делением на NORM ниже до ~[-1,1]).
-    private static final double CONTINENTALNESS_FREQ = 0.00050;
-    private static final int    CONTINENTALNESS_OCTAVES = 4;
-    private static final double CONTINENTALNESS_NORM  = 0.75; // делитель raw fbm -> примерно [-1,1]
-
-    // ── Поле 2: erosion ────────────────────────────────────────────────
-    // "Насколько рельеф сглажен": +1 = плоские равнины, -1 = резкий,
-    // изрезанный рельеф с большим разбросом высот. Частота выше, чем у
-    // continentalness, но ниже, чем у PV — своя, независимая, отдельный seed.
-    private static final double EROSION_FREQ    = 0.0018;
-    private static final int    EROSION_OCTAVES = 3;
-    private static final double EROSION_NORM    = 0.72;
-
-    // ── Поле 3: peaksAndValleys (PV) ──────────────────────────────────────
-    // Локальная "пикообразность" [-1,1]: -1 глубокая долина, 0 предгорья,
-    // +1 острый пик. Более высокая частота, чем у erosion — формирует
-    // силуэт отдельных гор/долин напрямую (замена mountainMask+ridge).
-    private static final double PV_FREQ    = 0.0055;
-    private static final int    PV_OCTAVES = 4;
-
-    // ── Поле 4: weirdness ──────────────────────────────────────────────
-    // Вспомогательное поле для асимметрии PV — тот же приём, что в ваниле:
-    // PV' = 1 - |3|weirdness| - 2|. Собственная частота/seed, независимая
-    // от остальных трёх полей.
-    private static final double WEIRDNESS_FREQ    = 0.0027;
-    private static final int    WEIRDNESS_OCTAVES = 3;
-    private static final double WEIRDNESS_NORM    = 0.72;
-
-    // ── Сплайн 1: baseByContinentalness(continentalness) → базовая высота ──
-    // Точки (x=continentalness, y=высота в блоках). BASE_SURFACE_Y=48 —
-    // текущая равнина при continentalness≈0, как и раньше.
-    private static final double[][] BASE_BY_CONTINENTALNESS = {
-            { -1.00, -40 },  // глубокий океан
-            { -0.55, -12 },  // шельф
-            { -0.30,  40 },  // берег
-            {  0.00,  48 },  // равнина = BASE_SURFACE_Y
-            {  0.40,  55 },  // предгорья
-            {  1.00,  60 },  // глубокий материк
-    };
-
-    // ── Сплайн 2: amplitudeByErosion(erosion) → амплитуда рельефа ─────────
-    // Высокая erosion (сглажено) => мало амплитуды; низкая (изрезано) =>
-    // максимальная амплитуда MAX_EXTRA_HEIGHT, как раньше у гор.
-    //
-    // ВАЖНО (см. ТЗ п.1.5, "Обязательная сверка новой шкалы высот со
-    // старой"): исходные (ориентировочные) точки этого сплайна были заданы
-    // по номинальному диапазону erosion [-1, 1] — том же, к которому
-    // формально приведён clamp11(). Но 3–4-октавный fbm2D практически
-    // никогда не достигает своих формальных границ: по факту разброс
-    // erosion на сетке в несколько тысяч блоков — p1≈-0.52, p99≈+0.54 (см.
-    // отчёт сверки ниже, п.1.5). Из-за этого точка "-1.00 → MAX_EXTRA_HEIGHT"
-    // была статистически недостижима, и итоговая высота никогда не
-    // приближалась к верхней границе AMPLITUDE_BY_EROSION.
-    //
-    // РЕШЕНИЕ (вариант 1 из ТЗ — подогнать точки сплайна под старый
-    // диапазон, не трогая остальной код): точки пересчитаны так, чтобы
-    // экстремумы попадали на РЕАЛЬНО достижимые перцентили erosion
-    // (≈p1/p99), а не на формальные ±1, которые почти никогда не
-    // случаются. Структура сплайна не изменилась — только координаты x.
-    private static final double[][] AMPLITUDE_BY_EROSION = {
-            { -0.55, MAX_EXTRA_HEIGHT },  // ≈p1 по факту — максимально изрезано
-            { -0.20, 150 },
-            {  0.00,  90 },               // средне
-            {  0.30,  30 },
-            {  0.55,   5 },               // ≈p99 по факту — почти плоско
-    };
-
-    // ── Сплайн 3: peakShape(PV) → форма пика [-0.2..1.0] ───────────────────
-    // Та же поправка, что и у AMPLITUDE_BY_EROSION (см. комментарий там):
-    // pvFinal (смесь "сырого" PV с weirdness-скорректированной версией)
-    // по факту укладывается примерно в [-0.40, +0.40] на p1..p99, а не
-    // в формальный [-1,1] — точки пересчитаны под реально достижимый
-    // диапазон, иначе полный пик (peakShape=1.0) почти никогда не
-    // применялся бы одновременно с максимальной амплитудой.
-    private static final double[][] PEAK_SHAPE_BY_PV = {
-            { -0.40, -0.20 }, // лёгкая ложбина
-            { -0.15,  0.00 },
-            {  0.00,  0.00 }, // средний рельеф/предгорья
-            {  0.25,  0.50 }, // предгорье
-            {  0.40,  1.00 }, // полный пик
-    };
-
-    // ── Этап 2, п.2.1: riverEligibility(PV, erosion) → сплайн [0..1] ──────
-    // "Насколько физически вероятна река в этой точке": близко к 1 в
-    // долинах/седловинах (PV около 0 или отрицательный, erosion высокий =
-    // мягкий рельеф), близко к 0 на настоящих пиках (PV близко к +1).
-    // Заменяет постфактум-отталкивание riverMountainRepel() (см. ТЗ п.2.1):
-    // рекам физически "не из чего" формироваться на пике — это множитель
-    // прямо в формуле ширины реки, а не заплатка поверх готового русла.
-    // Точки заданы в реально достижимом диапазоне PV (см. комментарий у
-    // PEAK_SHAPE_BY_PV/AMPLITUDE_BY_EROSION про p1/p99 fbm — тот же приём).
-    private static final double[][] RIVER_ELIGIBILITY_BY_PV = {
-            { -0.40, 1.00 },  // глубокая долина — река вероятна
-            {  0.00, 1.00 },  // седловина/предгорья — река всё ещё вероятна
-            {  0.20, 0.55 },  // начало склона — вероятность падает
-            {  0.40, 0.00 },  // настоящий пик — реке физически не из чего течь
-    };
-    // Дополнительный множитель от erosion: сильно изрезанный рельеф
-    // (низкий erosion) — тоже неблагоприятен для широкой реки (слишком
-    // резкие перепады), мягкий рельеф (высокий erosion) — благоприятен.
-    private static final double[][] RIVER_ELIGIBILITY_BY_EROSION = {
-            { -0.55, 0.35 },  // сильно изрезано — река возможна, но не гарантирована
-            {  0.00, 0.80 },
-            {  0.55, 1.00 },  // сглажено — идеально для широкой реки
-    };
-
-    // ── Этап 2, п.2.2: каньон как модификатор поверх основы ────────────
-    // Каньон появляется там, где erosion экстремально низкий (сильно
-    // изрезанный рельеф) И PV высокий (настоящая гора) — "вырезается"
-    // именно там, где ландшафт и так предрасположен к резким формам, а не
-    // в случайной региональной ячейке независимо от рельефа вокруг (см.
-    // ТЗ, старая система CELL_SIZE/hasCanyon упразднена этапом 1).
-    // Порог задан по тем же реально достижимым перцентилям, что и у
-    // AMPLITUDE_BY_EROSION/PEAK_SHAPE_BY_PV — иначе (как и с амплитудой)
-    // условие "erosion<-1 И pv>1" было бы недостижимо.
-    private static final double CANYON_EROSION_MAX = -0.30; // ниже — зона, где каньон МОЖЕТ появиться
-    private static final double CANYON_PV_MIN       =  0.15; // выше — тоже нужно для каньона
-    // Собственный низкочастотный шум "линии каньона" — определяет, где
-    // именно внутри подходящей (erosion/PV) зоны на самом деле пролегает
-    // линия ущелья, а не заливает канавой всю зону целиком.
-    private static final double CANYON_LINE_FREQ   = 0.0035;
-    private static final double CANYON_HALF_WIDTH  = 0.045; // ширина полосы |noise|<X — линия каньона
-    private static final double CANYON_BLEND       = 0.02;  // ширина плавного края
-    // Перенесено как есть из старой региональной системы (см. ТЗ п.2.2 —
-    // "меандр/переменная ширина/дно... переносится как есть, эта часть
-    // уже была признана рабочей"): извив линии каньона вдоль её длины.
-    private static final double CANYON_MEANDER_FREQ = 0.006;
-    private static final double CANYON_MEANDER_AMPL_NOISE = 0.03; // в единицах шума линии
-    // Дно каньона — на сколько блоков ниже базовой высоты рельефа в этой
-    // точке (не абсолютная отметка, в отличие от старого CANYON_FLOOR —
-    // так каньон одинаково глубок и на равнине, и у подножия горы).
-    private static final int CANYON_DEPTH = 46;
-    // Осыпной шлейф у края каньона — тот же приём, что был раньше
-    // (CANYON_TALUS_*), перенесён без переделки (см. ТЗ п.2.2).
-    private static final double CANYON_TALUS_MIN_RUN    = 34.0;
-    private static final double CANYON_TALUS_PER_DROP   = 0.85;
-    private static final double CANYON_TALUS_MAX_FACTOR = 0.55;
-
-    // ── Сплайн 4: roughnessSpline(erosion) → амплитуда мелкого шума ──────
-    // Заменяет старый roughFactor/hills01/FLATLAND_BUMP одной кривой: чем
-    // ниже erosion (изрезаннее регион), тем сильнее мелкая рябь поверх
-    // базовой сплайновой высоты.
-    private static final double[][] ROUGHNESS_BY_EROSION = {
-            { -1.00, 1.00 },  // сильно изрезано — максимум мелкого шума
-            {  0.00, 0.55 },
-            {  1.00, 0.15 },  // почти плоско — минимум ряби
-    };
-    // Амплитуда мелкого шума в блоках при roughnessSpline()=1.0 (масштабируется
-    // самой сплайн-кривой ниже 1.0 на равнинах). Заменяет старый FLATLAND_BUMP.
-    private static final double ROUGHNESS_MAX_AMPL = FLATLAND_BUMP;
-
-    /**
-     * Линейная интерполяция по явной таблице точек {@code (x, y)},
-     * ОТСОРТИРОВАННОЙ по x по возрастанию. За пределами диапазона таблицы —
-     * значение крайней точки (clamp), без экстраполяции.
-     *
-     * <p>Единственная точка входа для всех сплайнов этапа 1 — намеренно
-     * тривиальная реализация (линейная, не smoothstep), чтобы таблицы можно
-     * было калибровать по скриншотам без изменения структуры кода (см. ТЗ,
-     * п.5 общих принципов).
-     */
-    private static double splineLinear(double[][] points, double x) {
-        if (x <= points[0][0]) return points[0][1];
-        int last = points.length - 1;
-        if (x >= points[last][0]) return points[last][1];
-        for (int i = 0; i < last; i++) {
-            double x0 = points[i][0],     y0 = points[i][1];
-            double x1 = points[i + 1][0], y1 = points[i + 1][1];
-            if (x >= x0 && x <= x1) {
-                double t = (x1 == x0) ? 0.0 : (x - x0) / (x1 - x0);
-                return y0 + (y1 - y0) * t;
-            }
-        }
-        return points[last][1]; // недостижимо при отсортированной таблице
-    }
-
-    /**
-     * Всегда false на этапе 1 — кольцевые кальдеры (RidgeArchetype.RING)
-     * упразднены вместе со всей региональной системой архетипов (см. ТЗ,
-     * п.1.4). Метод оставлен как совместимая заглушка, т.к. вызывается
-     * извне из {@link org.example.aeroworld.worldgen.biome.AeroBiomeSource}
-     * (см. javadoc там же) — убирать сигнатуру без правки вызывающего кода
-     * нельзя. Вернётся к реальной логике, если на будущем этапе кольцевые
-     * низины будут пересажены на новую основу (сейчас в ТЗ не запланировано).
-     */
-    public boolean isInsideRingValley(int wx, int wz) {
-        return false;
-    }
-
-    /**
-     * См. {@link #isInsideRingValley} — не вызывается ни при каких условиях,
-     * пока {@link #isInsideRingValley} возвращает false, но сигнатура
-     * сохранена для совместимости с {@code AeroBiomeSource}.
-     */
-    public String ringValleyBiome(int wx, int wz) {
-        return "forest";
-    }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Высота поверхности (горы/холмы) — noise router (4 скалярных поля + сплайны)
+    // Ванильный рельеф/вода (замена самописного noise router'а высоты и
+    // водной маски — см. NEXT_SESSION_PROMPT.md, "заменить кастомную водную
+    // маску AeroWorld на ванильную генерацию воды/биомов", Вариант B).
+    //
+    // РЕШЕНИЕ (принято пользователем): вместо синхронизации ДВУХ независимых
+    // систем (самописная высота/вода + ванильный биом) — высота, вода И
+    // биом Layer 1 теперь читаются из ОДНОГО источника: настоящего
+    // NoiseBasedChunkGenerator (тот же ноут-раутер overworld, что уже
+    // используется как vanillaGenerator в AeroWorldChunkGenerator для
+    // Climate.Sampler/applyCarvers/spawnOriginalMobs). Расхождение между
+    // "где стоит вода" и "какой там биом" структурно невозможно, т.к. оба
+    // вопроса задаются одному и тому же генератору для одной и той же
+    // колонки (wx, wz).
+    //
+    // Цена решения (осознанно принята пользователем): самописные горы Layer 1
+    // (высота до Y=300, свои сплайны continentalness/erosion/PV/weirdness,
+    // каньоны, реки с riverEligibility и т.д.) — упразднены полностью.
+    // Рельеф теперь обычный ванильный overworld (высоты примерно до
+    // Y≈150-190, sea level=63). Пещеры/горные туннели/колонны/сталагмиты
+    // (FLOOR_*, CEIL_*, MTUN_*, COLUMN_*) НЕ затронуты — они читают только
+    // итоговый groundY из ColumnProfile, а не внутреннее устройство этого
+    // блока, поэтому продолжают работать поверх ванильной высоты без правок.
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Высота поверхности (верхний твёрдый блок) в колонке (wx, wz).
+     * Ванильный генератор рельефа (NoiseBasedChunkGenerator, overworld noise
+     * settings) — единственный источник истины для высоты/воды Layer 1.
+     * Прокидывается через {@link #setVanillaSource} из
+     * {@code AeroWorldChunkGenerator.init(RandomState)}, т.к. на момент
+     * конструктора {@code Layer1FlatGenerator} у нас есть только seed, а
+     * {@code RandomState}/{@code NoiseBasedChunkGenerator} появляются позже
+     * (см. {@code AeroWorldChunkGenerator.vanillaGenerator}, уже существующее
+     * поле — используем именно его, не создаём второй экземпляр).
      *
-     * <p>Этап 1 переход на noise router (см. ТЗ): вместо региональных ячеек
-     * и архетипов хребтов высота теперь — чистая функция четырёх независимых
-     * скалярных полей (continentalness, erosion, peaksAndValleys, weirdness)
-     * и явных spline-таблиц, которые их комбинируют:
-     *
-     * <pre>
-     *   height = baseByContinentalness(continentalness)
-     *          + amplitudeByErosion(erosion) * peakShape(PV')
-     * </pre>
-     *
-     * где PV' — peaksAndValleys, скорректированный weirdness по стандартной
-     * ванильной формуле {@code PV' = 1 - |3|weirdness| - 2|}, дающей PV
-     * асимметрию (пики не идеально симметричны относительно 0).
-     *
-     * <p>Пещеры/горные туннели (FLOOR_*, CEIL_*, MTUN_*) не тронуты — они
-     * читают только итоговый {@code groundY}, а не внутреннее устройство
-     * этого метода. Реки/озёра/океан (columnProfile) — с Этапа 2 читают
-     * erosion/PV этой же точки напрямую через {@link #computeTerrainFields}
-     * (riverEligibility), а не сравнивают только итоговую высоту
-     * постфактум; каньон встроен сюда же как модификатор высоты
-     * (см. {@link #applyCanyonModifier}).
-     *
-     * <p>ВАЖНО: этот метод — источник истины для высоты поверхности.
-     * {@code AeroWorldChunkGenerator} (getBaseHeight/getBaseColumn/
-     * applyLayer1Surface) и {@code TerrainColumnSampler} обязаны вызывать
-     * именно его, а не полагаться на старую константу SURFACE_Y — иначе
-     * height-map запросы, покраска поверхности и валидация структур разъедутся
-     * с фактическим рельефом, который рисует {@link #fillChunk}.
+     * <p>Может быть {@code null} в узком окне между конструктором
+     * {@code Layer1FlatGenerator} и первым вызовом {@code setVanillaSource}
+     * (например, если что-то дёрнет columnProfile до init()) — в этом случае
+     * {@link #columnProfile} отдаёт безопасный сухопутный fallback на
+     * {@code BASE_SURFACE_Y}, а не падает с NPE.
      */
-    /**
-     * Этап 2: 4 скалярных поля + итоговая высота суши в одной точке — то,
-     * что раньше вычислялось внутри {@link #computeLandHeight} и терялось
-     * сразу после return. Река/каньон (Этап 2, п.2.1/2.2 ТЗ) должны читать
-     * ИМЕННО erosion/PV этой же точки, а не считать шум заново вслепую —
-     * вынесено в отдельный record-подобный класс, чтобы 4 поля считались
-     * один раз и переиспользовались всеми потребителями (высота, река,
-     * каньон), без риска рассинхронизации формул.
-     */
-    private static final class TerrainFields {
-        final double continentalness, erosion, pvFinal;
-        final int landHeight;
-        TerrainFields(double continentalness, double erosion, double pvFinal, int landHeight) {
-            this.continentalness = continentalness;
-            this.erosion         = erosion;
-            this.pvFinal         = pvFinal;
-            this.landHeight      = landHeight;
-        }
-    }
-
-    /**
-     * Считает 4 скалярных поля noise router'а (Этап 1) + итоговую высоту
-     * суши (сплайны + roughness) для точки (wx, wz). Единственное место,
-     * где эти поля вычисляются — {@link #computeLandHeight} и Этап 2
-     * (река/каньон) вызывают именно этот метод, а не дублируют формулы.
-     */
-    private TerrainFields computeTerrainFields(int wx, int wz) {
-        // ── 4 независимых скалярных поля, каждое — свой участок частотного
-        //    спектра и свой офсет шума (дешёвый способ развести поля без
-        //    отдельных AeroNoise-инстансов на каждое, как уже принято в
-        //    этом файле для detailLarge/detailMed/detailFine и т.п.) ──────
-        double continentalnessRaw = heightNoise.fbm2D(
-                wx * CONTINENTALNESS_FREQ + 700000, wz * CONTINENTALNESS_FREQ + 700000,
-                CONTINENTALNESS_OCTAVES, 2.0, 0.5);
-        double continentalness = clamp11(continentalnessRaw / CONTINENTALNESS_NORM);
-
-        double erosionRaw = heightNoise.fbm2D(
-                wx * EROSION_FREQ + 800000, wz * EROSION_FREQ + 800000,
-                EROSION_OCTAVES, 2.0, 0.5);
-        double erosion = clamp11(erosionRaw / EROSION_NORM);
-
-        double pvRaw = heightNoise.fbm2D(
-                wx * PV_FREQ + 900000, wz * PV_FREQ + 900000,
-                PV_OCTAVES, 2.0, 0.5);
-        double pv = clamp11(pvRaw); // fbm2D уже отдаёт примерно [-1,1] при 4 октавах, доп. нормализация не нужна
-
-        double weirdnessRaw = heightNoise.fbm2D(
-                wx * WEIRDNESS_FREQ + 1000000, wz * WEIRDNESS_FREQ + 1000000,
-                WEIRDNESS_OCTAVES, 2.0, 0.5);
-        double weirdness = clamp11(weirdnessRaw / WEIRDNESS_NORM);
-
-        // Стандартная ванильная формула "peaks and valleys from weirdness":
-        // даёт асимметрию PV (пики острее долин, как в реальном рельефе)
-        // вместо идеально симметричного профиля вокруг 0.
-        double pvPrime = 1.0 - Math.abs(3.0 * Math.abs(weirdness) - 2.0);
-        // Смешиваем "сырой" PV с его weirdness-скорректированной версией —
-        // полностью заменять pv на pvPrime не нужно (PV и так несёт
-        // основную пространственную структуру силуэта), нужна только
-        // асимметрия поверх неё.
-        double pvFinal = clamp11(0.6 * pv + 0.4 * pvPrime);
-
-        // ── Сплайны: базовая высота + амплитуда * форма пика ────────────
-        double base      = splineLinear(BASE_BY_CONTINENTALNESS, continentalness);
-        double amplitude = splineLinear(AMPLITUDE_BY_EROSION, erosion);
-        double peakShape  = splineLinear(PEAK_SHAPE_BY_PV, pvFinal);
-
-        double landHeightD = base + amplitude * peakShape;
-
-        // ── roughnessSpline(erosion): мелкий шум поверх сплайновой высоты,
-        //    везде (в т.ч. на равнинах), но амплитуда зависит от erosion —
-        //    заменяет старые roughFactor/hills01/FLATLAND_BUMP одной кривой.
-        double roughness01 = splineLinear(ROUGHNESS_BY_EROSION, erosion);
-        double hillsRaw = heightNoise.fbm2D(wx * 0.02 + 3000, wz * 0.02 + 3000, 3, 2.0, 0.5);
-        landHeightD += hillsRaw * ROUGHNESS_MAX_AMPL * roughness01;
-
-        int h = (int) Math.round(landHeightD);
-
-        // ── Этап 2, п.2.2: каньон как модификатор поверх основы ─────────
-        // Каньон вырезается там, где erosion экстремально низкий (сильно
-        // изрезанный рельеф) И PV высокий (настоящая гора) — а не в
-        // случайной региональной ячейке независимо от рельефа вокруг
-        // (см. applyCanyonModifier).
-        h = applyCanyonModifier(wx, wz, erosion, pvFinal, h);
-
-        // Запас неба над самым высоким пиком — тот же приём, что и раньше
-        // (мягкий clamp не требуется здесь: сплайн AMPLITUDE_BY_EROSION уже
-        // ограничен MAX_EXTRA_HEIGHT сверху, поэтому итоговая высота не
-        // подходит к потолку слоя резко/линейно так, как это делал старый
-        // heightBoost у ALPINE/SHATTERED архетипов — их больше нет).
-        h = Math.min(h, LAYER_MAX_Y - PEAK_SKY_BUFFER);
-
-        return new TerrainFields(continentalness, erosion, pvFinal, h);
-    }
-
-    private int computeLandHeight(int wx, int wz) {
-        return computeTerrainFields(wx, wz).landHeight;
-    }
-
-    /** Классический smoothstep: 0 ниже edge0, 1 выше edge1, плавный переход между ними. */
-    private static double smoothstep(double edge0, double edge1, double x) {
-        double t = Math.max(0.0, Math.min(1.0, (x - edge0) / (edge1 - edge0)));
-        return t * t * (3.0 - 2.0 * t);
-    }
-
-    private static double lerp(double a, double b, double t) {
-        return a + (b - a) * t;
-    }
-
-    /** Зажимает x в диапазон [-1, 1] — используется полями noise router'а этапа 1. */
-    private static double clamp11(double x) {
-        return Math.max(-1.0, Math.min(1.0, x));
-    }
-
-    /**
-     * Этап 2, п.2.1: "насколько физически вероятна река в этой точке" —
-     * произведение двух независимых сплайнов от PV и erosion (оба в [0,1]).
-     * Домножается на ширину реки из шума (см. columnProfile), а не
-     * заменяет её — тот же итоговый эффект, что у riverMountainRepel()
-     * (река не пересекает пик), но как честный множитель вероятности в
-     * основе, а не постфактум-отталкивание уже сформированного русла.
-     */
-    private static double riverEligibility(double pvFinal, double erosion) {
-        double byPv      = splineLinear(RIVER_ELIGIBILITY_BY_PV, pvFinal);
-        double byErosion = splineLinear(RIVER_ELIGIBILITY_BY_EROSION, erosion);
-        return byPv * byErosion;
-    }
-
-    /**
-     * Этап 2, п.2.2: каньон как модификатор поверх основы (см. константы
-     * CANYON_* выше). Возвращает высоту, изменённую каньоном, если точка
-     * (wx, wz) физически подходит для каньона (erosion достаточно низкий
-     * И PV достаточно высокий) И попадает в полосу линии каньона по шуму;
-     * иначе возвращает {@code baseHeight} без изменений.
-     *
-     * <p>Меандр/переменная ширина/осыпной шлейф перенесены из старой
-     * региональной системы как есть (см. ТЗ п.2.2) — меняется только КАК
-     * выбирается, ГДЕ каньон есть (через erosion/PV, а не hasCanyon
-     * региональной ячейки).
-     */
-    private int applyCanyonModifier(int wx, int wz, double erosion, double pvFinal, int baseHeight) {
-        if (erosion > CANYON_EROSION_MAX || pvFinal < CANYON_PV_MIN) return baseHeight;
-
-        // Плавный вес "насколько эта точка вообще подходит под каньон" —
-        // 0 на границе порогов, до 1 при экстремальных erosion/PV — чтобы
-        // граница зоны каньона не была резкой ступенькой.
-        double eligibility = smoothstep(CANYON_EROSION_MAX, CANYON_EROSION_MAX - 0.20, erosion)
-                * smoothstep(CANYON_PV_MIN, CANYON_PV_MIN + 0.20, pvFinal);
-        if (eligibility <= 0.0) return baseHeight;
-
-        // ── Линия каньона: тот же приём, что у рек (|шум| < половина
-        //    ширины), но с собственной низкой частотой и меандром ─────────
-        double meander = canyonNoise.fbm2D(
-                wx * CANYON_MEANDER_FREQ + 40000, wz * CANYON_MEANDER_FREQ + 40000,
-                2, 2.0, 0.5) * CANYON_MEANDER_AMPL_NOISE;
-        double lineNoise = canyonNoise.fbm2D(
-                wx * CANYON_LINE_FREQ + 60000, wz * CANYON_LINE_FREQ + 60000,
-                4, 2.0, 0.5) + meander;
-        double dist = Math.abs(lineNoise);
-        double canyonW = smoothstep(CANYON_HALF_WIDTH + CANYON_BLEND, CANYON_HALF_WIDTH - CANYON_BLEND, dist);
-        canyonW *= eligibility;
-        if (canyonW <= 0.0) return baseHeight;
-
-        int canyonFloorY = baseHeight - CANYON_DEPTH;
-        int carved = (int) Math.round(baseHeight + (canyonFloorY - baseHeight) * canyonW);
-
-        // ── Осыпной шлейф у края (перенесено как есть из CANYON_TALUS_*,
-        //    см. ТЗ п.2.2): чем больше перепад высоты baseHeight-carved,
-        //    тем шире зона плавного "стекания" породы к дну, чтобы край
-        //    каньона не был отвесной стеной на всю глубину сразу. ────────
-        double drop = baseHeight - carved;
-        if (drop > 0 && canyonW > 0.0 && canyonW < 1.0) {
-            double talusRun = CANYON_TALUS_MIN_RUN + drop * CANYON_TALUS_PER_DROP;
-            double talusT = smoothstep(0.0, talusRun, drop) * CANYON_TALUS_MAX_FACTOR;
-            carved = (int) Math.round(lerp(carved, baseHeight, 1.0 - talusT));
-        }
-
-        return carved;
-    }
-
-
-    /**
-     * true, если (wx, wz) — часть переходной пляжной полосы у океана: суша,
-     * которая уже находится в зоне блендинга с океаном (см. columnProfile),
-     * но ещё не ушла под воду. Использует ТОЧНО ту же формулу, что и
-     * океанская ветка columnProfile, чтобы граница биома "aeroworld:beach"
-     * (см. AeroBiomeSource) совпадала с фактической полосой песка в рельефе.
-     */
-    public boolean isBeachColumn(int wx, int wz) {
-        int landHeight = computeLandHeight(wx, wz);
-        if (landHeight > WATER_MAX_LAND_Y) return false; // горы — пляжа не бывает
-
-        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-        double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
-        if (oceanW <= 0.15) return false; // далеко от океана вообще
-
-        double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
-        int bedDepth = OCEAN_MIN_DEPTH + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
-        int oceanFloorY = WATER_LEVEL - bedDepth;
-        int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
-
-        // Ещё суша (не ушла под уровень воды) — значит именно пляжная кромка,
-        // а не сам океан (тот уже отдельно обрабатывается в columnProfile).
-        return blendedY >= WATER_LEVEL;
-    }
-
-    /**
-     * Есть ли в точке (wx, wz) открытая океанская вода (не пляж, не река,
-     * не мелкое озеро)? Использует ТОЧНО ту же формулу, что и океанская
-     * ветка columnProfile/isBeachColumn — чтобы биом "aeroworld:*_ocean"
-     * (см. AeroBiomeSource) совпадал с фактической водой в рельефе.
-     *
-     * <p>Только чтение — не изменяет и не дублирует физическую генерацию
-     * рельефа, лишь переиспользует тот же 2D-шум для решения о биоме.
-     */
-    // ── DEBUG (временно, убрать после диагностики) ───────────────────────
-    /** Сырое значение океанского шума в точке — только для диагностики. */
-    public double debugOceanN(int wx, int wz) {
-        return heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-    }
-    /** Вес океана (0..1) в точке — только для диагностики. */
-    public double debugOceanW(int wx, int wz) {
-        double oceanN = debugOceanN(wx, wz);
-        return smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
-    }
-    /** landHeight в точке — только для диагностики. */
-    public int debugLandHeight(int wx, int wz) {
-        return computeLandHeight(wx, wz);
-    }
-
-    public boolean isOceanColumn(int wx, int wz) {
-        int landHeight = computeLandHeight(wx, wz);
-
-        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-        double oceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanN);
-        // ВАЖНО: раньше здесь стоял ранний выход `if (landHeight >
-        // WATER_MAX_LAND_Y) return false;` ДО проверки oceanW. Но
-        // columnProfile() намеренно разрешает океану подтапливать подножие
-        // высокой горы (см. комментарий у earlyOceanW в columnProfile —
-        // правка "гора обрывом уходит в воду"), т.е. landHeight ТАМ может
-        // быть выше WATER_MAX_LAND_Y и всё равно физически залит водой.
-        // Старая гейтинг-проверка это игнорировала: биом оставался сухим
-        // горным (windswept_hills/stony_peaks — без seagrass/coral в
-        // фичах), хотя рельеф был реально под водой → голое дно без
-        // водорослей/кораллов на затопленных склонах. Убрали гейтинг по
-        // landHeight, оставили только проверку oceanW — она уже сама по
-        // себе отсекает точки вдали от океана.
-        if (oceanW <= 0.0) return false;
-
-        double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
-        int bedDepth = OCEAN_MIN_DEPTH + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
-        int oceanFloorY = WATER_LEVEL - bedDepth;
-        int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
-        return blendedY < WATER_LEVEL;
-    }
-
-    /**
-     * Глубина океана в точке (wx, wz) как доля 0..1 (0 = мелко/у берега,
-     * 1 = максимальная глубина OCEAN_DEEP_AT). Вызывать только после
-     * {@link #isOceanColumn} вернувшего true — иначе результат не имеет
-     * смысла. Используется чтобы отличить обычный "aeroworld:ocean" от
-     * "aeroworld:deep_ocean" по фактической глубине воды в этой точке.
-     */
-    public double oceanDepth01(int wx, int wz) {
-        double oceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-        return smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
-    }
-
-    /**
-     * Есть ли в точке (wx, wz) река? Та же формула (включая Этап 2
-     * riverEligibility), что использует columnProfile для русла реки —
-     * только чтение, для решения о биоме.
-     */
-    public boolean isRiverColumn(int wx, int wz) {
-        TerrainFields f = computeTerrainFields(wx, wz);
-        int landHeight = f.landHeight;
-        if (landHeight > WATER_MAX_LAND_Y) return false;
-        if (isOceanColumn(wx, wz)) return false; // океан имеет приоритет, как и в columnProfile
-
-        double riverN    = heightNoise.fbm2D(wx * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
-        double riverDist = Math.abs(riverN);
-        double eligibility = riverEligibility(f.pvFinal, f.erosion);
-        double riverW = eligibility
-                * smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDist);
-        if (riverW <= 0.0) return false;
-
-        int riverFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
-        int blendedY = (int) Math.round(landHeight + (riverFloorY - landHeight) * riverW);
-        return blendedY < WATER_LEVEL;
-    }
-
-    /**
-     * Есть ли в точке (wx, wz) озеро? Та же формула (lakeN/lakeW), что
-     * использует columnProfile для русла озера — только чтение, для решения
-     * о биоме.
-     *
-     * ВАЖНО: до этого метода вообще не существовало — AeroBiomeSource
-     * проверял только isBeachColumn/isOceanColumn/isRiverColumn. Физически
-     * озёра (lakeW-ветка columnProfile) заливались водой исправно, а биом
-     * при этом падал в обычную климатическую таблицу (plains/forest/meadow/
-     * ...) — у таких биомов нет seagrass/kelp в фичах. Отсюда голое дно у
-     * озёр (см. скриншот: biome=aeroworld:meadow прямо под водой).
-     */
-    public boolean isLakeColumn(int wx, int wz) {
-        TerrainFields f = computeTerrainFields(wx, wz);
-        int landHeight = f.landHeight;
-        if (landHeight > WATER_MAX_LAND_Y) return false;
-        if (isOceanColumn(wx, wz)) return false;  // океан имеет приоритет, как и в columnProfile
-        if (isRiverColumn(wx, wz)) return false;  // река имеет приоритет, как и в columnProfile
-
-        double lakeN = heightNoise.fbm2D(wx * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
-        double lakeW = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeN);
-        if (lakeW <= 0.0) return false;
-
-        int lakeFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
-        int blendedY = (int) Math.round(landHeight + (lakeFloorY - landHeight) * lakeW);
-        return blendedY < WATER_LEVEL;
-    }
-
-    /**
-     * Страховочный случай из columnProfile: ни одно из ocean/river/lake не
-     * сработало, но landHeight всё равно провалился ниже WATER_LEVEL (см.
-     * columnProfile — независимость continentalness-шума от oceanN/riverN/
-     * lakeN). columnProfile в этом случае честно ставит мелководье, но
-     * биом остаётся сухопутным без подводных фич. Открытый метод, чтобы
-     * AeroBiomeSource мог отличить такие "случайные лужи" и тоже завести
-     * им океанический биом (мелкий "ocean"/lukewarm — по аналогии с
-     * дежурным мелководьем, а не оставлять их голыми и без биома).
-     */
-    public boolean isStrandedShallowColumn(int wx, int wz) {
-        if (isOceanColumn(wx, wz) || isRiverColumn(wx, wz) || isLakeColumn(wx, wz)) return false;
-        return computeLandHeight(wx, wz) < WATER_LEVEL;
-    }
+    private volatile NoiseBasedChunkGenerator vanillaSource;
+    private volatile RandomState vanillaRandomState;
 
     /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */
     public static final class ColumnProfile {
-        /** Верхний твёрдый блок (дно реки/озера, если waterY != -1; иначе сама поверхность). */
+        /** Верхний твёрдый блок (дно реки/озера/океана, если waterY != -1; иначе сама поверхность). */
         public final int groundY;
         /** Y поверхности воды, или -1 если это суша. */
         public final int waterY;
         /**
-         * true — колонка попадает в узкую прибрежную полосу (BEACH_EDGE_WIDTH +
-         * BEACH_LEDGE_WIDTH от уреза воды), где рельеф прижат к ступенчатому
-         * профилю applyBeachFlat. Используется fillChunk/applyLayer1Surface,
-         * чтобы вместо монолитного песка оставить только тонкую непроницаемую
-         * линию у воды, а под ней — полую полость (см. SHORE_HOLLOW_DEPTH).
-         * Для суши без водоёма рядом (applyBeachFlat не вызывался) — всегда false.
+         * true — колонка попадает в узкую прибрежную полосу с полой полостью
+         * под тонкой линией песка (см. SHORE_HOLLOW_DEPTH в fillChunk). Это
+         * была специфика самописного пляжного профиля applyBeachFlat —
+         * ванильный рельеф такого явления не знает, поэтому всегда false.
+         * fillChunk корректно обрабатывает isShoreEdge=false как обычный
+         * монолитный берег (ветка hollowShore просто никогда не срабатывает).
          */
         public final boolean isShoreEdge;
 
@@ -842,279 +282,146 @@ public class Layer1FlatGenerator {
     }
 
     /**
-     * Прижимает высоту суши рядом с кромкой воды к ступенчатому профилю —
-     * см. константы BEACH_EDGE_ BEACH_LEDGE_*. Вызывать сразу после
-     * вычисления blendedY (суша, ещё выше уровня воды) в океан/река/озеро
-     * ветках {@link #columnProfile}.
-     *
-     * <p>Расстояние до уреза воды оценивается ГЕОМЕТРИЧЕСКИ (в блоках по
-     * XZ), а не по перепаду высоты — иначе на крутом берегу высотная
-     * эвристика недооценивала бы расстояние. Оценка через локальный
-     * градиент weight: если между точкой (wx,wz) и точкой в 1 блоке в
-     * сторону суши weight падает на Δw, то grad = Δw / 1, и полный переход
-     * (Δw=1) занимает примерно 1/grad блоков — линеаризация плавного
-     * smoothstep-порога.
-     *
-     * <p>Профиль по расстоянию от уреза, три зоны подряд:
-     * <ol>
-     *   <li>0..BEACH_EDGE_WIDTH (1 блок) — высота ЖЁСТКО BEACH_EDGE_Y,
-     *       вровень с водой, касается её.</li>
-     *   <li>BEACH_EDGE_WIDTH..+BEACH_LEDGE_WIDTH (6 блоков) — высота
-     *       ЖЁСТКО BEACH_LEDGE_Y, на 1 блок ниже первой линии (уже под
-     *       уровнем воды) — сюда вода может растекаться, если займёт
-     *       место песка, не упираясь в стену.</li>
-     *   <li>дальше, на протяжении BEACH_LEDGE_BLEND — плавный (smoothstep)
-     *       подъём от BEACH_LEDGE_Y обратно к обычной высоте суши.</li>
-     * </ol>
-     *
-     * @param blendedY  высота суши, уже посчитанная обычным способом
-     * @param weight    вес воды в этой точке (0..1) — oceanW/riverW/lakeW
-     * @param gradX     |d(weight)/dx| — конечная разность на 1 блок по X
-     * @param gradZ     |d(weight)/dz| — конечная разность на 1 блок по Z.
-     *                  Берём ПОЛНУЮ 2D-норму градиента, а не только вдоль
-     *                  X — если береговая линия идёт по диагонали, градиент
-     *                  вдоль одной оси занижен относительно истинного
-     *                  градиента по нормали к берегу, и оценка расстояния
-     *                  через него завышается (карниз "растягивается" на
-     *                  местности сильнее заданных 6 блоков — именно это
-     *                  было видно на скриншоте: широкая плоская зона у
-     *                  воды без чёткой ступени).
-     **/
-    /** Результат {@link #applyBeachFlat}: итоговая высота + признак "это узкая
-     *  прибрежная полоса" (в пределах BEACH_EDGE_WIDTH+BEACH_LEDGE_WIDTH от
-     *  уреза воды), которую fillChunk/applyLayer1Surface должны делать полой
-     *  внутри (см. SHORE_HOLLOW_DEPTH). */
-    private static final class BeachFlatResult {
-        final int y;
-        final boolean isShoreEdge;
-        BeachFlatResult(int y, boolean isShoreEdge) {
-            this.y = y;
-            this.isShoreEdge = isShoreEdge;
-        }
-    }
+     * Диапазон Y для запроса {@code getBaseColumn} — должен покрывать весь
+     * реальный диапазон ванильного overworld (-64..320), а не только
+     * LAYER_MIN_Y..LAYER_MAX_Y слоя 1: даже если мы читаем только нижнюю
+     * часть колонки, NoiseBasedChunkGenerator.getBaseColumn/iterateNoiseColumn
+     * ожидает диапазон, согласованный с его собственными noise settings
+     * (clampToHeightAccessor), иначе смещает сетку интерполяции.
+     */
+    private static final LevelHeightAccessor VANILLA_COLUMN_HEIGHT = new LevelHeightAccessor() {
+        @Override public int getMinBuildHeight() { return -64; }
+        @Override public int getHeight()         { return 384; }
+    };
 
-    private BeachFlatResult applyBeachFlat(int blendedY, double weight, double gradX, double gradZ) {
-        double gradPerBlock = Math.sqrt(gradX * gradX + gradZ * gradZ);
-        if (weight <= 0.0 || gradPerBlock <= 1e-6) return new BeachFlatResult(blendedY, false);
-
-        // Расстояние вглубь суши от точки, где weight пересекает "линию
-        // уреза" — см. подробное объяснение в javadoc выше.
-        double distanceBlocks = weight / gradPerBlock;
-
-        if (distanceBlocks <= BEACH_EDGE_WIDTH) {
-            // Первая линия — вровень с водой, касается её напрямую.
-            return new BeachFlatResult(Math.min(blendedY, BEACH_EDGE_Y), true);
-        }
-
-        double ledgeEnd = BEACH_EDGE_WIDTH + BEACH_LEDGE_WIDTH;
-        if (distanceBlocks <= ledgeEnd) {
-            // Карниз — жёстко на 1 блок ниже первой линии, никакого
-            // смешивания с исходной blendedY. Это и даёт видимое
-            // понижение рельефа сразу после береговой кромки, а не просто
-            // отодвинутую вглубь линию воды.
-            return new BeachFlatResult(Math.min(blendedY, BEACH_LEDGE_Y), true);
-        }
-
-        // ── Адаптивная ширина подъёма от карниза к полной высоте суши ────────
-        // Раньше BEACH_LEDGE_BLEND (фиксированные 3 блока) использовался
-        // напрямую как ширина smoothstep-перехода — независимо от того,
-        // насколько высоко нужно подняться. У равнины (blendedY ~50-60)
-        // это давало пологий подъём и смотрелось нормально. Но у подножия
-        // высокой горы рядом с водой (blendedY может быть 150-250+) те же
-        // 3 блока означали подъём на сотню с лишним блоков практически
-        // вертикально — ровная "стена" из голой породы прямо у кромки
-        // воды (см. баг-репорт со скриншотом: терракота/камень обрывом
-        // у подножия горы).
-        //
-        // Растягиваем зону пропорционально перепаду высоты: чем выше нужно
-        // подняться от карниза до blendedY, тем шире (в блоках) должна быть
-        // зона перехода, чтобы угол склона оставался физически разумным.
-        // BEACH_LEDGE_BLEND остаётся минимальной шириной (для низких
-        // равнинных берегов ничего не меняется), риск-фактор HEIGHT_TO_
-        // BLEND_RATIO задаёт максимальный "уклон" подъёма в блоках
-        // перехода на 1 блок высоты.
-        double heightToClimb = Math.max(0.0, blendedY - BEACH_LEDGE_Y);
-        double adaptiveBlend = Math.max(BEACH_LEDGE_BLEND, heightToClimb * BEACH_LEDGE_HEIGHT_RATIO);
-
-        double blendDist = distanceBlocks - ledgeEnd; // 0 сразу после карниза
-        if (blendDist >= adaptiveBlend) return new BeachFlatResult(blendedY, false); // уже обычный рельеф
-
-        // Плавный подъём от карниза к обычной высоте суши — это уже НЕ узкая
-        // кромка, isShoreEdge = false (тут рельеф обычный монолит, никакой
-        // полости под ним быть не должно).
-        double riseT = smoothstep(0.0, adaptiveBlend, blendDist);
-        int blended = (int) Math.round(lerp(BEACH_LEDGE_Y, blendedY, riseT));
-        return new BeachFlatResult(Math.min(blendedY, blended), false);
+    /**
+     * Вызывается из {@code AeroWorldChunkGenerator.init(RandomState)} при
+     * каждой (пере)инициализации seed/мира — дешёвый no-op при повторном
+     * вызове с тем же {@code RandomState} (см. fast-path в вызывающем коде).
+     */
+    public void setVanillaSource(NoiseBasedChunkGenerator vanillaGenerator, RandomState randomState) {
+        this.vanillaSource      = vanillaGenerator;
+        this.vanillaRandomState = randomState;
     }
 
     /**
-     * Полный профиль колонки (wx, wz): высота дна + есть ли вода сверху.
+     * Всегда false — кольцевые кальдеры (RidgeArchetype.RING) упразднены
+     * вместе со всей региональной системой архетипов задолго до перехода на
+     * ванильный рельеф. Метод оставлен как совместимая заглушка, т.к.
+     * вызывается извне из {@link org.example.aeroworld.worldgen.biome.AeroBiomeSource}
+     * — убирать сигнатуру без правки вызывающего кода нельзя.
+     */
+    public boolean isInsideRingValley(int wx, int wz) {
+        return false;
+    }
+
+    /**
+     * См. {@link #isInsideRingValley} — не вызывается ни при каких условиях,
+     * пока {@link #isInsideRingValley} возвращает false, но сигнатура
+     * сохранена для совместимости с {@code AeroBiomeSource}.
+     */
+    public String ringValleyBiome(int wx, int wz) {
+        return "forest";
+    }
+
+    /**
+     * Кэш последнего вычисленного {@link ColumnProfile} по (wx,wz) — простой
+     * однослотовый кэш (не карта), т.к. {@code columnProfile}/{@code
+     * surfaceHeight}/{@code topmostHeight} для ОДНОЙ и той же колонки часто
+     * вызываются подряд несколько раз за один проход (fillChunk,
+     * applyLayer1Surface, MountainForestScatter, TerrainColumnSampler) —
+     * getBaseColumn у ванильного генератора не бесплатен (строит целый
+     * NoiseChunk на колонку, см. NoiseBasedChunkGenerator.iterateNoiseColumn),
+     * поэтому важно не пересчитывать его по несколько раз подряд для одной
+     * и той же точки. НЕ потокобезопасен по конструкции (см. ниже) —
+     * генерация одного чанка (все вызовы columnProfile из fillChunk и
+     * applyLayer1Surface для этого чанка) всегда идёт в одном потоке
+     * генератора чанков, гонка возможна только МЕЖДУ разными чанками
+     * (разными потоками) — в этом случае кэш просто чаще промахивается
+     * (each thread has its own Layer1FlatGenerator instance? — нет, общий).
+     * Чтобы не гнаться за микрооптимизацией ценой корректности при
+     * многопоточной генерации (C2ME и т.п.), кэш держим per-thread через
+     * ThreadLocal, а не как обычное volatile-поле экземпляра.
+     */
+    private final ThreadLocal<ColumnProfile> lastProfileCache = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastProfileKey = new ThreadLocal<>();
+
+    private static long profileKey(int wx, int wz) {
+        return (((long) wx) << 32) ^ (wz & 0xFFFFFFFFL);
+    }
+
+    /**
+     * Полный профиль колонки (wx, wz): высота дна + есть ли вода сверху —
+     * теперь напрямую из ванильного {@code NoiseBasedChunkGenerator}
+     * (см. блок-комментарий выше). Один вызов {@code getBaseColumn} даёт
+     * весь вертикальный столбец сразу; сканируем его СВЕРХУ ВНИЗ:
+     * первый небо-непустой блок — если это жидкость (вода), запоминаем как
+     * {@code waterY} и продолжаем вниз до первого НЕ-жидкого/непрозрачного
+     * блока — это {@code groundY} (твёрдое дно). Если самый верхний
+     * непустой блок сразу твёрдый (не вода) — колонка сухая,
+     * {@code waterY = -1}.
      *
-     * <p>Порядок проверки (первое совпадение побеждает):
-     * <ol>
-     *   <li><b>Океан</b> — самый широкий шум (масштаб материков). Ниже порога
-     *       {@link #OCEAN_THRESHOLD} — открытая вода, глубина растёт по мере
-     *       удаления от условного "берега" (не одинаковая яма везде).</li>
-     *   <li><b>Река</b> — полоса вдоль контура {@code |noise| < RIVER_HALF_WIDTH}
-     *       (тот же приём, что в дошумовых версиях ванили: горизонтали шума
-     *       как русло).</li>
-     *   <li><b>Озеро</b> — отдельный шум, где значение выше порога считается
-     *       "впадиной" и заливается водой.</li>
-     * </ol>
-     * Все три режутся ТОЛЬКО в низинах (mountainMask ≈ 0, {@code landHeight
-     * <= WATER_MAX_LAND_Y}) — ни один водоём не прорезает склон горы.
+     * <p>{@code isShoreEdge} (полая песчаная кромка пляжа, см. javadoc
+     * {@link ColumnProfile}) больше не имеет смысла в терминах ванильного
+     * рельефа (это была специфика самописного пляжного профиля
+     * applyBeachFlat) — всегда {@code false}; {@code fillChunk} корректно
+     * обрабатывает {@code isShoreEdge=false} как обычный монолитный берег.
      */
     public ColumnProfile columnProfile(int wx, int wz) {
-        TerrainFields fields = computeTerrainFields(wx, wz);
-        int landHeight = fields.landHeight;
-        // Признак "узкая прибрежная кромка" — проставляется применением
-        // applyBeachFlat в любой из веток (океан/река/озеро) ниже. Нужен на
-        // выходе, чтобы fillChunk/applyLayer1Surface знали, где оставлять
-        // только тонкую линию песка с полостью под ней (см. ColumnProfile).
-        boolean shoreEdge = false;
-
-        // ── Ранний выход был здесь раньше ────────────────────────────────────
-        // Старая версия: `if (landHeight > WATER_MAX_LAND_Y) return new
-        // ColumnProfile(landHeight, -1);` — сразу для ЛЮБОГО водоёма, если
-        // высота суши превышала WATER_MAX_LAND_Y (48+12=60, т.е. почти сразу
-        // над уровнем воды 44).
-        //
-        // Порог задумывался только для рек/озёр ("не резать русло сквозь
-        // склон горы" — см. комментарий у WATER_MAX_LAND_Y), но блокировал
-        // и океанскую ветку, у которой уже есть собственный плавный
-        // SHORE_BLEND-переход дна. В результате высокая гора почти вплотную
-        // к океану обрубалась ДО того, как океанский градиент успевал
-        // докатиться по склону — соседний столбец уходил в oceanFloorY
-        // (может быть на много блоков ниже уровня воды), а этот столбец
-        // оставался на полной высоте landHeight. Разница в 1 блок по XZ —
-        // и получалась вертикальная стена прямо у кромки воды (см. баг-
-        // репорт со скриншотом: гора «обрывом» уходит в воду).
-        //
-        // Решение: считаем oceanW/oceanN ДО решения о раннем выходе. Река и
-        // озеро — по-прежнему не режут склон горы (их проверки остаются
-        // внутри блока landHeight <= WATER_MAX_LAND_Y ниже), но океан
-        // получает шанс мягко подвести берег даже к высокой горе.
-        double earlyOceanN = heightNoise.fbm2D(wx * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-        double earlyOceanW = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, earlyOceanN);
-        if (landHeight > WATER_MAX_LAND_Y && earlyOceanW <= 0.0) {
-            return new ColumnProfile(landHeight, -1); // горы/холмы вдали от океана — суша всегда
+        long key = profileKey(wx, wz);
+        Long cachedKey = lastProfileKey.get();
+        if (cachedKey != null && cachedKey == key) {
+            ColumnProfile cached = lastProfileCache.get();
+            if (cached != null) return cached;
         }
 
-        // ── Океан (проверяется первым — самый широкий водоём) ────────────────
-        // oceanN/oceanW уже посчитаны выше как earlyOceanN/earlyOceanW —
-        // переиспользуем, чтобы не считать один и тот же fbm2D дважды и не
-        // разойтись в значениях между условием раннего выхода и веткой.
-        double oceanN = earlyOceanN;
-        double oceanW = earlyOceanW;
-        if (oceanW > 0.0) {
-            double depth01 = smoothstep(OCEAN_THRESHOLD, OCEAN_DEEP_AT, oceanN);
-            int bedDepth = OCEAN_MIN_DEPTH
-                    + (int) Math.round(depth01 * (OCEAN_MAX_DEPTH - OCEAN_MIN_DEPTH));
-            int oceanFloorY = WATER_LEVEL - bedDepth;
-            int blendedY = (int) Math.round(landHeight + (oceanFloorY - landHeight) * oceanW);
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
-            }
-            // Оцениваем полный 2D-градиент |∇oceanW| конечными разностями
-            // на 1 блок по X и по Z — линеаризация плавного smoothstep-
-            // порога. Только X было недостаточно: на диагональной
-            // береговой линии это занижало градиент и растягивало карниз
-            // сильнее заданной ширины (см. правку от предыдущего теста).
-            double oceanNdx = heightNoise.fbm2D((wx + 1) * 0.0009 + 90000, wz * 0.0009 + 90000, 5, 2.0, 0.5);
-            double oceanWdx = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanNdx);
-            double oceanGradX = Math.abs(oceanW - oceanWdx);
-            double oceanNdz = heightNoise.fbm2D(wx * 0.0009 + 90000, (wz + 1) * 0.0009 + 90000, 5, 2.0, 0.5);
-            double oceanWdz = smoothstep(OCEAN_THRESHOLD + SHORE_BLEND, OCEAN_THRESHOLD - SHORE_BLEND, oceanNdz);
-            double oceanGradZ = Math.abs(oceanW - oceanWdz);
-            BeachFlatResult oceanBeach = applyBeachFlat(blendedY, oceanW, oceanGradX, oceanGradZ);
-            blendedY = oceanBeach.y;
-            shoreEdge = shoreEdge || oceanBeach.isShoreEdge;
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
-            }
-            landHeight = blendedY; // пологий пляж выше уровня воды — суша чуть ниже
+        ColumnProfile result = computeColumnProfileVanilla(wx, wz);
+        lastProfileKey.set(key);
+        lastProfileCache.set(result);
+        return result;
+    }
+
+    private ColumnProfile computeColumnProfileVanilla(int wx, int wz) {
+        NoiseBasedChunkGenerator gen = vanillaSource;
+        RandomState random = vanillaRandomState;
+        if (gen == null || random == null) {
+            // Узкое окно до первого setVanillaSource() — безопасный
+            // сухопутный fallback вместо NPE (см. javadoc vanillaSource).
+            return new ColumnProfile(BASE_SURFACE_Y, -1);
         }
 
-        // ── Река (Этап 2, п.2.1): riverEligibility(PV, erosion) — честный
-        //    множитель вероятности прямо в основе, вместо постфактум-
-        //    отталкивания riverMountainRepel(). Рекам физически "не из
-        //    чего" течь на пике (eligibility→0), поэтому течение гасится
-        //    именно там, где PV высокий, и не гасится в седловине между
-        //    двумя горами — без явного pathfinding. ────────────────────────
-        double riverEligible = riverEligibility(fields.pvFinal, fields.erosion);
-        double riverN    = heightNoise.fbm2D(wx * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
-        double riverDist = Math.abs(riverN);
-        // 1 в самом русле (riverDist≈0), 0 за пределами ширины+блендинга,
-        // домножено на eligibility — на пике русло физически не сформируется
-        // даже если |riverN| мал.
-        double riverW = riverEligible
-                * smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDist);
-        if (riverW > 0.0) {
-            int riverFloorY = Math.min(landHeight, WATER_LEVEL) - RIVER_BED_DEPTH;
-            int blendedY = (int) Math.round(landHeight + (riverFloorY - landHeight) * riverW);
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+        NoiseColumn column = gen.getBaseColumn(wx, wz, VANILLA_COLUMN_HEIGHT, random);
+
+        int minY = VANILLA_COLUMN_HEIGHT.getMinBuildHeight();
+        int maxY = minY + VANILLA_COLUMN_HEIGHT.getHeight() - 1;
+
+        // Сканируем СВЕРХУ ВНИЗ: первый непустой блок — либо вода (тогда
+        // это waterY, продолжаем искать дно ниже), либо сразу твёрдая
+        // порода (тогда это groundY, воды нет).
+        int waterY  = -1;
+        int groundY = LAYER_MIN_Y; // safety fallback, если колонка целиком воздух
+
+        for (int y = maxY; y >= minY; y--) {
+            BlockState state = column.getBlock(y);
+            if (state.isAir()) continue;
+
+            if (!state.getFluidState().isEmpty() && waterY == -1) {
+                // Верхний блок жидкости — фиксируем как поверхность воды и
+                // продолжаем сканировать вниз в поисках твёрдого дна.
+                waterY = y;
+                continue;
             }
-            // eligibility в (wx,wz) — те же erosion/PV, что и в центральной
-            // точке (см. fields выше); домножаем градиентные пробы тем же
-            // множителем, чтобы форма берега (smoothstep) не исказилась.
-            double riverNdx    = heightNoise.fbm2D((wx + 1) * 0.003 + 50000, wz * 0.003 + 50000, 4, 2.0, 0.5);
-            double riverDistDx = Math.abs(riverNdx);
-            double riverWdx = riverEligible
-                    * smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDistDx);
-            double riverGradX = Math.abs(riverW - riverWdx);
-            double riverNdz    = heightNoise.fbm2D(wx * 0.003 + 50000, (wz + 1) * 0.003 + 50000, 4, 2.0, 0.5);
-            double riverDistDz = Math.abs(riverNdz);
-            double riverWdz = riverEligible
-                    * smoothstep(RIVER_HALF_WIDTH + SHORE_BLEND, RIVER_HALF_WIDTH - SHORE_BLEND, riverDistDz);
-            double riverGradZ = Math.abs(riverW - riverWdz);
-            BeachFlatResult riverBeach = applyBeachFlat(blendedY, riverW, riverGradX, riverGradZ);
-            blendedY = riverBeach.y;
-            shoreEdge = shoreEdge || riverBeach.isShoreEdge;
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
+            if (state.getFluidState().isEmpty()) {
+                // Первый по-настоящему твёрдый (не жидкий, не воздух) блок —
+                // это дно.
+                groundY = y;
+                break;
             }
-            landHeight = blendedY;
+            // Ещё жидкость ниже уже найденной поверхности воды (толща воды) —
+            // просто продолжаем спуск, дно ещё не найдено.
         }
 
-        // ── Озеро ────────────────────────────────────────────────────────────
-        double lakeN = heightNoise.fbm2D(wx * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
-        double lakeW = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeN);
-        if (lakeW > 0.0) {
-            int lakeFloorY = Math.min(landHeight, WATER_LEVEL) - LAKE_BED_DEPTH;
-            int blendedY = (int) Math.round(landHeight + (lakeFloorY - landHeight) * lakeW);
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
-            }
-            double lakeNdx = heightNoise.fbm2D((wx + 1) * 0.006 + 70000, wz * 0.006 + 70000, 3, 2.0, 0.5);
-            double lakeWdx = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeNdx);
-            double lakeGradX = Math.abs(lakeW - lakeWdx);
-            double lakeNdz = heightNoise.fbm2D(wx * 0.006 + 70000, (wz + 1) * 0.006 + 70000, 3, 2.0, 0.5);
-            double lakeWdz = smoothstep(LAKE_THRESHOLD - SHORE_BLEND, LAKE_THRESHOLD + SHORE_BLEND, lakeNdz);
-            double lakeGradZ = Math.abs(lakeW - lakeWdz);
-            BeachFlatResult lakeBeach = applyBeachFlat(blendedY, lakeW, lakeGradX, lakeGradZ);
-            blendedY = lakeBeach.y;
-            shoreEdge = shoreEdge || lakeBeach.isShoreEdge;
-            if (blendedY < WATER_LEVEL) {
-                return new ColumnProfile(Math.min(blendedY, WATER_LEVEL - 1), WATER_LEVEL);
-            }
-            landHeight = blendedY;
-        }
-
-        // ── Страховка от "сухой" суши ниже уровня воды ───────────────────
-        // BASE_BY_CONTINENTALNESS/roughness-шум — поля, НЕЗАВИСИМЫЕ от
-        // oceanN/riverN/lakeN (разные шумы, разные частоты/офсеты). Из-за
-        // этого landHeight иногда проваливается ниже WATER_LEVEL (например,
-        // в переходной зоне "берег" -55..-0.30, где база 40 < 44) в точке,
-        // где ни один из oceanW/riverW/lakeW не сработал — суша оставалась
-        // сухой ямой ниже уровня воды вместо честного мелководья. Ловим это
-        // здесь: если ни один водоём не поднял вопрос воды, но итоговая
-        // высота суши всё равно ниже WATER_LEVEL — считаем это мелководьем.
-        if (landHeight < WATER_LEVEL) {
-            return new ColumnProfile(landHeight, WATER_LEVEL, shoreEdge);
-        }
-
-        return new ColumnProfile(landHeight, -1, shoreEdge);
+        return new ColumnProfile(groundY, waterY);
     }
 
     /**
