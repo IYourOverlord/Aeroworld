@@ -104,44 +104,10 @@ public class AeroWorld {
                 20 // 1 секунда задержки перед Sable-сборкой
         ));
 
-        // HAUL-01 — грузовой модуль на высотных островах Layer 3.
-        //
-        // ВАЖНО: HAUL-01.excraft — это НЕ ванильная NBT-структура (StructureTemplate),
-        // хотя технически тоже является gzip-NBT. Внутри — снимок Sable sub-level'а
-        // (теги toolgun_constraints/root_sublevel/sublevels/plot/chunks/...), который
-        // умеет разворачивать только сам Toolgun. Поэтому:
-        //   - НЕЛЬЗЯ регистрировать через PhysicalStructures.registerStructure*()
-        //     или JSON с nbt_location — StructurePlacer.loadTemplate() прочитает файл
-        //     как обычный StructureTemplate и молча "соберёт" почти пустую структуру
-        //     (на практике — 1 блок), без ошибки, но и без реального результата.
-        //   - НУЖНО использовать excraft:-namespace, который physical_structures уже
-        //     поддерживает через StructureSourceProviderRegistry (ExcraftCompat →
-        //     ExcraftStructureHandler → ToolgunPlacementBridge → команда Toolgun'а
-        //     "/aerotoolgun print_blueprint"). Всё размещение делегируется Toolgun'у,
-        //     который сам понимает формат .excraft.
-        //
-        // Layer3StructurePlacer должен ставить в очередь id excraft:HAUL-01 (не
-        // aeroworld:haul_01), а файл должен физически лежать в
-        // <gamedir>/blueprints/HAUL-01.excraft (ExcraftStructureHandler ищет именно там).
-        //
-        // Здесь мы только проверяем окружение и даём внятную диагностику в лог —
-        // сама регистрация id не нужна, excraft: id вообще не идёт через
-        // PhysicalStructureRegistry.
-        java.nio.file.Path excraftFile = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get()
-                .resolve("blueprints").resolve("HAUL-01.excraft");
-
-        boolean toolgunLoaded = net.neoforged.fml.ModList.get().isLoaded("create_aeronautics_toolgun");
-        if (!toolgunLoaded) {
-            LOGGER.error("[AeroWorld] create_aeronautics_toolgun не установлен — " +
-                    "excraft:HAUL-01 не сможет разместиться на Layer 3 (нет провайдера excraft:).");
-        } else if (!java.nio.file.Files.exists(excraftFile)) {
-            LOGGER.error("[AeroWorld] Файл не найден: {}. Положите HAUL-01.excraft именно " +
-                    "в эту папку (а не в ресурсы датапака) — так его ищет ExcraftStructureHandler.",
-                    excraftFile);
-        } else {
-            LOGGER.info("[AeroWorld] HAUL-01.excraft найден в {} — excraft:HAUL-01 готов к размещению " +
-                    "через Toolgun.", excraftFile);
-        }
+        // HAUL-01.excraft (грузовой модуль на Layer 3) — весь код удалён
+        // (регистрация, диагностика окружения, Layer3StructurePlacer) по
+        // прямому запросу пользователя. Файлы blueprints/HAUL-01.excraft и
+        // blueprints_reference/HAUL-01.excraft на диске не тронуты.
 
         LOGGER.info("[AeroWorld] PhysicalStructures registrations complete.");
     }

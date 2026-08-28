@@ -100,7 +100,6 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     // одним потоком, читаются без синхронизации из fillFromNoise/
     // applyBiomeDecoration, вызываемых параллельно C2ME worker-потоками.
     private volatile Layer2StructurePlacer structurePlacer;
-    private volatile Layer3StructurePlacer layer3StructurePlacer;
     private volatile org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
     private volatile org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer layer3VaultTrialPlacer;
     private volatile org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer layer4VaultTrialPlacer;
@@ -207,7 +206,6 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
         // ── Инициализируем placers с актуальным seed ──────────────────────────
         structurePlacer       = new Layer2StructurePlacer(seed, sharedChunkIslandCache);
-        layer3StructurePlacer = new Layer3StructurePlacer(seed, sharedChunkIslandCache);
         layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache);
         layer3VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer(seed, sharedChunkIslandCache);
         layer4VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer(seed, sharedChunkIslandCache);
@@ -230,6 +228,16 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         }
     }
 
+    // ВРЕМЕННАЯ ДИАГНОСТИКА (баг "мир по-прежнему плоский после удаления
+    // HAUL-01/Layer3StructurePlacer, 29.08.2026") — логирует на уровне INFO
+    // (не debug, чтобы точно попасть в лог при дефолтных настройках)
+    // первый вызов init() с новым RandomState: seed, null ли vanillaGenerator
+    // (поле-конструктор, не должно быть null), и что реально возвращает
+    // vanillaGenerator.getBaseColumn(0,0,...) сразу после setVanillaSource —
+    // сырую высоту дна для контрольной точки (0,0).
+    private final java.util.concurrent.atomic.AtomicBoolean DIAG_INIT_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private void init(RandomState randomState) {
         if (randomState == lastRandomState) return; // fast-path: same instance → already initialised
         initializeWithSeed(seedFrom(randomState));
@@ -241,6 +249,34 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
             layer1.setVanillaSource(vanillaGenerator, randomState);
         }
         lastRandomState = randomState;
+
+        if (DIAG_INIT_LOGGED.compareAndSet(false, true)) {
+            long seed = seedFrom(randomState);
+            AeroWorld.LOGGER.info(
+                    "[AeroWorld][DIAG] init(): seed={} vanillaGenerator={} layer1={}",
+                    seed, vanillaGenerator, layer1);
+            if (vanillaGenerator != null && layer1 != null) {
+                // Пробуем НЕСКОЛЬКО удалённых друг от друга точек — если
+                // ванильный рельеф реально плоский (не только в точке 0,0,
+                // которая могла случайно попасть на береговую линию), это
+                // будет видно по одинаковым groundY во всех точках.
+                // Дополнительно логируем то, что видит СAM layer1 через
+                // columnProfile() — если тут разброс есть, а в игре рельеф
+                // плоский, значит баг ниже по цепочке (fillChunk/getBaseHeight).
+                int[][] probePoints = { {0,0}, {500,500}, {-800,300}, {2000,-1500}, {100,4000} };
+                for (int[] p : probePoints) {
+                    try {
+                        Layer1FlatGenerator.ColumnProfile prof = layer1.columnProfile(p[0], p[1]);
+                        AeroWorld.LOGGER.info(
+                                "[AeroWorld][DIAG] columnProfile({},{}) => groundY={} waterY={} | surfaceHeight={} topmostHeight={}",
+                                p[0], p[1], prof.groundY, prof.waterY,
+                                layer1.surfaceHeight(p[0], p[1]), layer1.topmostHeight(p[0], p[1]));
+                    } catch (Throwable t) {
+                        AeroWorld.LOGGER.error("[AeroWorld][DIAG] columnProfile(" + p[0] + "," + p[1] + ") THREW:", t);
+                    }
+                }
+            }
+        }
     }
 
     // ── ChunkGenerator overrides ──────────────────────────────────────────────
@@ -581,7 +617,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         if (chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y
                 && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
             lowerIslands.fillChunk(chunk, chunkX, chunkZ);
-            // Тот же фикс, что и у Layer3StructurePlacer ниже: регистрируем
+            // Регистрируем структуры Layer 2 здесь (не в applyBiomeDecoration):
             // структуру здесь, а не в applyBiomeDecoration, иначе для чанков
             // вдали от игрока tank_11 никогда не попадёт в scheduler.
             if (structurePlacer != null) {
@@ -595,16 +631,14 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         if (chunkMinY <= HighIslandGenerator.LAYER_MAX_Y
                 && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
             highIslands.fillChunk(chunk, chunkX, chunkZ);
-            // Регистрируем структуры Layer 3 здесь, а не в applyBiomeDecoration —
-            // fillFromNoise вызывается для ВСЕХ чанков, включая те что вне
-            // зоны декорации (далеко от игрока). applyBiomeDecoration вызывается
-            // только для чанков рядом с игроком, поэтому Layer 3 острова
-            // (каждые ~26×26 чанков, Y 1000+) никогда не попадали в scheduler.
-            if (layer3StructurePlacer != null) {
-                layer3StructurePlacer.placeForChunk(chunk, highIslands,
-                        RandomSource.create(
-                                worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xCAFEBABEL));
-            }
+            // Layer3StructurePlacer (HAUL-01.excraft) удалён полностью —
+            // ResourceLocation.fromNamespaceAndPath("excraft", "HAUL-01")
+            // кидал ResourceLocationException (заглавные буквы/дефис
+            // недопустимы в пути ResourceLocation) в статическом
+            // инициализаторе класса, что приводило к ExceptionInInitializerError
+            // → initializeWithSeed() падал на КАЖДОМ вызове → layer1 и
+            // остальные seed-зависимые поля никогда не создавались → весь
+            // мир генерировался плоским (см. диагностику 29.08.2026).
         }
 
         // Layer 4 (Upper Islands): Y 1900..2031
@@ -697,7 +731,7 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // ИСПРАВЛЕНО (см. диагностику Voxy-бага): раньше восстановление островов
         // откладывалось до applyBiomeDecoration через carverTouchedChunks, а
         // applyBiomeDecoration вызывается ТОЛЬКО для чанков рядом с игроком
-        // (см. аналогичный комментарий у Layer3StructurePlacer в fillFromNoise).
+        // (см. аналогичный комментарий у Layer2StructurePlacer в fillFromNoise).
         // Любой чанк, догенерированный вдали от игрока (фоновая подгрузка для
         // дальней прорисовки, Voxy/Distant Horizons и т.п.), доходил до FULL
         // со повреждёнными carver'ами островами и НИКОГДА не восстанавливался —
@@ -755,10 +789,11 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
         // restoreIslandsInChunk теперь вызывается напрямую из applyCarvers
         // (для каждого чанка, безусловно) — см. комментарий там.
 
-        // structurePlacer (tank_11, Layer 2) и layer3StructurePlacer (haul_01, Layer 3)
-        // теперь вызываются в fillFromNoise — чтобы охватить все чанки,
-        // а не только те что рядом с игроком (applyBiomeDecoration вызывается
-        // только для чанков рядом с игроком).
+        // structurePlacer (tank_11, Layer 2) вызывается в fillFromNoise —
+        // чтобы охватить все чанки, а не только те что рядом с игроком
+        // (applyBiomeDecoration вызывается только для чанков рядом с игроком).
+        // Layer3StructurePlacer (HAUL-01.excraft) удалён полностью — см.
+        // комментарий в fillFromNoise, блок "Layer 3 (High Islands)".
         // ─────────────────────────────────────────────────────────────────────
 
         super.applyBiomeDecoration(region, chunk, structureManager);
