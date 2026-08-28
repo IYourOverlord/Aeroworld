@@ -56,10 +56,26 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
 
     private final AtomicReference<AeroBiomeSource> aeroSource;
 
-    private Layer1FlatGenerator  layer1;
-    private LowerIslandGenerator lowerIslands;
-    private HighIslandGenerator  highIslands;
-    private UpperIslandGenerator upperIslands;
+    // ИСПРАВЛЕНО (баг "весь мир плоский, всюду один биом, редкие кубы воды"
+    // при многопоточной генерации чанков через C2ME): эти четыре поля
+    // присваиваются ВНУТРИ synchronized initializeWithSeed() одним потоком,
+    // но читаются БЕЗ синхронизации из fillFromNoise/getBaseHeight/
+    // getBaseColumn/applyLayer1Surface, которые C2ME вызывает параллельно
+    // из десятков worker-потоков. Без volatile здесь нет happens-before
+    // между "поток А создал layer1 внутри synchronized" и "поток Б читает
+    // layer1 снаружи synchronized" — по Java Memory Model поток Б может
+    // сколь угодно долго видеть устаревшее значение поля (null) или, что
+    // ещё хуже, частично опубликованный объект. На практике это проявлялось
+    // как: почти все чанки получали columnProfile() → vanillaSource==null
+    // → плоский суходольный fallback (BASE_SURFACE_Y=48, видно на F3 как
+    // Y≈48-49 и biome=aeroworld:river из старого WATER_LEVEL=44 фолбэка),
+    // и лишь изредка (когда поток случайно видел актуальное состояние)
+    // проскакивал настоящий ванильный рельеф — отсюда "вырванные" кубы воды
+    // на границах чанков, сгенерированных разными потоками в разный момент.
+    private volatile Layer1FlatGenerator  layer1;
+    private volatile LowerIslandGenerator lowerIslands;
+    private volatile HighIslandGenerator  highIslands;
+    private volatile UpperIslandGenerator upperIslands;
 
     /**
      * Один общий ChunkIslandCache для всех трёх генераторов островных слоёв.
@@ -79,24 +95,31 @@ public class AeroWorldChunkGenerator extends ChunkGenerator {
     private static final BlockState BS_DIRT       = Blocks.DIRT       .defaultBlockState();
 
     // ── Placers структур ──────────────────────────────────────────────────────
-    private Layer2StructurePlacer structurePlacer;
-    private Layer3StructurePlacer layer3StructurePlacer;
-    private org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
-    private org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer layer3VaultTrialPlacer;
-    private org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer layer4VaultTrialPlacer;
+    // volatile по той же причине, что и layer1/lowerIslands/highIslands/
+    // upperIslands выше — присваиваются внутри synchronized initializeWithSeed()
+    // одним потоком, читаются без синхронизации из fillFromNoise/
+    // applyBiomeDecoration, вызываемых параллельно C2ME worker-потоками.
+    private volatile Layer2StructurePlacer structurePlacer;
+    private volatile Layer3StructurePlacer layer3StructurePlacer;
+    private volatile org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer layer2VaultTrialPlacer;
+    private volatile org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer layer3VaultTrialPlacer;
+    private volatile org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer layer4VaultTrialPlacer;
     // ─────────────────────────────────────────────────────────────────────────
 
-    private StructureSupportValidator structureValidator;
+    private volatile StructureSupportValidator structureValidator;
 
     private final Layer1OreGenerator layer1Ores = new Layer1OreGenerator();
     private final Layer2OreGenerator layer2Ores = new Layer2OreGenerator();
     private final Layer3OreGenerator layer3Ores = new Layer3OreGenerator();
     private final Layer4OreGenerator layer4Ores = new Layer4OreGenerator();
-    private Layer1SinkholeCarver sinkholeCarver;
-    private Layer1CoralScatter coralScatter;
+    private volatile Layer1SinkholeCarver sinkholeCarver;
+    private volatile Layer1CoralScatter coralScatter;
 
-    private long    worldSeed       = 12345L;
-    private boolean seedInitialized = false;
+    // volatile — читаются (worldSeed в placeForChunk-вызовах, seedInitialized
+    // в createStructures) без синхронизации из параллельных C2ME-потоков;
+    // записываются только внутри synchronized initializeWithSeed().
+    private volatile long    worldSeed       = 12345L;
+    private volatile boolean seedInitialized = false;
     private volatile RandomState lastRandomState = null; // fast-path: skip seedFrom if same instance
 
     // oreFilteredChunks удалён: Layer1OreFilter теперь вызывается только для

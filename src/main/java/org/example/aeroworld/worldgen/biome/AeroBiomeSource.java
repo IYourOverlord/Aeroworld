@@ -142,10 +142,13 @@ public class AeroBiomeSource extends BiomeSource {
         // delegateWithSafety теперь всегда подменяет их на клон aeroworld:*.
         // Оставляем как последний fallback на случай, если реестр ещё не
         // прогрелся (AeroBiomeRegistryCache пуст) в момент вызова.
-        Stream<Holder<Biome>> vanillaFallback = delegate.possibleBiomes().stream()
-                .filter(h -> h.unwrapKey()
-                        .map(k -> !isExcluded(k.location()))
-                        .orElse(true));
+        // possibleBiomes() не различает Layer 1 и острова (нет Y-контекста
+        // на этом этапе) — здесь НЕ фильтруем ocean/dripstone/lush/deep_dark,
+        // т.к. Layer 1 обязан иметь право вернуть эти биомы (см.
+        // getNoiseBiome/delegateWithSafety). Сами острова по-прежнему
+        // никогда их не получат — фильтрация для них применяется точечно
+        // в delegateWithSafety(..., excludeForIslands=true) при y > LAYER1_MAX_NOISE_Y.
+        Stream<Holder<Biome>> vanillaFallback = delegate.possibleBiomes().stream();
 
         return Stream.concat(aeroClones, vanillaFallback);
     }
@@ -187,9 +190,10 @@ public class AeroBiomeSource extends BiomeSource {
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
-        // Островные слои (выше Layer 1) — делегируем ванили
+        // Островные слои (выше Layer 1) — делегируем ванили. Острова летают
+        // в воздухе, там неоткуда взяться океану/пещерным биомам — исключаем.
         if (y > LAYER1_MAX_NOISE_Y) {
-            return delegateWithSafety(x, 20, z, sampler);
+            return delegateWithSafety(x, 20, z, sampler, true);
         }
 
         // Слой 1: 2D-шум по seed мира (больше не зависим от sampler)
@@ -248,12 +252,17 @@ public class AeroBiomeSource extends BiomeSource {
         // Layer1FlatGenerator.setVanillaSource), поэтому ocean/river/beach/
         // ...биом, который он вернёт, будет ТОЧНО тем же местом, где
         // physически стоит вода/песок.
-        return delegateWithSafety(x, y, z, sampler);
+        // excludeForIslands=false: Layer 1 — нижний слой, обязан вести себя
+        // как настоящий Overworld, включая ocean/deep_ocean/dripstone_caves/
+        // lush_caves/deep_dark биомы (см. ask: "разрешить ocean/dripstone/lush
+        // /deep_dark для Layer 1, исключение оставить только для островов").
+        return delegateWithSafety(x, y, z, sampler, false);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler) {
+    private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,
+                                              boolean excludeForIslands) {
         // Реальный ванильный делегат используется ТОЛЬКО как климатический
         // семплер — чтобы понять, какой биом "подошёл бы" по температуре/
         // влажности/континентальности в этой точке. Сам Holder<Biome>,
@@ -266,7 +275,7 @@ public class AeroBiomeSource extends BiomeSource {
                 .map(k -> k.location())
                 .orElse(ResourceLocation.withDefaultNamespace("plains"));
 
-        if (isExcluded(vanillaId)) {
+        if (excludeForIslands && isExcludedForIslands(vanillaId)) {
             return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains")).orElse(vanilla);
         }
 
@@ -293,7 +302,15 @@ public class AeroBiomeSource extends BiomeSource {
                 .findFirst();
     }
 
-    private static boolean isExcluded(ResourceLocation loc) {
+    /**
+     * Биомы, недопустимые на летающих островных слоях (y > LAYER1_MAX_NOISE_Y):
+     * там неоткуда взяться океану/капельным и мшистым пещерам/deep dark —
+     * острова просто в воздухе, без подземной толщи и без моря. Layer 1
+     * (нижний слой, физический overworld-рельеф) эти биомы, наоборот,
+     * обязан получать нормально — см. вызов delegateWithSafety(...,
+     * excludeForIslands=false) в getNoiseBiome.
+     */
+    private static boolean isExcludedForIslands(ResourceLocation loc) {
         String p = loc.getPath();
         return p.contains("ocean") || p.equals("dripstone_caves")
                 || p.equals("lush_caves") || p.equals("deep_dark");
