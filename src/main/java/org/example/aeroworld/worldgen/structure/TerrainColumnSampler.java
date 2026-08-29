@@ -50,8 +50,16 @@ import java.util.Map;
  */
 public final class TerrainColumnSampler {
 
-    // Глубина поиска опоры вниз от подошвы структуры (блоков)
-    private static final int SUPPORT_SCAN_DEPTH = 6;
+    // Глубина поиска опоры вниз от подошвы структуры (блоков).
+    // УВЕЛИЧЕНО с 6 до 24: в Amplified-режиме 3D-пещеры вырезают полости
+    // существенно глубже, чем плоский рельеф старого Layer1FlatGenerator
+    // предполагал изначально. createStructures вызывается ДО applyCarvers,
+    // поэтому detected surfaceHeight/topmostHeight ещё не отражают будущие
+    // пещеры под зданием — на практике деревня, чей фундамент придётся на
+    // потолок будущей пещеры, проваливается после карвинга. Расширенный скан
+    // не устраняет 100% случаев (глубокие пещеры всё ещё возможны), но
+    // отсеивает подавляющее большинство тонких перекрытий над кавернами.
+    private static final int SUPPORT_SCAN_DEPTH = 24;
 
     // Шаг сетки сэмплов по XZ (блоков)
     public static final int SAMPLE_GRID_STEP = 8;
@@ -67,6 +75,22 @@ public final class TerrainColumnSampler {
     private final LowerIslandGenerator layer2;
     private final HighIslandGenerator  layer3;
     private final UpperIslandGenerator layer4;
+
+    /**
+     * Реальный уровень мира (доступен только из failsafe-пути в
+     * {@code applyBiomeDecoration}, где applyCarvers для стартового чанка
+     * структуры уже отработал). Если задан — hasSolidBelow/isWaterCoveredAt
+     * для Layer 1 читают ФАКТИЧЕСКИЕ блоки чанка вместо детерминированного
+     * предсказания через layer1.surfaceHeight()/topmostHeight(). Это
+     * устраняет принципиальный класс ложных accept: детерминированная
+     * формула не знает о 3D-пещерах Amplified (они вычисляются отдельным
+     * density-function пайплайном в applyCarvers, не воспроизводимым здесь
+     * дёшево), поэтому "опора" под деревней могла считаться твёрдой, хотя
+     * там уже вырезана пещера. Может быть {@code null} — тогда используется
+     * старое детерминированное поведение (например, из createStructures,
+     * где мир ещё не сгенерирован и блоки читать нельзя).
+     */
+    private final net.minecraft.world.level.WorldGenLevel realLevel;
 
     /**
      * Общий ChunkIslandCache — те же кэшированные списки центров, что
@@ -86,11 +110,21 @@ public final class TerrainColumnSampler {
                                 HighIslandGenerator  layer3,
                                 UpperIslandGenerator layer4,
                                 ChunkIslandCache     sharedChunkCache) {
+        this(layer1, layer2, layer3, layer4, sharedChunkCache, null);
+    }
+
+    public TerrainColumnSampler(Layer1FlatGenerator  layer1,
+                                LowerIslandGenerator layer2,
+                                HighIslandGenerator  layer3,
+                                UpperIslandGenerator layer4,
+                                ChunkIslandCache     sharedChunkCache,
+                                net.minecraft.world.level.WorldGenLevel realLevel) {
         this.layer1            = layer1;
         this.layer2           = layer2;
         this.layer3           = layer3;
         this.layer4           = layer4;
         this.sharedChunkCache = sharedChunkCache;
+        this.realLevel        = realLevel;
     }
 
     // ── Публичный API ─────────────────────────────────────────────────────────
@@ -102,6 +136,56 @@ public final class TerrainColumnSampler {
     public boolean hasSolidBelow(int wx, int wz, int fromY) {
         long key = packKey(wx, wz, fromY);
         return supportCache.computeIfAbsent(key, k -> computeHasSolid(wx, wz, fromY));
+    }
+
+    /**
+     * Затоплена ли колонка (wx, wz) на уровне {@code atY}, то есть находится ли
+     * {@code atY} строго между грунтом ({@link Layer1FlatGenerator#surfaceHeight})
+     * и фактическим верхом воды/суши ({@link Layer1FlatGenerator#topmostHeight})?
+     * Если да — значит на этой высоте стоит вода, а не воздух/земля, и наземная
+     * структура (деревня, аванпост) не должна тут строиться, даже если ниже по
+     * колонке есть твёрдое дно.
+     *
+     * <p>Используется только для категории SURFACE — WATER-структурам вода
+     * наоборот необходима, ISLAND/UNDERGROUND её не касаются (Layer 1 water
+     * есть только на самом Layer 1).
+     */
+    public boolean isWaterCoveredAt(int wx, int wz, int atY) {
+        if (realLevel != null && isChunkGenerated(wx, wz)) {
+            try {
+                net.minecraft.world.level.block.state.BlockState state =
+                        realLevel.getBlockState(new net.minecraft.core.BlockPos(wx, atY, wz));
+                return state.getFluidState().is(net.minecraft.tags.FluidTags.WATER);
+            } catch (RuntimeException e) {
+                // Позиция вне окна WorldGenRegion — откатываемся ниже.
+            }
+        }
+        int ground = layer1.surfaceHeight(wx, wz);
+        int top    = layer1.topmostHeight(wx, wz);
+        return top > ground && atY > ground && atY <= top;
+    }
+
+    /**
+     * {@code true}, если чанк, содержащий (wx, wz), уже сгенерирован
+     * достаточно далеко (минимум FEATURES/carvers применены), чтобы можно
+     * было безопасно читать его блоки через {@link #realLevel} без риска
+     * триггернуть повторную генерацию или получить неполный рельеф.
+     */
+    private boolean isChunkGenerated(int wx, int wz) {
+        if (realLevel == null) return false;
+        try {
+            net.minecraft.world.level.chunk.ChunkAccess ca = realLevel.getChunk(wx >> 4, wz >> 4,
+                    net.minecraft.world.level.chunk.status.ChunkStatus.EMPTY, false);
+            if (ca == null) return false;
+            return ca.getPersistedStatus().isOrAfter(
+                    net.minecraft.world.level.chunk.status.ChunkStatus.FEATURES);
+        } catch (RuntimeException e) {
+            // WorldGenRegion ограничен окном чанков вокруг текущего центра —
+            // запрос чанка за пределами этого окна может бросить исключение
+            // вместо null. В таком случае считаем чанк недоступным для чтения
+            // и откатываемся на детерминированное предсказание.
+            return false;
+        }
     }
 
     /**
@@ -322,7 +406,26 @@ public final class TerrainColumnSampler {
      */
     private boolean isSolidAt(int wx, int y, int wz, int layer) {
         switch (layer) {
-            case 1: return y <= layer1.surfaceHeight(wx, wz) && y >= Layer1FlatGenerator.LAYER_MIN_Y;
+            // ИСПРАВЛЕНО (деревни в пещерах/под водой проходят валидацию):
+            // если реальный уровень доступен и чанк уже прошёл FEATURES
+            // (значит applyCarvers для него уже применил 3D-пещеры Amplified),
+            // читаем ФАКТИЧЕСКИЙ блок вместо детерминированного предсказания
+            // через surfaceHeight() — детерминированная формула в принципе
+            // не может знать, вырезал ли carver пещеру именно в этой точке.
+            case 1: {
+                if (realLevel != null && isChunkGenerated(wx, wz)) {
+                    try {
+                        net.minecraft.world.level.block.state.BlockState state =
+                                realLevel.getBlockState(new net.minecraft.core.BlockPos(wx, y, wz));
+                        return !state.isAir() && !state.getFluidState().is(net.minecraft.tags.FluidTags.WATER)
+                                && y >= Layer1FlatGenerator.LAYER_MIN_Y;
+                    } catch (RuntimeException e) {
+                        // Позиция вне окна WorldGenRegion — откатываемся на
+                        // детерминированное предсказание ниже.
+                    }
+                }
+                return y <= layer1.surfaceHeight(wx, wz) && y >= Layer1FlatGenerator.LAYER_MIN_Y;
+            }
             case 2: return isLayer2Solid(wx, y, wz);
             case 3: return isLayer3Solid(wx, y, wz);
             case 4: return isLayer4Solid(wx, y, wz);

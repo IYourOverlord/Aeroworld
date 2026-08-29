@@ -481,6 +481,33 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
             return;
         }
 
+        // ИСПРАВЛЕНО: getAllReferences() покрывает только структуры, на
+        // которые ЭТОТ чанк ссылается (лежит в радиусе чужого старта) —
+        // старт-чанк структуры (где сама структура физически "рождается")
+        // не гарантированно попадает в getAllReferences() этого же чанка на
+        // раннем статусе генерации (см. диагностику: village_plains был
+        // отклонён только после форс-генерации через /locate; при обычной
+        // фоновой генерации той же деревни лог валидатора молчал). Сначала
+        // проверяем getAllStarts() — старты, реально принадлежащие этому
+        // чанку, не зависящие от прогретости references соседей.
+        Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts = chunk.getAllStarts();
+        if (!allStarts.isEmpty()) {
+            allStarts.forEach((structure, start) -> {
+                if (start == null || start == StructureStart.INVALID_START || !start.isValid()) return;
+                ResourceLocation structureId = registryAccess
+                        .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
+                        .getKey(structure);
+                if (structureId == null) return;
+
+                ValidationResult result = validator.validate(structureId, start);
+                if (!result.accepted) {
+                    structureManager.setStartForStructure(
+                            SectionPos.of(chunk.getPos(), chunk.getMinSection()),
+                            structure, StructureStart.INVALID_START, chunk);
+                }
+            });
+        }
+
         Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs = chunk.getAllReferences();
         if (!allRefs.isEmpty()) {
             AeroWorld.LOGGER.info(
@@ -711,6 +738,97 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Layer3StructurePlacer (HAUL-01.excraft) удалён полностью — см.
         // комментарий в fillFromNoise, блок "Layer 3 (High Islands)".
         // ─────────────────────────────────────────────────────────────────────
+
+        // ИСПРАВЛЕНО (деревни/monument генерируются под водой/в пещерах при
+        // прогреве через Distant Horizons BatchGenerator): createStructures()
+        // — штатная точка валидации — надёжно вызывается стандартным серверным
+        // пайплайном, но DH прогревает LOD/фоновые чанки через собственный
+        // BatchGenerator, который не гарантированно проходит через
+        // ChunkGenerator.createStructures() тем же путём (см. диагностику:
+        // лог ни разу не содержит [AeroWorld][StructureVal] за сессию, где
+        // структуры физически появились в мире). Блоки самой структуры
+        // фактически пишутся ПОЗЖЕ — внутри super.applyBiomeDecoration()
+        // (STRUCTURES decoration step). Поэтому дублируем валидацию здесь,
+        // непосредственно перед вызовом super, — эта точка отрабатывает
+        // при любом пути генерации чанка, включая DH. Если createStructures
+        // уже успел отклонить структуру (StructureStart.INVALID_START),
+        // повторная проверка здесь безвредна и дешева (валидатор идемпотентен).
+        {
+            StructureSupportValidator validator = structureValidator;
+            if (validator != null) {
+                // ИСПРАВЛЕНО: getAllReferences() возвращает структуры, на
+                // которые ЭТОТ чанк ссылается (т.е. чанк лежит в радиусе
+                // существующего где-то старта) — но не гарантированно
+                // включает сам старт-чанк структуры. При фоновой генерации
+                // через DH/C2ME чанк может достичь статуса STRUCTURE_STARTS
+                // (стартовый JigsawStructure уже вычислен, все piece'ы уже
+                // записаны в свои чанки) БЕЗ полноценного прохода
+                // STRUCTURE_REFERENCES для соседних чанков — тогда
+                // getAllReferences() старт-чанка пуст, и failsafe/createStructures
+                // молча пропускают именно те структуры, которые реально
+                // появляются в мире непровалидированными (см. диагностику:
+                // village_plains ISLAND был отклонён только после ручного
+                // /locate, который форсирует полный ванильный путь генерации
+                // с корректными references; при обычной фоновой генерации
+                // той же деревни на Layer 1 лог валидатора молчал вовсе).
+                // getAllStarts() — старты, реально принадлежащие этому чанку,
+                // не зависит от того, проставлены ли references у соседей.
+                Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts =
+                        chunk.getAllStarts();
+                if (!allStarts.isEmpty()) {
+                    net.minecraft.core.RegistryAccess registryAccess = wgr.getLevel().registryAccess();
+                    allStarts.forEach((structure, start) -> {
+                        if (start == null || start == StructureStart.INVALID_START || !start.isValid()) return;
+                        ResourceLocation structureId = registryAccess
+                                .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
+                                .getKey(structure);
+                        if (structureId == null) return;
+
+                        ValidationResult result = validator.validate(structureId, start, wgr);
+                        if (!result.accepted) {
+                            structureManager.setStartForStructure(
+                                    SectionPos.of(chunk.getPos(), chunk.getMinSection()),
+                                    structure, StructureStart.INVALID_START, chunk);
+                            AeroWorld.LOGGER.warn(
+                                    "[AeroWorld][StructureVal][applyBiomeDecoration-failsafe] REJECTED {} in chunk ({},{}) - createStructures did not run for this generation path.",
+                                    structureId, chunkX, chunkZ);
+                        }
+                    });
+                }
+
+                // Старый путь через getAllReferences() оставлен как
+                // дополнительная страховка для структур, чей старт лежит
+                // в другом чанке, но текущий чанк уже получил references
+                // (например, обычный серверный путь генерации).
+                Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs =
+                        chunk.getAllReferences();
+                if (!allRefs.isEmpty()) {
+                    net.minecraft.core.RegistryAccess registryAccess = wgr.getLevel().registryAccess();
+                    allRefs.forEach((structure, refs) -> {
+                        if (refs.isEmpty()) return;
+                        ResourceLocation structureId = registryAccess
+                                .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
+                                .getKey(structure);
+                        if (structureId == null) return;
+
+                        StructureStart start = structureManager.getStartForStructure(
+                                SectionPos.of(chunk.getPos(), chunk.getMinSection()),
+                                structure, chunk);
+                        if (start == null || start == StructureStart.INVALID_START) return;
+
+                        ValidationResult result = validator.validate(structureId, start, wgr);
+                        if (!result.accepted) {
+                            structureManager.setStartForStructure(
+                                    SectionPos.of(chunk.getPos(), chunk.getMinSection()),
+                                    structure, StructureStart.INVALID_START, chunk);
+                            AeroWorld.LOGGER.warn(
+                                    "[AeroWorld][StructureVal][applyBiomeDecoration-failsafe] REJECTED {} in chunk ({},{}) - createStructures did not run for this generation path.",
+                                    structureId, chunkX, chunkZ);
+                        }
+                    });
+                }
+            }
+        }
 
         super.applyBiomeDecoration(region, chunk, structureManager);
 

@@ -61,7 +61,7 @@ public final class StructureSupportValidator {
     private static final int MAX_FAILING_LOGGED = 8;
 
     // ── Логирование ───────────────────────────────────────────────────────────
-    private static final boolean LOG_ACCEPTED  = false; // включить для отладки
+    private static final boolean LOG_ACCEPTED  = true; // включено для диагностики: подземные/подводные деревни проходят молча
     private static final boolean LOG_REJECTED  = true;
 
     private final Layer1FlatGenerator  layer1;
@@ -92,6 +92,22 @@ public final class StructureSupportValidator {
      * @return {@link ValidationResult} — итог с диагностикой
      */
     public ValidationResult validate(ResourceLocation structureId, StructureStart start) {
+        return validate(structureId, start, null);
+    }
+
+    /**
+     * Перегрузка с доступом к реальному уровню мира. Если передан не-null
+     * {@code realLevel}, сэмплер будет читать ФАКТИЧЕСКИЕ блоки чанков,
+     * которые уже прошли статус FEATURES (applyCarvers уже применил пещеры),
+     * вместо детерминированного предсказания рельефа — устраняет ложный
+     * accept для деревень, чей фундамент приходится на уже вырезанную
+     * 3D-пещеру Amplified (см. javadoc {@link TerrainColumnSampler#realLevel}).
+     * Используется из {@code applyBiomeDecoration}, где {@code WorldGenLevel}
+     * доступен; из {@code createStructures} передаётся {@code null}, т.к. мир
+     * там ещё не заполнен блоками.
+     */
+    public ValidationResult validate(ResourceLocation structureId, StructureStart start,
+                                     net.minecraft.world.level.WorldGenLevel realLevel) {
         if (!start.isValid()) {
             return ValidationResult.denied(structureId, StructureCategory.DENY,
                     start.getBoundingBox());
@@ -106,7 +122,7 @@ public final class StructureSupportValidator {
         // сэмплера — не тяжёлая операция, все реальные вычисления идут через
         // уже прогретые ChunkIslandCache/IslandCache и кэшируются внутри
         // самого сэмплера на время этого вызова validate()).
-        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache);
+        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache, realLevel);
 
         // ── ИСПРАВЛЕНИЕ: категория по фактическому слою в XZ-точке, а не по
         //    сырому baseY. Раньше resolveForY(structureId, baseY) полагался
@@ -200,6 +216,30 @@ public final class StructureSupportValidator {
      */
     private ValidationResult validateSurface(ResourceLocation id, BoundingBox bounds,
                                              TerrainColumnSampler sampler) {
+        // ИСПРАВЛЕНО (деревни/аванпосты стоят на воде): sampleSupport сама по
+        // себе проверяет только твёрдость грунта (hasSolidBelow → дно), но не
+        // видит воду НАД этим грунтом на уровне подошвы структуры. Структура,
+        // чей minY пришёлся на уровень озера/океана (typical для village
+        // jigsaw-старта на WORLD_SURFACE_WG, который включает воду), проходила
+        // проверку — дно под водой твёрдое. Дополнительно считаем точки,
+        // залитые водой на bounds.minY(), как "несупортированные" — тем самым
+        // деревня, чей фундамент оказался на глади воды, теперь отклоняется.
+        int waterCovered = 0;
+        int total        = 0;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x += TerrainColumnSampler.SAMPLE_GRID_STEP) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z += TerrainColumnSampler.SAMPLE_GRID_STEP) {
+                total++;
+                if (sampler.isWaterCoveredAt(x, z, bounds.minY())) waterCovered++;
+            }
+        }
+        if (total > 0 && (double) waterCovered / total > (1.0 - SURFACE_SUPPORT_THRESHOLD)) {
+            logRejection(id, bounds,
+                    String.format("наземная структура на воде: %d/%d точек залито", waterCovered, total));
+            return ValidationResult.insufficientSupport(id, StructureCategory.SURFACE, bounds,
+                    total - waterCovered, total,
+                    (double) (total - waterCovered) / total, SURFACE_SUPPORT_THRESHOLD, List.of());
+        }
+
         return sampleSupport(id, StructureCategory.SURFACE, bounds, sampler,
                 bounds.minY(), SURFACE_SUPPORT_THRESHOLD);
     }

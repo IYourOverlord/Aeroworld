@@ -14,7 +14,7 @@
             "type": "minecraft:multi_noise",
             "preset": "minecraft:overworld"
           },
-          "settings": "minecraft:amplified"
+          "settings": "minecraft:overworld"
         }
       }
     },
