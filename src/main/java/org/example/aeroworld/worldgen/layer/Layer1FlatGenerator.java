@@ -69,47 +69,14 @@ public class Layer1FlatGenerator {
         return "forest";
     }
 
-    private final ThreadLocal<ColumnProfile> lastProfileCache = new ThreadLocal<>();
-    private final ThreadLocal<Long> lastProfileKey = new ThreadLocal<>();
-
-    private static long profileKey(int wx, int wz) {
-        return (((long) wx) << 32) ^ (wz & 0xFFFFFFFFL);
-    }
-
-    public ColumnProfile columnProfile(int wx, int wz) {
-        long key = profileKey(wx, wz);
-        Long cachedKey = lastProfileKey.get();
-        if (cachedKey != null && cachedKey == key) {
-            ColumnProfile cached = lastProfileCache.get();
-            if (cached != null) return cached;
-        }
-
-        ColumnProfile result = computeColumnProfileVanilla(wx, wz);
-        lastProfileKey.set(key);
-        lastProfileCache.set(result);
-        return result;
-    }
-
-    private ColumnProfile computeColumnProfileVanilla(int wx, int wz) {
-        NoiseBasedChunkGenerator gen = vanillaSource;
-        RandomState random = vanillaRandomState;
-        if (gen == null || random == null) {
-            return new ColumnProfile(BASE_SURFACE_Y, -1);
-        }
-
-        VanillaColumnSampler.Result result = VanillaColumnSampler.sample(
-                gen, random, VANILLA_COLUMN_HEIGHT, wx, wz, LAYER_MIN_Y);
-
-        return new ColumnProfile(result.groundY, result.waterY, false);
-    }
-
     public int surfaceHeight(int wx, int wz) {
-        return columnProfile(wx, wz).groundY;
+        if (vanillaSource == null || vanillaRandomState == null) return BASE_SURFACE_Y;
+        return vanillaSource.getBaseHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, VANILLA_COLUMN_HEIGHT, vanillaRandomState);
     }
 
     public int topmostHeight(int wx, int wz) {
-        ColumnProfile p = columnProfile(wx, wz);
-        return Math.max(p.groundY, p.waterY);
+        if (vanillaSource == null || vanillaRandomState == null) return BASE_SURFACE_Y;
+        return vanillaSource.getBaseHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG, VANILLA_COLUMN_HEIGHT, vanillaRandomState);
     }
 
     @FunctionalInterface

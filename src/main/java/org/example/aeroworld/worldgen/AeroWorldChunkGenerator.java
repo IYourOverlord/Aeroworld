@@ -228,15 +228,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
     }
 
-    // ВРЕМЕННАЯ ДИАГНОСТИКА (баг "мир по-прежнему плоский после удаления
-    // HAUL-01/Layer3StructurePlacer, 29.08.2026") — логирует на уровне INFO
-    // (не debug, чтобы точно попасть в лог при дефолтных настройках)
-    // первый вызов init() с новым RandomState: seed, null ли vanillaGenerator
-    // (поле-конструктор, не должно быть null), и что реально возвращает
-    // vanillaGenerator.getBaseColumn(0,0,...) сразу после setVanillaSource —
-    // сырую высоту дна для контрольной точки (0,0).
-    private final java.util.concurrent.atomic.AtomicBoolean DIAG_INIT_LOGGED =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean DIAG_INIT_LOGGED = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private void init(RandomState randomState) {
         if (randomState == lastRandomState) return; // fast-path: same instance → already initialised
@@ -255,27 +247,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
             AeroWorld.LOGGER.info(
                     "[AeroWorld][DIAG] init(): seed={} vanillaGenerator={} layer1={}",
                     seed, vanillaGenerator, layer1);
-            if (vanillaGenerator != null && layer1 != null) {
-                // Пробуем НЕСКОЛЬКО удалённых друг от друга точек — если
-                // ванильный рельеф реально плоский (не только в точке 0,0,
-                // которая могла случайно попасть на береговую линию), это
-                // будет видно по одинаковым groundY во всех точках.
-                // Дополнительно логируем то, что видит СAM layer1 через
-                // columnProfile() — если тут разброс есть, а в игре рельеф
-                // плоский, значит баг ниже по цепочке (fillChunk/getBaseHeight).
-                int[][] probePoints = { {0,0}, {500,500}, {-800,300}, {2000,-1500}, {100,4000} };
-                for (int[] p : probePoints) {
-                    try {
-                        Layer1FlatGenerator.ColumnProfile prof = layer1.columnProfile(p[0], p[1]);
-                        AeroWorld.LOGGER.info(
-                                "[AeroWorld][DIAG] columnProfile({},{}) => groundY={} waterY={} | surfaceHeight={} topmostHeight={}",
-                                p[0], p[1], prof.groundY, prof.waterY,
-                                layer1.surfaceHeight(p[0], p[1]), layer1.topmostHeight(p[0], p[1]));
-                    } catch (Throwable t) {
-                        AeroWorld.LOGGER.error("[AeroWorld][DIAG] columnProfile(" + p[0] + "," + p[1] + ") THREW:", t);
-                    }
-                }
-            }
         }
     }
 
@@ -430,12 +401,13 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         BlockState[] states = new BlockState[height];
 
-        // ── Layer 1: поверхность -64..surfY (реальная высота по колонке) ────
-        int surfY = layer1.surfaceHeight(x, z);
+        // ── Layer 1: реальная колонка из ванильного генератора ────
+        NoiseColumn vanillaColumn = super.getBaseColumn(x, z, level, random);
         for (int i = 0; i < height; i++) {
             int y = minY + i;
-            if (y >= Layer1FlatGenerator.LAYER_MIN_Y && y <= surfY) {
-                states[i] = (y < 0) ? BS_DEEPSLATE : BS_STONE;
+            if (y >= level.getMinBuildHeight() && y < level.getMinBuildHeight() + level.getHeight()) {
+                BlockState state = vanillaColumn.getBlock(y);
+                states[i] = (state == null) ? BS_AIR_SENTINEL : state;
             } else {
                 states[i] = BS_AIR_SENTINEL;
             }
@@ -649,21 +621,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                     .thenApply(v -> c);
         });
     }
-
-    private Layer1FlatGenerator.BiomeResolver buildBiomeResolver(RandomState randomState) {
-        // Fallback на super.getBiomeSource(), если aeroSource == null (biomeSource
-        // не был MultiNoiseBiomeSource, см. конструктор) — иначе NPE на src.getNoiseBiome(...).
-        AeroBiomeSource cached = aeroSource.get();
-        BiomeSource src = cached != null ? cached : super.getBiomeSource();
-        Climate.Sampler sampler = randomState.sampler();
-        return (wx, wz) -> {
-            Holder<Biome> biome = src.getNoiseBiome(wx >> 2, 12, wz >> 2, sampler);
-            return biome.unwrapKey()
-                    .map(k -> k.location())
-                    .orElse(ResourceLocation.withDefaultNamespace("plains"));
-        };
-    }
-
     @Override
     public void buildSurface(WorldGenRegion region, StructureManager structureManager,
                              RandomState random, ChunkAccess chunk) {
@@ -674,55 +631,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         vanillaGenerator.buildSurface(region, structureManager, random, chunk);
     }
 
-    private void applyLayer1Surface(ChunkAccess chunk, Layer1FlatGenerator.BiomeResolver biomeResolver) {
-        int baseX = chunk.getPos().x << 4;
-        int baseZ = chunk.getPos().z << 4;
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-
-        for (int lx = 0; lx < 16; lx++) {
-            for (int lz = 0; lz < 16; lz++) {
-                int wx = baseX + lx;
-                int wz = baseZ + lz;
-
-                // biomeResolver кэширует результат Climate.Sampler — без повторного
-                // обращения к шуму. Тот же объект уже использован в fillFromNoise.
-                ResourceLocation biomeKey = biomeResolver.get(wx, wz);
-
-                // Профиль колонки — если это русло реки/озера, fillChunk уже
-                // покрасил дно песком и залил воду; красить поверх грассом не нужно.
-                Layer1FlatGenerator.ColumnProfile profile = layer1.columnProfile(wx, wz);
-                if (profile.waterY != -1) continue;
-
-                int surfaceY = profile.groundY;
-                int subsurfaceY = surfaceY - 1;
-
-                String path = biomeKey.getPath();
-                boolean isSandy    = path.equals("desert")
-                        || path.equals("beach") || path.equals("snowy_beach");
-                boolean isBadlands = path.equals("badlands")
-                        || path.equals("wooded_badlands") || path.equals("eroded_badlands");
-
-                if (isSandy) {
-                    chunk.setBlockState(pos.set(wx, surfaceY, wz), BS_SAND, false);
-                    // На узкой прибрежной кромке (isShoreEdge) fillChunk уже
-                    // оставил под surfaceY воздушную полость (см.
-                    // Layer1FlatGenerator.SHORE_HOLLOW_DEPTH) — не запечатываем
-                    // её вторым слоем песка, иначе полость исчезнет. Для
-                    // остального песчаного рельефа (не кромка) поведение как
-                    // раньше — сплошные 2 блока песка.
-                    if (!profile.isShoreEdge) {
-                        chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_SAND, false);
-                    }
-                } else if (isBadlands) {
-                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_RED_SAND,   false);
-                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_TERRACOTTA,  false);
-                } else {
-                    chunk.setBlockState(pos.set(wx, surfaceY,    wz), BS_GRASS, false);
-                    chunk.setBlockState(pos.set(wx, subsurfaceY, wz), BS_DIRT,        false);
-                }
-            }
-        }
-    }
 
     @Override
     public void applyCarvers(WorldGenRegion region, long seed, RandomState random,
