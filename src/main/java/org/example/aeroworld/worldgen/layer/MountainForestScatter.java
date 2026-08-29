@@ -12,6 +12,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
+import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -144,12 +145,12 @@ public final class MountainForestScatter {
         if (maxProbeHeight < slopeStartY) return;
 
         RegistryAccess registryAccess = region.registryAccess();
-        var placedFeatureRegistry = registryAccess.registryOrThrow(Registries.PLACED_FEATURE);
+        var configuredFeatureRegistry = registryAccess.registryOrThrow(Registries.CONFIGURED_FEATURE);
 
-        List<Holder<PlacedFeature>> available = new ArrayList<>();
+        List<Holder<ConfiguredFeature<?, ?>>> available = new ArrayList<>();
         for (ResourceLocation id : TREE_FEATURE_IDS) {
-            ResourceKey<PlacedFeature> key = ResourceKey.create(Registries.PLACED_FEATURE, id);
-            placedFeatureRegistry.getHolder(key).ifPresent(available::add);
+            ResourceKey<ConfiguredFeature<?, ?>> key = ResourceKey.create(Registries.CONFIGURED_FEATURE, id);
+            configuredFeatureRegistry.getHolder(key).ifPresent(available::add);
         }
         if (available.isEmpty()) return; // на случай отсутствия реестра (тестовые/кастомные datapacks)
 
@@ -182,7 +183,7 @@ public final class MountainForestScatter {
             // ниже склона, даже если чанк в целом его задевает.
             if (surfaceY < slopeStartY) continue;
 
-            Holder<PlacedFeature> chosen = available.get(random.nextInt(available.size()));
+            Holder<ConfiguredFeature<?, ?>> chosen = available.get(random.nextInt(available.size()));
             BlockPos pos = new BlockPos(wx, surfaceY + 1, wz);
             try {
                 chosen.value().place(region, chunkGenerator, random, pos);

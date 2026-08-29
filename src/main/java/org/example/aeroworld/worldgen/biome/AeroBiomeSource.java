@@ -88,6 +88,9 @@ public class AeroBiomeSource extends BiomeSource {
     private final AeroNoise humNoise;
     private final AeroNoise rareNoise;
 
+    // Кеш для possibleBiomes, чтобы не отравлять Suppliers.memoize() пустым списком
+    private java.util.Set<Holder<Biome>> cachedBiomes = null;
+
     // ── Конструктор ───────────────────────────────────────────────────────────
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed) {
         this(delegate, seed, null);
@@ -132,22 +135,31 @@ public class AeroBiomeSource extends BiomeSource {
     protected MapCodec<? extends BiomeSource> codec() { return CODEC; }
 
     @Override
+    public java.util.Set<Holder<Biome>> possibleBiomes() {
+        if (this.cachedBiomes == null) {
+            java.util.Set<Holder<Biome>> biomes = collectPossibleBiomes().collect(java.util.stream.Collectors.toSet());
+            // Если вернулись только ванильные биомы из fallback, значит реестр ещё не готов.
+            // НЕ кэшируем результат, чтобы при реальной генерации чанков (когда реестр готов)
+            // список перестроился и включил aeroworld:*.
+            if (biomes.size() <= delegate.possibleBiomes().size()) {
+                return biomes;
+            }
+            this.cachedBiomes = biomes;
+        }
+        return this.cachedBiomes;
+    }
+
+    @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
         Stream<Holder<Biome>> aeroClones = java.util.Arrays.stream(ALL_CLONED_BIOMES)
                 .map(name -> AeroBiomeRegistryCache.get(ResourceLocation.fromNamespaceAndPath("aeroworld", name)))
                 .filter(Optional::isPresent)
                 .map(Optional::get);
 
-        // Ванильные minecraft:* биомы больше не нужны в качестве отдельной ветки:
-        // delegateWithSafety теперь всегда подменяет их на клон aeroworld:*.
-        // Оставляем как последний fallback на случай, если реестр ещё не
-        // прогрелся (AeroBiomeRegistryCache пуст) в момент вызова.
-        // possibleBiomes() не различает Layer 1 и острова (нет Y-контекста
-        // на этом этапе) — здесь НЕ фильтруем ocean/dripstone/lush/deep_dark,
-        // т.к. Layer 1 обязан иметь право вернуть эти биомы (см.
-        // getNoiseBiome/delegateWithSafety). Сами острова по-прежнему
-        // никогда их не получат — фильтрация для них применяется точечно
-        // в delegateWithSafety(..., excludeForIslands=true) при y > LAYER1_MAX_NOISE_Y.
+        // Ванильные minecraft:* биомы ОБЯЗАТЕЛЬНЫ — Layer 1 теперь возвращает
+        // их напрямую (не подменяя на aeroworld:*), чтобы ванильные SurfaceRules
+        // корректно применяли поверхностные блоки (песок для пустыни, терракота
+        // для бедлендса и т.д.). aeroworld:* клоны нужны только островам (Layer 2/3/4).
         Stream<Holder<Biome>> vanillaFallback = delegate.possibleBiomes().stream();
 
         return Stream.concat(aeroClones, vanillaFallback);
@@ -205,8 +217,10 @@ public class AeroBiomeSource extends BiomeSource {
         if (blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
             double dd = tempNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
             if (dd > DEEP_DARK_THRESHOLD) {
+                // Используем minecraft:deep_dark — ванильные surface rules
+                // проверяют ResourceKey minecraft:deep_dark, а не aeroworld:*.
                 Optional<Holder<Biome>> deepDark =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "deep_dark"));
+                        findBiome(ResourceLocation.withDefaultNamespace("deep_dark"));
                 if (deepDark.isPresent()) return deepDark.get();
             }
         }
@@ -223,8 +237,10 @@ public class AeroBiomeSource extends BiomeSource {
             int bwz = (int) wz;
             if (layer1.isInsideRingValley(bwx, bwz)) {
                 String forced = layer1.ringValleyBiome(bwx, bwz);
+                // Используем minecraft:* — ванильные surface rules требуют
+                // совпадения ResourceKey (minecraft:forest и т.д.).
                 Optional<Holder<Biome>> forcedBiome =
-                        findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", forced));
+                        findBiome(ResourceLocation.withDefaultNamespace(forced));
                 if (forcedBiome.isPresent()) return forcedBiome.get();
             }
         }
@@ -263,27 +279,32 @@ public class AeroBiomeSource extends BiomeSource {
 
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,
                                               boolean excludeForIslands) {
-        // Реальный ванильный делегат используется ТОЛЬКО как климатический
-        // семплер — чтобы понять, какой биом "подошёл бы" по температуре/
-        // влажности/континентальности в этой точке. Сам Holder<Biome>,
-        // который он возвращает, указывает на настоящий minecraft:* биом
-        // из общего реестра (со всей ванильной рудой) — использовать его
-        // напрямую для генерации на островах нельзя, иначе получаем ровно
-        // тот баг, что был найден (уголь на острове слоя 2).
+        // Реальный ванильный делегат используется как климатический семплер —
+        // чтобы понять, какой биом «подошёл бы» по температуре/влажности/
+        // континентальности в этой точке.
         Holder<Biome> vanilla = delegate.getNoiseBiome(x, y, z, sampler);
+
+        // ── Layer 1 (excludeForIslands == false): возвращаем ванильный биом ──
+        // Ванильные SurfaceRules (из NoiseGeneratorSettings) привязаны к
+        // ResourceKey minecraft:desert / minecraft:badlands / ... — если в
+        // чанке стоит aeroworld:desert, ни одно биом-специфичное правило
+        // поверхности не сработает (ID не совпадает), и вся поверхность
+        // получит дефолтный fallback (grass_block+dirt) вместо песка/
+        // терракоты/подзола. Руды на Layer 1 удаляются постфактум через
+        // Layer1OreFilter — подмена биома для этой цели не нужна.
+        if (!excludeForIslands) {
+            return vanilla;
+        }
+
+        // ── Острова (Layer 2/3/4): подменяем на aeroworld:* клон без руд ─────
         ResourceLocation vanillaId = vanilla.unwrapKey()
                 .map(k -> k.location())
                 .orElse(ResourceLocation.withDefaultNamespace("plains"));
 
-        if (excludeForIslands && isExcludedForIslands(vanillaId)) {
+        if (isExcludedForIslands(vanillaId)) {
             return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains")).orElse(vanilla);
         }
 
-        // Подменяем на наш клон aeroworld:<то же имя> — он либо уже один из
-        // 30 биомов основной/редкой таблицы, либо один из остальных 23
-        // (океаны/пляжи/пещерные и т.д.), склонированных в рамках полного
-        // набора overworld-биомов специально для этого случая — чтобы у
-        // ЛЮБОГО биома, который может прийти с островов, была версия без руды.
         return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", vanillaId.getPath()))
                 .orElseGet(() -> findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains"))
                         .orElse(vanilla));

@@ -7,8 +7,11 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.Biome;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Кеш полного динамического реестра биомов (включая наши клоны aeroworld:*).
@@ -32,7 +35,7 @@ import java.util.Optional;
  */
 public final class AeroBiomeRegistryCache {
 
-    private static volatile Registry<Biome> registry;
+    private static volatile CompletableFuture<Registry<Biome>> REGISTRY_FUTURE = new CompletableFuture<>();
 
     // ФИКС: раньше get() тихо возвращал Optional.empty(), если реестр ещё не
     // заполнен (registry == null) — это молчаливо предполагало, что
@@ -59,7 +62,11 @@ public final class AeroBiomeRegistryCache {
     private AeroBiomeRegistryCache() {}
 
     public static void onServerAboutToStart(ServerAboutToStartEvent event) {
-        registry = event.getServer().registryAccess().registryOrThrow(Registries.BIOME);
+        REGISTRY_FUTURE.complete(event.getServer().registryAccess().registryOrThrow(Registries.BIOME));
+    }
+
+    public static void onServerStopped(ServerStoppedEvent event) {
+        REGISTRY_FUTURE = new CompletableFuture<>();
     }
 
     /** Ищет биом по id в полном реестре. Ждёт прогрева реестра (см. класс-javadoc). */
@@ -70,17 +77,20 @@ public final class AeroBiomeRegistryCache {
     }
 
     private static Registry<Biome> awaitRegistry() {
-        Registry<Biome> reg = registry;
-        if (reg != null) return reg;
-        long deadline = System.currentTimeMillis() + WAIT_TIMEOUT_MS;
-        while (registry == null && System.currentTimeMillis() < deadline) {
-            try {
-                Thread.sleep(5);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return registry;
-            }
+        CompletableFuture<Registry<Biome>> future = REGISTRY_FUTURE;
+        if (future.isDone()) {
+            return future.join();
         }
-        return registry;
+
+        String threadName = Thread.currentThread().getName();
+        if (threadName.equals("Server thread") || threadName.equals("Render thread") || threadName.equals("main")) {
+            return null;
+        }
+
+        try {
+            return future.join();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

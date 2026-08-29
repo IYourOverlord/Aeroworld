@@ -64,6 +64,7 @@ public class AeroWorld {
         // клоны aeroworld:* без руды) сразу после старта сервера — до того,
         // как начнётся генерация хотя бы одного чанка.
         NeoForge.EVENT_BUS.addListener(AeroBiomeRegistryCache::onServerAboutToStart);
+        NeoForge.EVENT_BUS.addListener(AeroBiomeRegistryCache::onServerStopped);
 
         // Game-bus слушатели
         NeoForge.EVENT_BUS.register(new ProximityTriggerHandler());
