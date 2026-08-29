@@ -652,6 +652,11 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Теперь восстановление выполняется сразу же, безусловно, для каждого
         // чанка — независимо от близости игрока.
         restoreIslandsInChunk(chunk);
+
+        // Карстовые воронки (sinkholes) — вырезаются ПОСЛЕ восстановления
+        // островов, чтобы не повредить летающие острова (Layer 2+).
+        // Действуют только на Layer 1 (Y < 300).
+        org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(chunk, seed);
     }
 
     private void restoreIslandsInChunk(ChunkAccess chunk) {
