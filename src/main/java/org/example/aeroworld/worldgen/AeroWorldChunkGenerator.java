@@ -35,7 +35,11 @@ import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
 import org.example.aeroworld.worldgen.structure.ValidationResult;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 
+import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
+import net.minecraft.Util;
+
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -594,47 +598,57 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // и т.д.) вместо самописного плоского заполнения. Ванильный генератор
         // заполняет блоки в диапазоне своих noise settings (-64..320), блоки
         // выше 320 не трогает — Layer 2/3/4 пишут поверх без конфликта.
+        CompletableFuture<ChunkAccess> baseFuture;
+
         if (chunkMinY <= Layer1FlatGenerator.LAYER_MAX_Y
                 && chunkMaxY >= Layer1FlatGenerator.LAYER_MIN_Y) {
-            vanillaGenerator.fillFromNoise(blender, randomState, structureManager, chunk).join();
-
+            baseFuture = vanillaGenerator.fillFromNoise(blender, randomState, structureManager, chunk);
+        } else {
+            baseFuture = CompletableFuture.completedFuture(chunk);
         }
 
-        // Layer 2 (Lower Islands): Y 300..400
-        if (chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
-            lowerIslands.fillChunk(chunk, chunkX, chunkZ);
-            // Регистрируем структуры Layer 2 здесь (не в applyBiomeDecoration):
-            // структуру здесь, а не в applyBiomeDecoration, иначе для чанков
-            // вдали от игрока tank_11 никогда не попадёт в scheduler.
-            if (structurePlacer != null) {
-                structurePlacer.placeForChunk(chunk, lowerIslands,
-                        RandomSource.create(
-                                worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xDEADBEEFL));
+        return baseFuture.thenCompose(c -> {
+            SectionDirectChunkWriter directWriter = new SectionDirectChunkWriter(c);
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+            // Layer 2 (Lower Islands): Y 300..400
+            if (chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y
+                    && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
+                futures.add(CompletableFuture.runAsync(() -> {
+                    lowerIslands.fillChunk(directWriter, chunkX, chunkZ);
+                }, Util.backgroundExecutor()));
+
+                // Регистрируем структуры Layer 2
+                if (structurePlacer != null) {
+                    structurePlacer.placeForChunk(c, lowerIslands,
+                            RandomSource.create(
+                                    worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xDEADBEEFL));
+                }
             }
-        }
 
-        // Layer 3 (High Islands): Y 1000..1100
-        if (chunkMinY <= HighIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
-            highIslands.fillChunk(chunk, chunkX, chunkZ);
-            // Layer3StructurePlacer (HAUL-01.excraft) удалён полностью —
-            // ResourceLocation.fromNamespaceAndPath("excraft", "HAUL-01")
-            // кидал ResourceLocationException (заглавные буквы/дефис
-            // недопустимы в пути ResourceLocation) в статическом
-            // инициализаторе класса, что приводило к ExceptionInInitializerError
-            // → initializeWithSeed() падал на КАЖДОМ вызове → layer1 и
-            // остальные seed-зависимые поля никогда не создавались → весь
-            // мир генерировался плоским (см. диагностику 29.08.2026).
-        }
+            // Layer 3 (High Islands): Y 1000..1100
+            if (chunkMinY <= HighIslandGenerator.LAYER_MAX_Y
+                    && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
+                futures.add(CompletableFuture.runAsync(() -> {
+                    highIslands.fillChunk(directWriter, chunkX, chunkZ);
+                }, Util.backgroundExecutor()));
+            }
 
-        // Layer 4 (Upper Islands): Y 1900..2031
-        if (chunkMinY <= UpperIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= UpperIslandGenerator.LAYER_MIN_Y) {
-            upperIslands.fillChunk(chunk, chunkX, chunkZ);
-        }
+            // Layer 4 (Upper Islands): Y 1900..2031
+            if (chunkMinY <= UpperIslandGenerator.LAYER_MAX_Y
+                    && chunkMaxY >= UpperIslandGenerator.LAYER_MIN_Y) {
+                futures.add(CompletableFuture.runAsync(() -> {
+                    upperIslands.fillChunk(directWriter, chunkX, chunkZ);
+                }, Util.backgroundExecutor()));
+            }
 
-        return CompletableFuture.completedFuture(chunk);
+            if (futures.isEmpty()) {
+                return CompletableFuture.completedFuture(c);
+            }
+
+            return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .thenApply(v -> c);
+        });
     }
 
     private Layer1FlatGenerator.BiomeResolver buildBiomeResolver(RandomState randomState) {

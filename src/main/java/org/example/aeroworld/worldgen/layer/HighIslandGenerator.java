@@ -11,6 +11,8 @@ import org.example.aeroworld.worldgen.cache.IslandCache;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
+import org.example.aeroworld.worldgen.util.ChunkWriter;
+import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
 import org.example.aeroworld.config.Layer3Settings;
 import org.slf4j.Logger;
 
@@ -146,6 +148,10 @@ public class HighIslandGenerator {
     // ── Заполнение чанка ──────────────────────────────────────────────────────
 
     public void fillChunk(ChunkAccess chunk, int chunkX, int chunkZ) {
+        fillChunk(new ChunkAccessWriter(chunk), chunkX, chunkZ);
+    }
+
+    public void fillChunk(ChunkWriter chunk, int chunkX, int chunkZ) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
 
@@ -207,8 +213,7 @@ public class HighIslandGenerator {
                         double dyInv = (wy - cy) * invAy;
                         if (xzSq + dyInv * dyInv > 1.0) continue;
 
-                        pos.set(wx, wy, wz);
-                        chunk.setBlockState(pos, BS_STONE, false);
+                        chunk.setBlockState(wx, wy, wz, BS_STONE);
                     }
                 }
             }

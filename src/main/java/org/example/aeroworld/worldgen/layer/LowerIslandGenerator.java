@@ -13,6 +13,8 @@ import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.noise.IslandShape;
+import org.example.aeroworld.worldgen.util.ChunkWriter;
+import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
 import org.example.aeroworld.config.Layer2Settings;
 
 import java.util.ArrayList;
@@ -164,6 +166,10 @@ public class LowerIslandGenerator {
     // ── Заполнение чанка ──────────────────────────────────────────────────────
 
     public void fillChunk(ChunkAccess chunk, int chunkX, int chunkZ) {
+        fillChunk(new ChunkAccessWriter(chunk), chunkX, chunkZ);
+    }
+
+    public void fillChunk(ChunkWriter chunk, int chunkX, int chunkZ) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
 
@@ -246,8 +252,7 @@ public class LowerIslandGenerator {
                                             ? BS_DIRT
                                             : BS_STONE;
                                 }
-                                pos.set(wx, wy, wz);
-                                chunk.setBlockState(pos, block, false);
+                                chunk.setBlockState(wx, wy, wz, block);
                             }
                             prevSolid = solid;
                         }
@@ -307,7 +312,7 @@ public class LowerIslandGenerator {
      * выходит за границы чанка. Возвращает высоту верхнего блока ствола или -1
      * если дерево здесь не растёт.
      */
-    private int placeTrunk(ChunkAccess chunk, int wx, int wz,
+    private int placeTrunk(ChunkWriter chunk, int wx, int wz,
                             int surfaceY, BlockPos.MutableBlockPos pos) {
         if (surfaceY < 0) return -1;
         double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
@@ -321,8 +326,8 @@ public class LowerIslandGenerator {
                 ? BS_BIRCH_LOG
                 : BS_OAK_LOG;
         for (int dy = 1; dy <= trunkHeight; dy++) {
-            pos.set(wx, surfaceY + dy, wz);
-            if (chunk.getBlockState(pos).isAir()) chunk.setBlockState(pos, log, false);
+            int wy = surfaceY + dy;
+            if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, log);
         }
         return surfaceY + trunkHeight;
     }
@@ -409,7 +414,7 @@ public class LowerIslandGenerator {
 
     // ── Мосты ─────────────────────────────────────────────────────────────────
 
-    private void fillBridges(ChunkAccess chunk, int wx, int wz,
+    private void fillBridges(ChunkWriter chunk, int wx, int wz,
                              IslandData src, List<BridgePair> pairs,
                              BlockPos.MutableBlockPos pos) {
         for (BridgePair bp : pairs) {
@@ -426,11 +431,11 @@ public class LowerIslandGenerator {
             if (perpDistSq > bridgeWidth * bridgeWidth) continue;
 
             for (int dy = 0; dy <= 1; dy++) {
-                pos.set(wx, bp.bridgeY() + dy, wz);
+                int wy = bp.bridgeY() + dy;
                 BlockState bridgeBlock = (dy == 0)
                         ? BS_OAK_LOG
                         : BS_MANGROVE;
-                if (chunk.getBlockState(pos).isAir()) chunk.setBlockState(pos, bridgeBlock, false);
+                if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, bridgeBlock);
             }
         }
     }

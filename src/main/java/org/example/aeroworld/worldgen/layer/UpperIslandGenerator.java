@@ -11,6 +11,8 @@ import org.example.aeroworld.worldgen.cache.IslandCache;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
+import org.example.aeroworld.worldgen.util.ChunkWriter;
+import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
 import org.example.aeroworld.config.Layer4Settings;
 import org.slf4j.Logger;
 
@@ -151,9 +153,11 @@ public class UpperIslandGenerator {
         return getIslandData(cx, cz).radius;
     }
 
-    // ── Заполнение чанка ──────────────────────────────────────────────────────
-
     public void fillChunk(ChunkAccess chunk, int chunkX, int chunkZ) {
+        fillChunk(new ChunkAccessWriter(chunk), chunkX, chunkZ);
+    }
+
+    public void fillChunk(ChunkWriter chunk, int chunkX, int chunkZ) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
 
@@ -195,16 +199,14 @@ public class UpperIslandGenerator {
                     // ── Шапка ─────────────────────────────────────────────────
                     for (int wy = capBaseY; wy <= d.topY; wy++) {
                         if (!isCapSolid(wx, wy, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) continue;
-                        pos.set(wx, wy, wz);
-                        chunk.setBlockState(pos, BS_STONE, false);
+                        chunk.setBlockState(wx, wy, wz, BS_STONE);
                     }
 
                     // ── Щупальца — данные уже в IslandData, повторных вычислений нет ──
                     for (int wy = tentacleFloor; wy < capBaseY; wy++) {
                         if (!isTentacleSolid(wx, wy, wz, capBaseY, tentacleFloor,
                                 d.tentacleData, tentXZ)) continue;
-                        pos.set(wx, wy, wz);
-                        chunk.setBlockState(pos, BS_STONE, false);
+                        chunk.setBlockState(wx, wy, wz, BS_STONE);
                     }
                 }
             }
