@@ -74,6 +74,20 @@ final class VanillaColumnSampler {
         }
     }
 
+    private static final class ChunkCache {
+        final ExposedNoiseChunk chunk;
+        final int cellOriginX;
+        final int cellOriginZ;
+
+        ChunkCache(ExposedNoiseChunk chunk, int cellOriginX, int cellOriginZ) {
+            this.chunk = chunk;
+            this.cellOriginX = cellOriginX;
+            this.cellOriginZ = cellOriginZ;
+        }
+    }
+
+    private static final ThreadLocal<ChunkCache> CHUNK_CACHE = new ThreadLocal<>();
+
     /**
      * {@code NoiseChunk.getInterpolatedState()} объявлен как {@code
      * protected} — недоступен извне пакета {@code
@@ -144,14 +158,23 @@ final class VanillaColumnSampler {
         double dx = (double) Math.floorMod(wx, cellWidth) / (double) cellWidth;
         double dz = (double) Math.floorMod(wz, cellWidth) / (double) cellWidth;
 
-        Aquifer.FluidPicker fluidPicker = createFluidPicker(settings);
+        ChunkCache cache = CHUNK_CACHE.get();
+        ExposedNoiseChunk noiseChunk;
 
-        ExposedNoiseChunk noiseChunk = new ExposedNoiseChunk(
-                1, random, cellOriginX, cellOriginZ, noiseSettings,
-                NO_BEARDS, settings, fluidPicker, Blender.empty());
-
-        noiseChunk.initializeForFirstCellX();
-        noiseChunk.advanceCellX(0);
+        if (cache != null && cache.cellOriginX == cellOriginX && cache.cellOriginZ == cellOriginZ) {
+            noiseChunk = cache.chunk;
+        } else {
+            if (cache != null) {
+                cache.chunk.stopInterpolation();
+            }
+            Aquifer.FluidPicker fluidPicker = createFluidPicker(settings);
+            noiseChunk = new ExposedNoiseChunk(
+                    1, random, cellOriginX, cellOriginZ, noiseSettings,
+                    NO_BEARDS, settings, fluidPicker, Blender.empty());
+            noiseChunk.initializeForFirstCellX();
+            noiseChunk.advanceCellX(0);
+            CHUNK_CACHE.set(new ChunkCache(noiseChunk, cellOriginX, cellOriginZ));
+        }
 
         int waterY  = -1;
         int groundY = groundFallback;
@@ -179,7 +202,6 @@ final class VanillaColumnSampler {
             }
         }
 
-        noiseChunk.stopInterpolation();
         return new Result(groundY, waterY);
     }
 }

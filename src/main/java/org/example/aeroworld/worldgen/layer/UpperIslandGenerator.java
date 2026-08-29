@@ -173,11 +173,13 @@ public class UpperIslandGenerator {
             if (d.radius < minRadius) continue;
             if (d.height() < minHeight) continue;
 
+            // AABB ранний выход
+            double margin = Math.max(d.radius, tentacleBend * 2.0) + CAP_NOISE_DEF;
+            if (d.cx + margin < baseX || d.cx - margin > baseX + 15) continue;
+            if (d.cz + margin < baseZ || d.cz - margin > baseZ + 15) continue;
+
             int capBaseY     = d.bottomY + d.height() / 3;
             int tentacleFloor = Math.max(LAYER_MIN_Y - tentacleMaxLen, -64);
-
-            int expectedSolid = 0;
-            int placedSolid   = 0;
 
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
@@ -191,38 +193,17 @@ public class UpperIslandGenerator {
                     // ── Шапка ─────────────────────────────────────────────────
                     for (int wy = capBaseY; wy <= d.topY; wy++) {
                         if (!isCapSolid(wx, wy, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) continue;
-                        expectedSolid++;
                         pos.set(wx, wy, wz);
                         chunk.setBlockState(pos, BS_STONE, false);
-                        if (chunk.getBlockState(pos).isAir()) {
-                            logHole(chunkX, chunkZ, wx, wy, wz, d.cx, d.cz, "шапка→AIR");
-                        } else {
-                            placedSolid++;
-                        }
                     }
 
                     // ── Щупальца — данные уже в IslandData, повторных вычислений нет ──
                     for (int wy = tentacleFloor; wy < capBaseY; wy++) {
                         if (!isTentacleSolid(wx, wy, wz, capBaseY, tentacleFloor,
                                 d.tentacleData, tentXZ)) continue;
-                        expectedSolid++;
                         pos.set(wx, wy, wz);
                         chunk.setBlockState(pos, BS_STONE, false);
-                        if (chunk.getBlockState(pos).isAir()) {
-                            logHole(chunkX, chunkZ, wx, wy, wz, d.cx, d.cz, "щупальце→AIR");
-                        } else {
-                            placedSolid++;
-                        }
                     }
-                }
-            }
-
-            if (expectedSolid > 0 && placedSolid < expectedSolid) {
-                int lost = expectedSolid - placedSolid;
-                if (lost * 100 / expectedSolid >= 1) {
-                    LOGGER.warn("[AeroWorld][L4-JELLY] СТАТ chunk=[{},{}] остров@({},{}) " +
-                                    "ожидалось={} поставлено={} ПОТЕРИ={}",
-                            chunkX, chunkZ, d.cx, d.cz, expectedSolid, placedSolid, lost);
                 }
             }
         }

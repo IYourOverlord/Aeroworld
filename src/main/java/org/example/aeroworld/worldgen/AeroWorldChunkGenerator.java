@@ -31,7 +31,7 @@ import org.example.aeroworld.worldgen.feature.*;
 import org.example.aeroworld.worldgen.layer.*;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
-import org.example.aeroworld.worldgen.structure.StructureCavityCarver;
+
 import org.example.aeroworld.worldgen.structure.ValidationResult;
 
 import java.util.List;
@@ -107,12 +107,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
     private volatile StructureSupportValidator structureValidator;
 
-    private final Layer1OreGenerator layer1Ores = new Layer1OreGenerator();
-    private final Layer2OreGenerator layer2Ores = new Layer2OreGenerator();
-    private final Layer3OreGenerator layer3Ores = new Layer3OreGenerator();
-    private final Layer4OreGenerator layer4Ores = new Layer4OreGenerator();
-    private volatile Layer1SinkholeCarver sinkholeCarver;
-    private volatile Layer1CoralScatter coralScatter;
+
 
     // volatile — читаются (worldSeed в placeForChunk-вызовах, seedInitialized
     // в createStructures) без синхронизации из параллельных C2ME-потоков;
@@ -199,8 +194,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         lowerIslands = new LowerIslandGenerator(seed, settings.layer2(), sharedChunkIslandCache);
         highIslands  = new HighIslandGenerator(seed, settings.layer3(), sharedChunkIslandCache);
         upperIslands = new UpperIslandGenerator(seed, settings.layer4(), sharedChunkIslandCache);
-        sinkholeCarver = new Layer1SinkholeCarver(seed, lowerIslands, highIslands, upperIslands);
-        coralScatter   = new Layer1CoralScatter(seed);
+
 
         structureValidator = new StructureSupportValidator(layer1, lowerIslands, highIslands, upperIslands, sharedChunkIslandCache);
 
@@ -590,18 +584,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 && chunkMaxY >= Layer1FlatGenerator.LAYER_MIN_Y) {
             vanillaGenerator.fillFromNoise(blender, randomState, structureManager, chunk).join();
 
-            // Карстовые воронки под островами слоёв 2/3/4 — карвятся ПОСЛЕ
-            // основного рельефа слоя 1, чтобы "прорезать" уже готовую землю,
-            // а не пытаться предсказать её заранее.
-            if (sinkholeCarver != null) {
-                sinkholeCarver.carveChunk(chunk, chunkX, chunkZ);
-            }
-
-            // Кораллы на пляжном песке у кромки воды — тоже после основного
-            // рельефа, т.к. зависит от финальной раскладки песка/суши.
-            if (coralScatter != null) {
-                coralScatter.scatter(chunk, chunkX, chunkZ, layer1);
-            }
         }
 
         // Layer 2 (Lower Islands): Y 300..400

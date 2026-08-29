@@ -13,6 +13,7 @@ import org.example.aeroworld.config.AeroWorldConfig;
 import org.example.aeroworld.command.AeroWorldCommands;
 import org.example.aeroworld.event.AeroStructureListener;
 import org.example.aeroworld.event.ProximityTriggerHandler;
+import org.example.aeroworld.event.SpawnerProximityHandler;
 import org.example.aeroworld.event.ShorelineWaveHandler;
 import org.example.aeroworld.registry.AeroRegistries;
 import org.example.aeroworld.structure.IslandStructureScheduler;
@@ -66,6 +67,7 @@ public class AeroWorld {
 
         // Game-bus слушатели
         NeoForge.EVENT_BUS.register(new ProximityTriggerHandler());
+        NeoForge.EVENT_BUS.register(new SpawnerProximityHandler());
         NeoForge.EVENT_BUS.register(new ShorelineWaveHandler());
         NeoForge.EVENT_BUS.register(AeroStructureListener.class);
 

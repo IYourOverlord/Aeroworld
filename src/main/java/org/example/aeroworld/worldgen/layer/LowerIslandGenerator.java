@@ -195,6 +195,15 @@ public class LowerIslandGenerator {
             }
         }
 
+        // Precalculate AABB bounds to skip terrain generation for islands outside the chunk
+        boolean[] inBounds = new boolean[islandData.length];
+        for (int i = 0; i < islandData.length; i++) {
+            IslandData d = islandData[i];
+            double margin = NOISE_DEFORM + d.radius;
+            inBounds[i] = !(d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
+                            d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
+        }
+
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (int lx = 0; lx < 16; lx++) {
@@ -202,46 +211,50 @@ public class LowerIslandGenerator {
                 int wx = baseX + lx;
                 int wz = baseZ + lz;
 
-                for (IslandData d : islandData) {
-                    // Precompute XZ-deformation once per column per island (outside Y-loop).
-                    // Eliminates 9 noise calls × (topY - bottomY) per column.
-                    // Горячий путь: передаём profile + noiseIntensity из IslandData.
-                    // computeNoiseIntensity() и computeProfile() не вызываются.
-                    IslandShape.XZCache xz = shape.precomputeXZ(
-                            wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
-                            d.shapeNoiseIntensity, d.shapeProfile);
+                for (int i = 0; i < islandData.length; i++) {
+                    IslandData d = islandData[i];
 
-                    // Terrain blocks — top-down pass so we know surface/subsurface without
-                    // re-calling isSolid. prevSolid=false means current block is exposed at top
-                    // → surface; depthFromSurface tracks subsurface depth (1–3 = DIRT).
-                    boolean prevSolid = false; // solid state of the block one step ABOVE
-                    int depthFromSurface = 0;
-                    int surfaceY = -1;
-                    for (int wy = d.topY; wy >= d.bottomY; wy--) {
-                        boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
-                        if (solid) {
-                            BlockState block;
-                            if (!prevSolid) {
-                                // Top exposed face → surface
-                                block = BS_GRASS_BLOCK;
-                                depthFromSurface = 0;
-                                surfaceY = wy;
-                            } else {
-                                depthFromSurface++;
-                                block = depthFromSurface <= 3
-                                        ? BS_DIRT
-                                        : BS_STONE;
+                    if (inBounds[i]) {
+                        // Precompute XZ-deformation once per column per island (outside Y-loop).
+                        // Eliminates 9 noise calls × (topY - bottomY) per column.
+                        // Горячий путь: передаём profile + noiseIntensity из IslandData.
+                        // computeNoiseIntensity() и computeProfile() не вызываются.
+                        IslandShape.XZCache xz = shape.precomputeXZ(
+                                wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                                d.shapeNoiseIntensity, d.shapeProfile);
+
+                        // Terrain blocks — top-down pass so we know surface/subsurface without
+                        // re-calling isSolid. prevSolid=false means current block is exposed at top
+                        // → surface; depthFromSurface tracks subsurface depth (1–3 = DIRT).
+                        boolean prevSolid = false; // solid state of the block one step ABOVE
+                        int depthFromSurface = 0;
+                        int surfaceY = -1;
+                        for (int wy = d.topY; wy >= d.bottomY; wy--) {
+                            boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
+                            if (solid) {
+                                BlockState block;
+                                if (!prevSolid) {
+                                    // Top exposed face → surface
+                                    block = BS_GRASS_BLOCK;
+                                    depthFromSurface = 0;
+                                    surfaceY = wy;
+                                } else {
+                                    depthFromSurface++;
+                                    block = depthFromSurface <= 3
+                                            ? BS_DIRT
+                                            : BS_STONE;
+                                }
+                                pos.set(wx, wy, wz);
+                                chunk.setBlockState(pos, block, false);
                             }
-                            pos.set(wx, wy, wz);
-                            chunk.setBlockState(pos, block, false);
+                            prevSolid = solid;
                         }
-                        prevSolid = solid;
-                    }
 
-                    // Стволы пишем здесь (1 блок в ширину — не вылезают за чанк).
-                    // Листья (±2 блока) пишутся в placeTreesInRegion через WorldGenLevel.
-                    if (isInTreeEdgeBand(xz.distSq, d.radius)) {
-                        placeTrunk(chunk, wx, wz, surfaceY, pos);
+                        // Стволы пишем здесь (1 блок в ширину — не вылезают за чанк).
+                        // Листья (±2 блока) пишутся в placeTreesInRegion через WorldGenLevel.
+                        if (isInTreeEdgeBand(xz.distSq, d.radius)) {
+                            placeTrunk(chunk, wx, wz, surfaceY, pos);
+                        }
                     }
 
                     // Bridges

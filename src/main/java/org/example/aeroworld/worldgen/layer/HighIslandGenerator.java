@@ -162,6 +162,11 @@ public class HighIslandGenerator {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (IslandData d : islandData) {
+            // AABB ранний выход
+            double margin = noiseDeform + d.radius;
+            if (d.cx + margin < baseX || d.cx - margin > baseX + 15) continue;
+            if (d.cz + margin < baseZ || d.cz - margin > baseZ + 15) continue;
+
             // ── Пункт J: заменяем деления на умножение на обратные величины ──
             // 6 делений на каждый из ~25 600 блоков острова → 3 умножения,
             // предвычисленных один раз. Деление на JVM в ~3–5× дороже умножения.
@@ -172,9 +177,6 @@ public class HighIslandGenerator {
             double invAy = 1.0 / ay;
             double invAz = 1.0 / az;
             int    cy    = d.centerY();
-
-            int expectedSolid = 0;
-            int placedSolid   = 0;
 
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
@@ -203,26 +205,9 @@ public class HighIslandGenerator {
                         double dyInv = (wy - cy) * invAy;
                         if (xzSq + dyInv * dyInv > 1.0) continue;
 
-                        expectedSolid++;
                         pos.set(wx, wy, wz);
                         chunk.setBlockState(pos, BS_STONE, false);
-
-                        if (chunk.getBlockState(pos).isAir()) {
-                            logHoleWarning(chunkX, chunkZ, wx, wy, wz, d.cx, d.cz,
-                                    "setBlockState→AIR: ChunkSection отсутствует или Y вне диапазона измерения");
-                        } else {
-                            placedSolid++;
-                        }
                     }
-                }
-            }
-
-            if (expectedSolid > 0 && placedSolid < expectedSolid) {
-                int lost = expectedSolid - placedSolid;
-                if (lost * 100 / expectedSolid >= 1) {
-                    LOGGER.warn("[AeroWorld][L3-SPHERE] СТАТ chunk=[{},{}] остров@({},{}) " +
-                                    "ожидалось={} поставлено={} ПОТЕРИ={}",
-                            chunkX, chunkZ, d.cx, d.cz, expectedSolid, placedSolid, lost);
                 }
             }
         }
