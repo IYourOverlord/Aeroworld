@@ -62,6 +62,10 @@ org.example.aeroworld
     │   ├── UpperIslandGenerator.java    — Layer 4: медузы/щупальца
     │   ├── Layer2StructurePlacer.java   — ставит tank21 в очередь
     │   └── Layer3StructurePlacer.java   — ставит excraft:HAUL-01 в очередь
+    ├── util/
+    │   ├── ChunkWriter.java           — интерфейс записи блоков для абстрагирования от ChunkAccess
+    │   ├── ChunkAccessWriter.java     — адаптер для ChunkAccess
+    │   └── SectionDirectChunkWriter.java — ★ прямая запись в LevelChunkSection для потокобезопасной параллельной генерации слоёв
     └── structure/                 — валидация структур (деревни и т.п.) под кастомный рельеф
         └── StructureSupportValidator.java  — ★ главный класс валидации (вызывается из createStructures)
 ```
@@ -73,9 +77,9 @@ org.example.aeroworld
 Порядок вызовов в пайплайне NeoForge/Minecraft:
 
 1. **`fillFromNoise`** 
-   - Layer 1: делегируется родительскому классу `super.fillFromNoise()` (ванильная amplified генерация 3D-рельефа), затем `sinkholeCarver.carveChunk()` и `coralScatter.scatter()`. (Старый `StructureCavityCarver` удален, так как ванильный шум сам создает нужные полости).
-   - Layer 2, 3, 4: `lowerIslands/highIslands/upperIslands.fillChunk()`.
-   - Размещение структур в очередь (HAUL-01, tank21).
+   - Layer 1: делегируется родительскому классу `super.fillFromNoise()` (ванильная amplified генерация 3D-рельефа).
+   - Layer 2, 3, 4: генерируются **асинхронно в параллельных потоках** (`CompletableFuture.runAsync`) с использованием `SectionDirectChunkWriter` (zero-allocation прямая запись в изолированные `LevelChunkSection`, обходящая разделяемый `Heightmap`).
+   - Размещение структур в очередь (HAUL-01, tank21) также выполняется асинхронно в фоновых потоках вместе со слоями.
 
 2. **`applyCarvers`**
    - Вызывает `super.applyCarvers()` (ванильные пещеры режут рельеф).
@@ -111,6 +115,7 @@ org.example.aeroworld
 2. **Layer 1 полностью ванильный:** Старый самописный класс `Layer1FlatGenerator` больше не используется для заливки блоков и покраски поверхности (его методы `fillChunk` и `applyLayer1Surface` обойдены). 
 3. **Руда отключена:** Генераторы руды закомментированы, а `Layer1OreFilter` активно вырезает всё, что могла добавить ванильная декорация.
 4. **Vault / Trial Spawner:** Находятся внутри островов (Layer 2/3/4). Логика спавна использует ванильные лут-таблицы в ресурсах датапака, а размещение происходит напрямую в `applyBiomeDecoration` через ручную сборку NBT `BlockEntity`.
+5. **Zero-Allocation на горячих путях:** Используется библиотека `fastutil` (`LongArrayList`, упаковка XZ-координат через `ChunkKey.of(long)`) вместо `List<int[]>` в `IslandPlacer` и `ChunkIslandCache`. Это полностью предотвращает GC-паузы и аллокацию массивов `new int[]` при массовом поиске центров островов.
 
 ---
 

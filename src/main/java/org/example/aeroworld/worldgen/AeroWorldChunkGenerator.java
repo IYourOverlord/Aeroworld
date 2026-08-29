@@ -616,14 +616,13 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                     && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
                 futures.add(CompletableFuture.runAsync(() -> {
                     lowerIslands.fillChunk(directWriter, chunkX, chunkZ);
+                    // Регистрируем структуры Layer 2 в фоновом потоке
+                    if (structurePlacer != null) {
+                        structurePlacer.placeForChunk(c, lowerIslands,
+                                RandomSource.create(
+                                        worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xDEADBEEFL));
+                    }
                 }, Util.backgroundExecutor()));
-
-                // Регистрируем структуры Layer 2
-                if (structurePlacer != null) {
-                    structurePlacer.placeForChunk(c, lowerIslands,
-                            RandomSource.create(
-                                    worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xDEADBEEFL));
-                }
             }
 
             // Layer 3 (High Islands): Y 1000..1100
