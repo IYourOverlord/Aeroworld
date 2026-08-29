@@ -1,11 +1,13 @@
 package org.example.aeroworld.worldgen.layer;
 
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.WorldGenLevel;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandCache;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
@@ -166,7 +168,7 @@ public class LowerIslandGenerator {
         int baseZ = chunkZ << 4;
 
         // Список центров — из кэша (при повторном вызове из applyCarvers — бесплатно)
-        List<int[]> centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+        LongArrayList centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
                 key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
 
         if (centres.isEmpty()) return;
@@ -175,8 +177,8 @@ public class LowerIslandGenerator {
         // Это гарантирует, что внутри цикла обращения к islandCache — только хиты.
         IslandData[] islandData = new IslandData[centres.size()];
         for (int i = 0; i < centres.size(); i++) {
-            int[] c = centres.get(i);
-            islandData[i] = getIslandData(c[0], c[1]);
+            long packed = centres.getLong(i);
+            islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
         // Precompute active bridge pairs: dist/roll/bridgeY depend only on island centers.
@@ -339,14 +341,15 @@ public class LowerIslandGenerator {
         int baseX  = chunkX << 4;
         int baseZ  = chunkZ << 4;
 
-        List<int[]> centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+        LongArrayList centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
                 key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
         if (centres.isEmpty()) return;
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        for (int[] c : centres) {
-            IslandData d = getIslandData(c[0], c[1]);
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
 
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {

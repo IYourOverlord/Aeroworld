@@ -18,6 +18,7 @@ import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 
 import java.util.Set;
 
@@ -149,15 +150,15 @@ public final class AeroWorldCommands {
         // MAX_RING=64 → покрывает 64*gridChunks*16 блоков в каждую сторону,
         // с огромным запасом даже для самого редкого пресета (skyblock_classic).
         final int MAX_RING = 64;
-        int[] found = null;
+        long found = IslandPlacer.NO_ISLAND;
         int foundRing = -1;
         search:
         for (int ring = 0; ring <= MAX_RING; ring++) {
             for (int dcx = -ring; dcx <= ring; dcx++) {
                 for (int dcz = -ring; dcz <= ring; dcz++) {
                     if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue; // только периметр кольца
-                    int[] c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
-                    if (c != null) {
+                    long c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (c != IslandPlacer.NO_ISLAND) {
                         found = c;
                         foundRing = ring;
                         break search;
@@ -166,7 +167,7 @@ public final class AeroWorldCommands {
             }
         }
 
-        if (found == null) {
+        if (found == IslandPlacer.NO_ISLAND) {
             source.sendFailure(Component.literal(
                     "[AeroWorld] Остров слоя 4 не найден даже в радиусе " + MAX_RING + " ячеек сетки (~" +
                             (MAX_RING * gridChunks * 16) + " блоков). Это уже похоже на реальную поломку " +
@@ -174,10 +175,10 @@ public final class AeroWorldCommands {
             return 0;
         }
 
-        IslandData data = upperIslands.getIslandData(found[0], found[1]);
+        IslandData data = upperIslands.getIslandData(ChunkKey.x(found), ChunkKey.z(found));
         int teleportY = data.topY + 5;
 
-        final int fx = found[0], fz = found[1], fring = foundRing;
+        final int fx = ChunkKey.x(found), fz = ChunkKey.z(found), fring = foundRing;
         boolean teleported = false;
         if (source.getEntity() instanceof ServerPlayer player) {
             player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());
@@ -245,15 +246,15 @@ public final class AeroWorldCommands {
         int originCellZ = Math.floorDiv(origin.getZ() >> 4, gridChunks);
 
         final int MAX_RING = 64;
-        int[] found = null;
+        long found = IslandPlacer.NO_ISLAND;
         int foundRing = -1;
         search:
         for (int ring = 0; ring <= MAX_RING; ring++) {
             for (int dcx = -ring; dcx <= ring; dcx++) {
                 for (int dcz = -ring; dcz <= ring; dcz++) {
                     if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
-                    int[] c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
-                    if (c != null) {
+                    long c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (c != IslandPlacer.NO_ISLAND) {
                         found = c;
                         foundRing = ring;
                         break search;
@@ -262,7 +263,7 @@ public final class AeroWorldCommands {
             }
         }
 
-        if (found == null) {
+        if (found == IslandPlacer.NO_ISLAND) {
             source.sendFailure(Component.literal(
                     "[AeroWorld] Остров слоя " + layerNumber + " не найден даже в радиусе " + MAX_RING + " ячеек сетки (~" +
                             (MAX_RING * gridChunks * 16) + " блоков). Это уже похоже на реальную поломку " +
@@ -270,10 +271,10 @@ public final class AeroWorldCommands {
             return 0;
         }
 
-        IslandData data = lowerIslands.getIslandData(found[0], found[1]);
+        IslandData data = lowerIslands.getIslandData(ChunkKey.x(found), ChunkKey.z(found));
         int teleportY = data.topY + 5;
 
-        final int fx = found[0], fz = found[1], fring = foundRing;
+        final int fx = ChunkKey.x(found), fz = ChunkKey.z(found), fring = foundRing;
         boolean teleported = false;
         if (source.getEntity() instanceof ServerPlayer player) {
             player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());
@@ -335,15 +336,15 @@ public final class AeroWorldCommands {
         int originCellZ = Math.floorDiv(origin.getZ() >> 4, gridChunks);
 
         final int MAX_RING = 64;
-        int[] found = null;
+        long found = IslandPlacer.NO_ISLAND;
         int foundRing = -1;
         search:
         for (int ring = 0; ring <= MAX_RING; ring++) {
             for (int dcx = -ring; dcx <= ring; dcx++) {
                 for (int dcz = -ring; dcz <= ring; dcz++) {
                     if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
-                    int[] c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
-                    if (c != null) {
+                    long c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (c != IslandPlacer.NO_ISLAND) {
                         found = c;
                         foundRing = ring;
                         break search;
@@ -352,7 +353,7 @@ public final class AeroWorldCommands {
             }
         }
 
-        if (found == null) {
+        if (found == IslandPlacer.NO_ISLAND) {
             source.sendFailure(Component.literal(
                     "[AeroWorld] Остров слоя 3 не найден даже в радиусе " + MAX_RING + " ячеек сетки (~" +
                             (MAX_RING * gridChunks * 16) + " блоков). Это уже похоже на реальную поломку " +
@@ -360,10 +361,10 @@ public final class AeroWorldCommands {
             return 0;
         }
 
-        IslandData data = highIslands.getIslandData(found[0], found[1]);
+        IslandData data = highIslands.getIslandData(ChunkKey.x(found), ChunkKey.z(found));
         int teleportY = data.topY + 5;
 
-        final int fx = found[0], fz = found[1], fring = foundRing;
+        final int fx = ChunkKey.x(found), fz = ChunkKey.z(found), fring = foundRing;
         boolean teleported = false;
         if (source.getEntity() instanceof ServerPlayer player) {
             player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());

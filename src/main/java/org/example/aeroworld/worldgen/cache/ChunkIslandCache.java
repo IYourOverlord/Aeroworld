@@ -1,6 +1,7 @@
 package org.example.aeroworld.worldgen.cache;
 
-import java.util.List;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongFunction;
 
@@ -33,13 +34,10 @@ import java.util.function.LongFunction;
  *   <li>Нет коллизий: разные (layerId, chunkX, chunkZ) → разные ключи.</li>
  * </ul>
  *
- * <p><b>ИСПРАВЛЕНО:</b> прежняя реализация брала младшие 40 бит результата
- * {@code ChunkKey.of(chunkX, chunkZ)} (где {@code chunkX} занимает биты 63..32
- * этого 64-битного значения). Из 40 младших бит {@code chunkX} доставались
- * только 8 младших бит, а не 20, как утверждал комментарий. Чанки, у которых
- * X отличался на кратное 256 (4096 блоков), получали одинаковый ключ кэша —
- * генератор отдавал острова другого чанка, отсюда острова "не на своих
- * местах" на слоях Lower/High/Upper.</p>
+ * <h3>Данные — LongArrayList</h3>
+ * <p>Центры островов упакованы в {@code long} через {@link ChunkKey#of(int,int)},
+ * хранятся в {@link LongArrayList} (fastutil, primitive long[]) — нулевые аллокации
+ * на горячем пути (ни {@code int[]}, ни боксинг {@code Long}).</p>
  *
  * <h3>Размер кэша</h3>
  * Одновременно в генерации находится не более ~128–256 чанков (ванильный
@@ -52,7 +50,7 @@ public final class ChunkIslandCache {
 
     private static final int MAX_SIZE = 1024;
 
-    private final ConcurrentHashMap<Long, List<int[]>> map =
+    private final ConcurrentHashMap<Long, LongArrayList> map =
             new ConcurrentHashMap<>(MAX_SIZE * 2, 0.75f, 8);
 
     // ── Строим составной ключ ──────────────────────────────────────────────────
@@ -87,14 +85,14 @@ public final class ChunkIslandCache {
      * @param chunkZ  координата чанка Z
      * @param factory функция-вычислитель (вызывается минимум раз на (layerId, chunkX, chunkZ))
      */
-    public List<int[]> get(int layerId, int chunkX, int chunkZ,
-                           LongFunction<List<int[]>> factory) {
+    public LongArrayList get(int layerId, int chunkX, int chunkZ,
+                           LongFunction<LongArrayList> factory) {
         long key = composeKey(layerId, chunkX, chunkZ);
-        List<int[]> existing = map.get(key);
+        LongArrayList existing = map.get(key);
         if (existing != null) return existing;
 
         // Боксинг только на cache miss — computeIfAbsent принимает Function<Long,V>
-        List<int[]> computed = map.computeIfAbsent(key, k -> factory.apply(k));
+        LongArrayList computed = map.computeIfAbsent(key, k -> factory.apply(k));
 
         if (map.size() > MAX_SIZE) {
             Long evict = map.keys().nextElement();

@@ -1,10 +1,12 @@
 package org.example.aeroworld.worldgen.layer;
 
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 
 import java.util.List;
 
@@ -55,13 +57,14 @@ public final class Layer3StructurePlacer {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
 
-        List<int[]> centres = sharedChunkCache.get(
+        LongArrayList centres = sharedChunkCache.get(
                 HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
                 key -> generator.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, generator.getSearchRadius()));
 
-        for (int[] centre : centres) {
-            int islandBlockX = centre[0];
-            int islandBlockZ = centre[1];
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            int islandBlockX = ChunkKey.x(packed);
+            int islandBlockZ = ChunkKey.z(packed);
 
             // Обрабатываем только острова, чей центр находится в текущем чанке,
             // чтобы избежать двойной регистрации при обработке соседних чанков.

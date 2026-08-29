@@ -33,7 +33,9 @@ import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
 
 import org.example.aeroworld.worldgen.structure.ValidationResult;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -341,16 +343,20 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         // Layer 4 (Y 1900..2031)
         if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
-            for (int[] c : upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius())) {
-                IslandData d = upperIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
             }
         }
         // Layer 3 (Y 1000..1100)
         if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
-            for (int[] c : highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius())) {
-                IslandData d = highIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 double effR = (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
                 if (dx * dx + dz * dz <= effR * effR) return d.topY + 1;
@@ -358,8 +364,10 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
         // Layer 2 (Y 300..400)
         if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
-            for (int[] c : lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius())) {
-                IslandData d = lowerIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
             }
@@ -432,8 +440,10 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // ── Острова Layer 2–4: только если level покрывает их диапазон ───
         if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            for (int[] c : lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius())) {
-                IslandData d = lowerIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 if (dx * dx + dz * dz > d.radius * d.radius) continue;
                 for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }
@@ -441,8 +451,10 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
         if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            for (int[] c : highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius())) {
-                IslandData d = highIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 double effR = (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
                 if (dx * dx + dz * dz > effR * effR) continue;
@@ -451,8 +463,10 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
         if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            for (int[] c : upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius())) {
-                IslandData d = upperIslands.getIslandData(c[0], c[1]);
+            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 if (dx * dx + dz * dz > d.radius * d.radius) continue;
                 for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }

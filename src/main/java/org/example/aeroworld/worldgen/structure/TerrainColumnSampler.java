@@ -1,14 +1,15 @@
 package org.example.aeroworld.worldgen.structure;
 
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.Layer1FlatGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -164,12 +165,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 2 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer2.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer2.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer2.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer2.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = wx - d.cx, dz = wz - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) {
                     return 2;
@@ -179,12 +181,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 3 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer3.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer3.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer3.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer3.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double effR = (d.ellipsoidAxes != null)
                         ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2])
                         : d.radius;
@@ -197,12 +200,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 4 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     UpperIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer4.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer4.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer4.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer4.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = wx - d.cx, dz = wz - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) {
                     return 4;
@@ -247,12 +251,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 2 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer2.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer2.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer2.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer2.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = wx - d.cx, dz = wz - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) {
                     return d.topY;
@@ -262,12 +267,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 3 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer3.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer3.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer3.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer3.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 // Layer 3 — эллипсоид; для грубой XZ-проверки достаточно
                 // максимальной горизонтальной полуоси (ax или az).
                 double effR = (d.ellipsoidAxes != null)
@@ -282,12 +288,13 @@ public final class TerrainColumnSampler {
 
         // ── Layer 4 ───────────────────────────────────────────────────────────
         {
-            List<int[]> centres = sharedChunkCache.get(
+            LongArrayList centres = sharedChunkCache.get(
                     UpperIslandGenerator.LAYER_ID, chunkX, chunkZ,
                     key -> layer4.getPlacer().getIslandCentresForChunk(
                             chunkX, chunkZ, layer4.getSearchRadius()));
-            for (int[] c : centres) {
-                IslandData d = layer4.getIslandData(c[0], c[1]);
+            for (int i = 0; i < centres.size(); i++) {
+                long packed = centres.getLong(i);
+                IslandData d = layer4.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = wx - d.cx, dz = wz - d.cz;
                 if (dx * dx + dz * dz <= d.radius * d.radius) {
                     return d.topY;
@@ -337,12 +344,13 @@ public final class TerrainColumnSampler {
     private boolean isLayer2Solid(int wx, int y, int wz) {
         if (y < LowerIslandGenerator.LAYER_MIN_Y || y > LowerIslandGenerator.LAYER_MAX_Y) return false;
         int chunkX = wx >> 4, chunkZ = wz >> 4;
-        List<int[]> centres = sharedChunkCache.get(
+        LongArrayList centres = sharedChunkCache.get(
                 LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
                 key -> layer2.getPlacer().getIslandCentresForChunk(
                         chunkX, chunkZ, layer2.getSearchRadius()));
-        for (int[] c : centres) {
-            IslandData d = layer2.getIslandData(c[0], c[1]);
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer2.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
             if (y < d.bottomY || y > d.topY) continue;
             double dx = wx - d.cx, dz = wz - d.cz;
             if (dx * dx + dz * dz <= d.radius * d.radius) return true;
@@ -360,12 +368,13 @@ public final class TerrainColumnSampler {
     private boolean isLayer3Solid(int wx, int y, int wz) {
         if (y < HighIslandGenerator.LAYER_MIN_Y || y > HighIslandGenerator.LAYER_MAX_Y) return false;
         int chunkX = wx >> 4, chunkZ = wz >> 4;
-        List<int[]> centres = sharedChunkCache.get(
+        LongArrayList centres = sharedChunkCache.get(
                 HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
                 key -> layer3.getPlacer().getIslandCentresForChunk(
                         chunkX, chunkZ, layer3.getSearchRadius()));
-        for (int[] c : centres) {
-            IslandData d = layer3.getIslandData(c[0], c[1]);
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer3.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
             if (y < d.bottomY || y > d.topY) continue;
             double effR = (d.ellipsoidAxes != null)
                     ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2])
@@ -386,12 +395,13 @@ public final class TerrainColumnSampler {
     private boolean isLayer4Solid(int wx, int y, int wz) {
         if (y < UpperIslandGenerator.LAYER_MIN_Y || y > UpperIslandGenerator.LAYER_MAX_Y) return false;
         int chunkX = wx >> 4, chunkZ = wz >> 4;
-        List<int[]> centres = sharedChunkCache.get(
+        LongArrayList centres = sharedChunkCache.get(
                 UpperIslandGenerator.LAYER_ID, chunkX, chunkZ,
                 key -> layer4.getPlacer().getIslandCentresForChunk(
                         chunkX, chunkZ, layer4.getSearchRadius()));
-        for (int[] c : centres) {
-            IslandData d = layer4.getIslandData(c[0], c[1]);
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer4.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
             if (y < d.bottomY || y > d.topY) continue;
             double dx = wx - d.cx, dz = wz - d.cz;
             if (dx * dx + dz * dz <= d.radius * d.radius) return true;

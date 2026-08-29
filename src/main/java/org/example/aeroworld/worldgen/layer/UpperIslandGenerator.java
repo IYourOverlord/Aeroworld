@@ -1,10 +1,12 @@
 package org.example.aeroworld.worldgen.layer;
 
 import com.mojang.logging.LogUtils;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandCache;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
@@ -155,7 +157,7 @@ public class UpperIslandGenerator {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
 
-        List<int[]> centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+        LongArrayList centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
                 key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
 
         if (centres.isEmpty()) return;
@@ -163,8 +165,8 @@ public class UpperIslandGenerator {
         // Предвычисляем все IslandData до цикла по блокам
         IslandData[] islandData = new IslandData[centres.size()];
         for (int i = 0; i < centres.size(); i++) {
-            int[] c = centres.get(i);
-            islandData[i] = getIslandData(c[0], c[1]);
+            long packed = centres.getLong(i);
+            islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();

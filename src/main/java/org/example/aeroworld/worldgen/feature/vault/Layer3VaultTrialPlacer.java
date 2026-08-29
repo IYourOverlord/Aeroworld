@@ -5,10 +5,11 @@ import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
+import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 
-import java.util.List;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 /**
  * Layer3-специфичная точка входа для генерации Vault/Trial Spawner на островах
@@ -60,13 +61,14 @@ public final class Layer3VaultTrialPlacer {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
 
-        List<int[]> centres = sharedChunkCache.get(
+        LongArrayList centres = sharedChunkCache.get(
                 HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
                 key -> generator.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, generator.getSearchRadius()));
 
-        for (int[] centre : centres) {
-            int islandBlockX = centre[0];
-            int islandBlockZ = centre[1];
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            int islandBlockX = ChunkKey.x(packed);
+            int islandBlockZ = ChunkKey.z(packed);
 
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
 
