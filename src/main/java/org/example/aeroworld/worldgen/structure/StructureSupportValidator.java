@@ -84,30 +84,29 @@ public final class StructureSupportValidator {
 
     // ── Главная точка входа ───────────────────────────────────────────────────
 
+    public interface Layer1HeightSampler {
+        int getHeight(int x, int z, net.minecraft.world.level.levelgen.Heightmap.Types type);
+    }
+
     /**
      * Валидирует размещение структуры.
      *
      * @param structureId id структуры (например, {@code minecraft:village})
      * @param start       {@link StructureStart} с BoundingBox
+     * @param heightSampler сэмплер высот Layer 1 (из vanillaGenerator)
      * @return {@link ValidationResult} — итог с диагностикой
      */
-    public ValidationResult validate(ResourceLocation structureId, StructureStart start) {
-        return validate(structureId, start, null);
+    public ValidationResult validate(ResourceLocation structureId, StructureStart start,
+                                     Layer1HeightSampler heightSampler) {
+        return validate(structureId, start, null, heightSampler);
     }
 
     /**
-     * Перегрузка с доступом к реальному уровню мира. Если передан не-null
-     * {@code realLevel}, сэмплер будет читать ФАКТИЧЕСКИЕ блоки чанков,
-     * которые уже прошли статус FEATURES (applyCarvers уже применил пещеры),
-     * вместо детерминированного предсказания рельефа — устраняет ложный
-     * accept для деревень, чей фундамент приходится на уже вырезанную
-     * 3D-пещеру Amplified (см. javadoc {@link TerrainColumnSampler#realLevel}).
-     * Используется из {@code applyBiomeDecoration}, где {@code WorldGenLevel}
-     * доступен; из {@code createStructures} передаётся {@code null}, т.к. мир
-     * там ещё не заполнен блоками.
+     * Перегрузка с доступом к реальному уровню мира.
      */
     public ValidationResult validate(ResourceLocation structureId, StructureStart start,
-                                     net.minecraft.world.level.WorldGenLevel realLevel) {
+                                     net.minecraft.world.level.WorldGenLevel realLevel,
+                                     Layer1HeightSampler heightSampler) {
         if (!start.isValid()) {
             return ValidationResult.denied(structureId, StructureCategory.DENY,
                     start.getBoundingBox());
@@ -118,11 +117,7 @@ public final class StructureSupportValidator {
 
         // Сэмплер создаём раньше, чем раньше — теперь он нужен уже на этапе
         // определения категории, а не только для проверки поддержки.
-        // Это тот же самый объект, что использовался и до правки (создание
-        // сэмплера — не тяжёлая операция, все реальные вычисления идут через
-        // уже прогретые ChunkIslandCache/IslandCache и кэшируются внутри
-        // самого сэмплера на время этого вызова validate()).
-        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache, realLevel);
+        TerrainColumnSampler sampler = new TerrainColumnSampler(layer1, layer2, layer3, layer4, sharedChunkCache, realLevel, heightSampler);
 
         // ── ИСПРАВЛЕНИЕ: категория по фактическому слою в XZ-точке, а не по
         //    сырому baseY. Раньше resolveForY(structureId, baseY) полагался

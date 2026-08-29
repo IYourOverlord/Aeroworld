@@ -4,8 +4,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.levelgen.Heightmap;
-import org.example.aeroworld.worldgen.noise.AeroNoise;
 
 /**
  * Генерирует карстовые воронки (sinkholes) в рельефе Layer 1.
@@ -15,22 +13,21 @@ import org.example.aeroworld.worldgen.noise.AeroNoise;
  * с {@link ChunkAccess} — не требует регистрации как {@code WorldCarver},
  * и не зависит от {@code CarvingMask}/{@code Aquifer}.</p>
  *
- * <p>Алгоритм:
- * <ol>
- *   <li>Детерминированный PRNG по (chunkX, chunkZ, worldSeed) решает,
- *       есть ли воронка в этом чанке (вероятность ~1/12).</li>
- *   <li>Если да — выбирает случайные (localX, localZ) внутри чанка,
- *       радиус (15–30 блоков) и глубину (15–35 блоков).</li>
- *   <li>Для каждого блока в радиусе: если расстояние по XZ меньше
- *       текущего радиуса на этой высоте (параболоид) — заменяет
- *       на воздух (или воду, если ниже WATER_LEVEL).</li>
- *   <li>Воронка может выходить за границы чанка — это нормально,
- *       соседний чанк обработает свою часть при своём applyCarvers.</li>
- * </ol>
+ * <p><b>Потокобезопасность:</b> все параметры воронки (центр, радиус,
+ * глубина, surfaceY) вычисляются детерминированно по (worldSeed, chunkX,
+ * chunkZ) и chunk-independent {@link HeightSampler}. Это гарантирует,
+ * что соседние чанки, обрабатываемые параллельно (C2ME), вырежут
+ * идентичные формы на своей стороне границы — никаких «torn chunks».</p>
  */
 public final class SinkholeCarver {
 
     private SinkholeCarver() {}
+
+    /** Детерминированная функция высоты поверхности по мировым координатам. */
+    @FunctionalInterface
+    public interface HeightSampler {
+        int getHeight(int wx, int wz);
+    }
 
     // ── Параметры воронок ─────────────────────────────────────────────
     /** Вероятность воронки в одном чанке (1/CHANCE_INV). */
@@ -51,7 +48,6 @@ public final class SinkholeCarver {
     private static final BlockState AIR   = Blocks.AIR.defaultBlockState();
     private static final BlockState WATER = Blocks.WATER.defaultBlockState();
 
-    // Допустимые блоки для вырезания (твёрдый грунт)
     private static boolean isCarveTarget(BlockState state) {
         return state.is(Blocks.STONE)
                 || state.is(Blocks.DIRT)
@@ -77,87 +73,75 @@ public final class SinkholeCarver {
     }
 
     /**
-     * Пытается вырезать воронку в данном чанке.
-     *
-     * @param chunk     чанк, в котором идёт карвинг
-     * @param worldSeed seed мира
+     * Вычисляет параметры воронки для чанка (ox, oz) из хэша.
+     * Возвращает null если воронки нет (не прошла проверку шанса).
      */
-    public static void carveChunk(ChunkAccess chunk, long worldSeed) {
+    private static long sinkholeHash(long worldSeed, int chunkX, int chunkZ) {
+        return mixSeed(worldSeed, chunkX, chunkZ);
+    }
+
+    /**
+     * Пытается вырезать воронки в данном чанке.
+     *
+     * <p>Использует {@code heightSampler} для получения высоты поверхности
+     * в произвольной мировой координате — гарантирует одинаковый
+     * surfaceY для центра воронки независимо от того, какой чанк
+     * сейчас обрабатывается.</p>
+     *
+     * @param chunk         чанк, в котором идёт карвинг
+     * @param worldSeed     seed мира
+     * @param heightSampler детерминированная функция высоты (не зависит от чанка)
+     */
+    public static void carveChunk(ChunkAccess chunk, long worldSeed,
+                                  HeightSampler heightSampler) {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
+        int minBuildHeight = chunk.getMinBuildHeight();
 
-        // Детерминированный hash — одинаковый результат для одного и того
-        // же чанка при любом порядке загрузки.
-        long hash = mixSeed(worldSeed, chunkX, chunkZ);
-
-        // Шанс генерации: берём младшие биты хэша
-        if (((hash & 0xFFFFL) % CHANCE_INV) != 0) return;
-
-        // Параметры воронки из хэша
-        int localX = (int) ((hash >>> 16) & 0xF);  // 0..15
-        int localZ = (int) ((hash >>> 20) & 0xF);  // 0..15
-        int radius = MIN_RADIUS + (int) (((hash >>> 24) & 0xFF) % (MAX_RADIUS - MIN_RADIUS + 1));
-        int depth  = MIN_DEPTH  + (int) (((hash >>> 32) & 0xFF) % (MAX_DEPTH - MIN_DEPTH + 1));
-
-        int centerWX = (chunkX << 4) + localX;
-        int centerWZ = (chunkZ << 4) + localZ;
-
-        // Высота поверхности в центре воронки
-        int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, localX, localZ);
-
-        // Не генерируем воронки в океане / слишком низко
-        if (surfaceY < WATER_LEVEL + 3) return;
-
-        int bottomY = Math.max(surfaceY - depth, chunk.getMinBuildHeight() + BEDROCK_MARGIN);
-
-        // Вырезаем параболоидную чашу только в пределах ЭТОГО чанка.
-        // Воронка может быть шире 16 блоков — соседние чанки вырежут
-        // свою часть при своём вызове carveChunk (каждый чанк по хэшу
-        // соседей тоже проверит, нужно ли резать).
-
-        // Сначала обработаем «свой» центр
-        carveFromCenter(chunk, centerWX, centerWZ, surfaceY, bottomY, radius);
-
-        // Затем проверяем соседние чанки — может, их воронка заходит к нам
+        // Проверяем ВСЕ чанки в радиусе ±2 (включая текущий) —
+        // воронка в любом из них может заходить в наш чанк.
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
-                if (dx == 0 && dz == 0) continue;
-                int nx = chunkX + dx;
-                int nz = chunkZ + dz;
-                long nhash = mixSeed(worldSeed, nx, nz);
-                if (((nhash & 0xFFFFL) % CHANCE_INV) != 0) continue;
+                int ox = chunkX + dx;
+                int oz = chunkZ + dz;
+                long hash = sinkholeHash(worldSeed, ox, oz);
 
-                int nlx = (int) ((nhash >>> 16) & 0xF);
-                int nlz = (int) ((nhash >>> 20) & 0xF);
-                int nr  = MIN_RADIUS + (int) (((nhash >>> 24) & 0xFF) % (MAX_RADIUS - MIN_RADIUS + 1));
-                int nd  = MIN_DEPTH  + (int) (((nhash >>> 32) & 0xFF) % (MAX_DEPTH - MIN_DEPTH + 1));
+                // Шанс генерации
+                if (((hash & 0xFFFFL) % CHANCE_INV) != 0) continue;
 
-                int ncx = (nx << 4) + nlx;
-                int ncz = (nz << 4) + nlz;
+                // Параметры воронки — детерминированны по хэшу чанка-владельца
+                int localX = (int) ((hash >>> 16) & 0xF);
+                int localZ = (int) ((hash >>> 20) & 0xF);
+                int radius = MIN_RADIUS + (int) (((hash >>> 24) & 0xFF) % (MAX_RADIUS - MIN_RADIUS + 1));
+                int depth  = MIN_DEPTH  + (int) (((hash >>> 32) & 0xFF) % (MAX_DEPTH - MIN_DEPTH + 1));
 
-                // Быстрая проверка: заходит ли воронка соседа в наш чанк?
-                int minWX = chunkX << 4;
-                int minWZ = chunkZ << 4;
-                int maxWX = minWX + 15;
-                int maxWZ = minWZ + 15;
+                int centerWX = (ox << 4) + localX;
+                int centerWZ = (oz << 4) + localZ;
 
-                // Ближайшая точка нашего чанка к центру соседней воронки
-                int closestX = Math.max(minWX, Math.min(maxWX, ncx));
-                int closestZ = Math.max(minWZ, Math.min(maxWZ, ncz));
-                double dist2 = (closestX - ncx) * (closestX - ncx)
-                        + (closestZ - ncz) * (closestZ - ncz);
-                if (dist2 > (double) nr * nr) continue;
+                // Быстрая проверка: заходит ли круг воронки в наш чанк?
+                int myMinWX = chunkX << 4;
+                int myMinWZ = chunkZ << 4;
+                int myMaxWX = myMinWX + 15;
+                int myMaxWZ = myMinWZ + 15;
 
-                // Высоту поверхности в центре соседней воронки мы не можем
-                // запросить напрямую (соседний чанк может быть не загружен).
-                // Берём высоту в НАШЕМ чанке в ближайшей к центру точке.
-                int relX = closestX - (chunkX << 4);
-                int relZ = closestZ - (chunkZ << 4);
-                int nSurf = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, relX, relZ);
-                if (nSurf < WATER_LEVEL + 3) continue;
+                int closestX = Math.max(myMinWX, Math.min(myMaxWX, centerWX));
+                int closestZ = Math.max(myMinWZ, Math.min(myMaxWZ, centerWZ));
+                double dist2 = (double)(closestX - centerWX) * (closestX - centerWX)
+                        + (double)(closestZ - centerWZ) * (closestZ - centerWZ);
+                if (dist2 > (double) radius * radius) continue;
 
-                int nBottom = Math.max(nSurf - nd, chunk.getMinBuildHeight() + BEDROCK_MARGIN);
-                carveFromCenter(chunk, ncx, ncz, nSurf, nBottom, nr);
+                // Высота поверхности в ЦЕНТРЕ воронки — через детерминированный
+                // heightSampler, а НЕ через chunk.getHeight(). Это ключевое
+                // отличие: chunk.getHeight() зависит от того, какой чанк
+                // обрабатывается, и даёт разные surfaceY на границе →
+                // «torn chunks». heightSampler (layer1.topmostHeight) даёт
+                // одинаковый результат для любой (wx,wz) независимо от чанка.
+                int surfaceY = heightSampler.getHeight(centerWX, centerWZ);
+
+                if (surfaceY < WATER_LEVEL + 3) continue;
+
+                int bottomY = Math.max(surfaceY - depth, minBuildHeight + BEDROCK_MARGIN);
+                carveFromCenter(chunk, centerWX, centerWZ, surfaceY, bottomY, radius);
             }
         }
     }
@@ -173,7 +157,6 @@ public final class SinkholeCarver {
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        // Итерируем только по блокам ЭТОГО чанка, попадающим в круг
         int startX = Math.max(minWX, cx - radius);
         int endX   = Math.min(minWX + 15, cx + radius);
         int startZ = Math.max(minWZ, cz - radius);
@@ -183,24 +166,20 @@ public final class SinkholeCarver {
 
         for (int wx = startX; wx <= endX; wx++) {
             for (int wz = startZ; wz <= endZ; wz++) {
-                double dx = wx - cx;
-                double dz = wz - cz;
-                double dist2 = dx * dx + dz * dz;
-                if (dist2 > r2) continue;
+                double ddx = wx - cx;
+                double ddz = wz - cz;
+                double d2 = ddx * ddx + ddz * ddz;
+                if (d2 > r2) continue;
 
-                // Параболоидный профиль: в центре — максимальная глубина,
-                // к краю — выходит на уровень поверхности.
-                double t = dist2 / r2; // 0 в центре, 1 на краю
+                double t = d2 / r2; // 0 в центре, 1 на краю
                 int carveBottom = (int) Math.round(bottomY + (surfaceY - bottomY) * t);
 
-                // Вырезаем сверху вниз
                 for (int y = surfaceY; y >= carveBottom; y--) {
                     pos.set(wx, y, wz);
                     BlockState current = chunk.getBlockState(pos);
                     if (!isCarveTarget(current)) continue;
 
                     if (y <= WATER_LEVEL && carveBottom <= WATER_LEVEL) {
-                        // Дно ниже уровня воды — заливаем водой
                         chunk.setBlockState(pos, WATER, false);
                     } else {
                         chunk.setBlockState(pos, AIR, false);
@@ -211,7 +190,6 @@ public final class SinkholeCarver {
     }
 
     /**
-     * Детерминированный хэш позиции чанка с seed мира.
      * Stafford variant 13 of Murmur3 finalizer.
      */
     private static long mixSeed(long seed, int chunkX, int chunkZ) {

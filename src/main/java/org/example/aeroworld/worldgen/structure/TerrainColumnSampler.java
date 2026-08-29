@@ -109,22 +109,27 @@ public final class TerrainColumnSampler {
                                 LowerIslandGenerator layer2,
                                 HighIslandGenerator  layer3,
                                 UpperIslandGenerator layer4,
-                                ChunkIslandCache     sharedChunkCache) {
-        this(layer1, layer2, layer3, layer4, sharedChunkCache, null);
+                                ChunkIslandCache     sharedChunkCache,
+                                StructureSupportValidator.Layer1HeightSampler heightSampler) {
+        this(layer1, layer2, layer3, layer4, sharedChunkCache, null, heightSampler);
     }
+
+    private final StructureSupportValidator.Layer1HeightSampler heightSampler;
 
     public TerrainColumnSampler(Layer1FlatGenerator  layer1,
                                 LowerIslandGenerator layer2,
                                 HighIslandGenerator  layer3,
                                 UpperIslandGenerator layer4,
                                 ChunkIslandCache     sharedChunkCache,
-                                net.minecraft.world.level.WorldGenLevel realLevel) {
+                                net.minecraft.world.level.WorldGenLevel realLevel,
+                                StructureSupportValidator.Layer1HeightSampler heightSampler) {
         this.layer1            = layer1;
         this.layer2           = layer2;
         this.layer3           = layer3;
         this.layer4           = layer4;
         this.sharedChunkCache = sharedChunkCache;
         this.realLevel        = realLevel;
+        this.heightSampler    = heightSampler;
     }
 
     // ── Публичный API ─────────────────────────────────────────────────────────
@@ -160,8 +165,8 @@ public final class TerrainColumnSampler {
                 // Позиция вне окна WorldGenRegion — откатываемся ниже.
             }
         }
-        int ground = layer1.surfaceHeight(wx, wz);
-        int top    = layer1.topmostHeight(wx, wz);
+        int ground = heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
+        int top    = heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG);
         return top > ground && atY > ground && atY <= top;
     }
 
@@ -299,7 +304,7 @@ public final class TerrainColumnSampler {
         }
 
         // ── Layer 1: реальная высота по колонке (горы/холмы) ───────────────────
-        int surfY = layer1.surfaceHeight(wx, wz);
+        int surfY = heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
         if (isSolidAt(wx, surfY, wz, 1)) {
             return 1;
         }
@@ -387,7 +392,7 @@ public final class TerrainColumnSampler {
         }
 
         // ── Layer 1: реальная высота по колонке (горы/холмы), не константа ────
-        int surfY = layer1.surfaceHeight(wx, wz);
+        int surfY = heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
         if (isSolidAt(wx, surfY, wz, 1)) {
             return surfY;
         }
@@ -424,7 +429,7 @@ public final class TerrainColumnSampler {
                         // детерминированное предсказание ниже.
                     }
                 }
-                return y <= layer1.surfaceHeight(wx, wz) && y >= Layer1FlatGenerator.LAYER_MIN_Y;
+                return y <= heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG) && y >= Layer1FlatGenerator.LAYER_MIN_Y;
             }
             case 2: return isLayer2Solid(wx, y, wz);
             case 3: return isLayer3Solid(wx, y, wz);

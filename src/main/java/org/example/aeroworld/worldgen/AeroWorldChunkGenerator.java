@@ -347,21 +347,17 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
             }
         }
-        // Layer 1 (поверхность) — реальная высота по колонке (горы/холмы),
-        // а не фиксированная константа.
-        //
-        // ВАЖНО про type: ванильная структурная система (деревни, аванпосты
-        // и т.п.) ищет место для постройки через heightmap-типы, означающие
-        // "поверхность мира сверху" — WORLD_SURFACE(_WG), MOTION_BLOCKING(_NO_LEAVES).
-        // Если здесь всегда отдавать дно (surfaceHeight = groundY), структура
-        // в озере/океане получает Y дна и топит здание под водой. Для этих
-        // типов отдаём topmostHeight() — дно ИЛИ поверхность воды, смотря что
-        // выше — как и должен вести себя "мир сверху". OCEAN_FLOOR(_WG) по
-        // смыслу обязан оставаться дном, поэтому не трогаем его.
-        if (isSurfaceFromAboveHeightmap(type)) {
-            return layer1.topmostHeight(x, z) + 1;
-        }
-        return layer1.surfaceHeight(x, z) + 1;
+        // Layer 1 (поверхность) — делегируем напрямую в vanillaGenerator,
+        // а НЕ через layer1.topmostHeight()/surfaceHeight(). Причина:
+        // layer1.setVanillaSource() вызывается из init(RandomState), но
+        // createStructures (→ getBaseHeight) может быть вызван РАНЬШЕ,
+        // когда vanillaSource ещё null — тогда layer1 возвращает
+        // BASE_SURFACE_Y=48 для ВСЕХ точек, и все деревни утопают.
+        // vanillaGenerator — поле класса, всегда доступно; RandomState —
+        // параметр метода getBaseHeight. Вместе они дают корректную высоту
+        // включая воду (WORLD_SURFACE_WG), океанское дно (OCEAN_FLOOR_WG)
+        // и т.д. — именно тот результат, что использует fillFromNoise.
+        return vanillaGenerator.getBaseHeight(x, z, type, level, random);
     }
 
     /**
@@ -490,6 +486,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // фоновой генерации той же деревни лог валидатора молчал). Сначала
         // проверяем getAllStarts() — старты, реально принадлежащие этому
         // чанку, не зависящие от прогретости references соседей.
+        StructureSupportValidator.Layer1HeightSampler heightSampler = (x, z, type) ->
+                vanillaGenerator.getBaseHeight(x, z, type, chunk, structureState.randomState());
+
         Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts = chunk.getAllStarts();
         if (!allStarts.isEmpty()) {
             allStarts.forEach((structure, start) -> {
@@ -499,7 +498,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                         .getKey(structure);
                 if (structureId == null) return;
 
-                ValidationResult result = validator.validate(structureId, start);
+                ValidationResult result = validator.validate(structureId, start, heightSampler);
                 if (!result.accepted) {
                     structureManager.setStartForStructure(
                             SectionPos.of(chunk.getPos(), chunk.getMinSection()),
@@ -538,7 +537,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 return;
             }
 
-            ValidationResult result = validator.validate(structureId, start);
+            ValidationResult result = validator.validate(structureId, start, heightSampler);
             if (!result.accepted) {
                 structureManager.setStartForStructure(
                         SectionPos.of(chunk.getPos(), chunk.getMinSection()),
@@ -683,7 +682,12 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Карстовые воронки (sinkholes) — вырезаются ПОСЛЕ восстановления
         // островов, чтобы не повредить летающие острова (Layer 2+).
         // Действуют только на Layer 1 (Y < 300).
-        org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(chunk, seed);
+        // heightSampler = layer1::topmostHeight — детерминированная функция,
+        // возвращающая одинаковую высоту для (wx,wz) независимо от чанка.
+        if (layer1 != null) {
+            org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(
+                    chunk, seed, layer1::topmostHeight);
+        }
     }
 
     private void restoreIslandsInChunk(ChunkAccess chunk) {
@@ -773,6 +777,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 // той же деревни на Layer 1 лог валидатора молчал вовсе).
                 // getAllStarts() — старты, реально принадлежащие этому чанку,
                 // не зависит от того, проставлены ли references у соседей.
+                StructureSupportValidator.Layer1HeightSampler heightSampler = (x, z, type) ->
+                        vanillaGenerator.getBaseHeight(x, z, type, wgr, randomState);
+
                 Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts =
                         chunk.getAllStarts();
                 if (!allStarts.isEmpty()) {
@@ -784,7 +791,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                                 .getKey(structure);
                         if (structureId == null) return;
 
-                        ValidationResult result = validator.validate(structureId, start, wgr);
+                        ValidationResult result = validator.validate(structureId, start, wgr, heightSampler);
                         if (!result.accepted) {
                             structureManager.setStartForStructure(
                                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),
@@ -816,7 +823,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                                 structure, chunk);
                         if (start == null || start == StructureStart.INVALID_START) return;
 
-                        ValidationResult result = validator.validate(structureId, start, wgr);
+                        ValidationResult result = validator.validate(structureId, start, wgr, heightSampler);
                         if (!result.accepted) {
                             structureManager.setStartForStructure(
                                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),

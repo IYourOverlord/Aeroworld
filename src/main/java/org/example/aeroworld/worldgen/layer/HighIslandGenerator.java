@@ -160,10 +160,27 @@ public class HighIslandGenerator {
 
         if (centres.isEmpty()) return;
 
-        // Предвычисляем все IslandData до цикла по блокам
-        IslandData[] islandData = new IslandData[centres.size()];
+        // Ранний фильтр по AABB: отбрасываем острова, которые физически не могут
+        // задеть текущий чанк. В Layer 3 эллипсоиды могут растягиваться до radius * 1.5.
+        double maxInfluence = maxRadius * 1.5 + noiseDeform;
+        int maxMargin = (int) Math.ceil(maxInfluence);
+        
+        LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
+            int cx = ChunkKey.x(packed);
+            int cz = ChunkKey.z(packed);
+            if (cx + maxMargin < baseX || cx - maxMargin > baseX + 15) continue;
+            if (cz + maxMargin < baseZ || cz - maxMargin > baseZ + 15) continue;
+            filteredCentres.add(packed);
+        }
+
+        if (filteredCentres.isEmpty()) return;
+
+        // Предвычисляем все IslandData до цикла по блокам
+        IslandData[] islandData = new IslandData[filteredCentres.size()];
+        for (int i = 0; i < filteredCentres.size(); i++) {
+            long packed = filteredCentres.getLong(i);
             islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 

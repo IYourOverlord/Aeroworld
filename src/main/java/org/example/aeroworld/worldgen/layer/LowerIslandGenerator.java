@@ -179,11 +179,29 @@ public class LowerIslandGenerator {
 
         if (centres.isEmpty()) return;
 
-        // Предвычисляем данные всех островов ДО вложенного цикла по блокам.
-        // Это гарантирует, что внутри цикла обращения к islandCache — только хиты.
-        IslandData[] islandData = new IslandData[centres.size()];
+        // Ранний фильтр по AABB: отбрасываем острова, которые физически не могут
+        // задеть текущий чанк даже с учётом мостов и искажений.
+        // maxRadius + NOISE_DEFORM (собственный радиус) + bridgeMaxRange (длина моста)
+        double maxInfluence = maxRadius + NOISE_DEFORM + bridgeMaxRange;
+        int maxMargin = (int) Math.ceil(maxInfluence);
+        
+        LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
+            int cx = ChunkKey.x(packed);
+            int cz = ChunkKey.z(packed);
+            if (cx + maxMargin < baseX || cx - maxMargin > baseX + 15) continue;
+            if (cz + maxMargin < baseZ || cz - maxMargin > baseZ + 15) continue;
+            filteredCentres.add(packed);
+        }
+
+        if (filteredCentres.isEmpty()) return;
+
+        // Предвычисляем данные всех островов ДО вложенного цикла по блокам.
+        // Это гарантирует, что внутри цикла обращения к islandCache — только хиты.
+        IslandData[] islandData = new IslandData[filteredCentres.size()];
+        for (int i = 0; i < filteredCentres.size(); i++) {
+            long packed = filteredCentres.getLong(i);
             islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
