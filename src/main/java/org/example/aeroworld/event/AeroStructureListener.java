@@ -26,9 +26,6 @@ public final class AeroStructureListener {
         ServerLevel level  = event.level();
         BlockPos    origin = event.origin();
 
-        AeroWorld.LOGGER.info(
-                "[AeroWorld] Structure '{}' assembled at {} — {} blocks.",
-                event.structureId(), origin, event.blockCount());
 
         // Звуковой эффект появления структуры
         level.playSound(

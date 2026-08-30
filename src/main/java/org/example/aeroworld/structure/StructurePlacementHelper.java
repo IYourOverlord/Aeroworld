@@ -56,9 +56,6 @@ public final class StructurePlacementHelper {
                 }
             }
         } catch (Exception e) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] StructurePlacementHelper: cannot read size of '{}': {}",
-                    nbtLocation, e.getMessage());
         }
         return null;
     }
@@ -87,8 +84,6 @@ public final class StructurePlacementHelper {
             for (int cz = minCZ; cz <= maxCZ; cz++) {
                 ChunkAccess chunk = level.getChunk(cx, cz, ChunkStatus.FULL, false);
                 if (chunk == null) {
-                    AeroWorld.LOGGER.debug(
-                            "[AeroWorld] StructurePlacementHelper: chunk ({},{}) not FULL.", cx, cz);
                     return false;
                 }
             }
@@ -124,8 +119,6 @@ public final class StructurePlacementHelper {
                              origin.getY() + dy,
                              origin.getZ() + dz);
                     if (!level.getBlockState(mpos).isAir()) {
-                        AeroWorld.LOGGER.debug(
-                                "[AeroWorld] StructurePlacementHelper: space occupied at {}.", mpos);
                         return false;
                     }
                 }

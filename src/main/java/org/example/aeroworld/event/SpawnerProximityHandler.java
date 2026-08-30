@@ -109,9 +109,6 @@ public final class SpawnerProximityHandler {
                 structureId = tag.getString("structure_id");
             }
 
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld] SpawnerProximityHandler: player '{}' triggered spawner at {} (structure: {}).",
-                    playerName, pos, structureId);
 
             java.lang.reflect.Method trigger = block.getClass()
                     .getMethod("trigger", ServerLevel.class, BlockPos.class,
@@ -120,22 +117,11 @@ public final class SpawnerProximityHandler {
             boolean success = (boolean) trigger.invoke(block, level, pos, null);
 
             if (success) {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld] SpawnerProximityHandler: structure '{}' placed at {} — SUCCESS.",
-                        structureId, pos.above());
             } else {
-                AeroWorld.LOGGER.warn(
-                        "[AeroWorld] SpawnerProximityHandler: trigger() returned false at {} for structure '{}'.",
-                        pos, structureId);
             }
 
         } catch (NoSuchMethodException e) {
-            AeroWorld.LOGGER.error(
-                    "[AeroWorld] SpawnerProximityHandler: StructureSpawnerBlock has no trigger() method. " +
-                            "API mismatch with physical_structures?", e);
         } catch (Exception e) {
-            AeroWorld.LOGGER.error(
-                    "[AeroWorld] SpawnerProximityHandler: failed to trigger spawner at {}.", pos, e);
         }
     }
 
@@ -144,9 +130,6 @@ public final class SpawnerProximityHandler {
 
         Block b = BuiltInRegistries.BLOCK.get(SPAWNER_BLOCK_ID);
         if (b == null || b == Blocks.AIR) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] SpawnerProximityHandler: '{}' not found in block registry. " +
-                            "physical_structures not loaded?", SPAWNER_BLOCK_ID);
             return null;
         }
 

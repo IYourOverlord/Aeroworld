@@ -244,9 +244,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         if (DIAG_INIT_LOGGED.compareAndSet(false, true)) {
             long seed = seedFrom(randomState);
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld][DIAG] init(): seed={} vanillaGenerator={} layer1={}",
-                    seed, vanillaGenerator, layer1);
         }
     }
 
@@ -470,10 +467,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         StructureSupportValidator validator = structureValidator;
         if (validator == null) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld][StructureVal] createStructures вызван для чанка ({},{}), но structureValidator == null "
-                            + "даже после initializeWithSeed — валидация ПРОПУЩЕНА для этого чанка.",
-                    chunk.getPos().x, chunk.getPos().z);
             return;
         }
 
@@ -509,9 +502,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs = chunk.getAllReferences();
         if (!allRefs.isEmpty()) {
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld][StructureVal] createStructures: чанк ({},{}), всего структур с ссылками в чанке: {}.",
-                    chunk.getPos().x, chunk.getPos().z, allRefs.size());
         }
 
         allRefs.forEach((structure, refs) -> {
@@ -520,9 +510,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                     .getKey(structure);
 
             if (refs.isEmpty()) {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld][StructureVal]   {} в чанке ({},{}): refs пуст (структура ссылается СЮДА с другого чанка, но не отсюда) — пропущено.",
-                        structureId, chunk.getPos().x, chunk.getPos().z);
                 return;
             }
             if (structureId == null) return;
@@ -531,9 +518,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),
                     structure, chunk);
             if (start == null || start == StructureStart.INVALID_START) {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld][StructureVal]   {} в чанке ({},{}): start={} — нет валидного старта В ЭТОМ чанке, валидация невозможна отсюда.",
-                        structureId, chunk.getPos().x, chunk.getPos().z, start);
                 return;
             }
 
@@ -783,7 +767,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts =
                         chunk.getAllStarts();
                 if (!allStarts.isEmpty()) {
-                    net.minecraft.core.RegistryAccess registryAccess = wgr.getLevel().registryAccess();
+                    RegistryAccess registryAccess = wgr.getLevel().registryAccess();
                     allStarts.forEach((structure, start) -> {
                         if (start == null || start == StructureStart.INVALID_START || !start.isValid()) return;
                         ResourceLocation structureId = registryAccess
@@ -796,9 +780,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                             structureManager.setStartForStructure(
                                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),
                                     structure, StructureStart.INVALID_START, chunk);
-                            AeroWorld.LOGGER.warn(
-                                    "[AeroWorld][StructureVal][applyBiomeDecoration-failsafe] REJECTED {} in chunk ({},{}) - createStructures did not run for this generation path.",
-                                    structureId, chunkX, chunkZ);
                         }
                     });
                 }
@@ -810,7 +791,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs =
                         chunk.getAllReferences();
                 if (!allRefs.isEmpty()) {
-                    net.minecraft.core.RegistryAccess registryAccess = wgr.getLevel().registryAccess();
+                    RegistryAccess registryAccess = wgr.getLevel().registryAccess();
                     allRefs.forEach((structure, refs) -> {
                         if (refs.isEmpty()) return;
                         ResourceLocation structureId = registryAccess
@@ -828,9 +809,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                             structureManager.setStartForStructure(
                                     SectionPos.of(chunk.getPos(), chunk.getMinSection()),
                                     structure, StructureStart.INVALID_START, chunk);
-                            AeroWorld.LOGGER.warn(
-                                    "[AeroWorld][StructureVal][applyBiomeDecoration-failsafe] REJECTED {} in chunk ({},{}) - createStructures did not run for this generation path.",
-                                    structureId, chunkX, chunkZ);
                         }
                     });
                 }

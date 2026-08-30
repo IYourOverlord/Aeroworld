@@ -86,9 +86,6 @@ public final class Layer3VaultTrialPlacer {
                     region, generator, island, tier, VaultTrialLootConfig.LAYER_3, rng,
                     chunkX, chunkZ);
 
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] Layer3VaultTrialPlacer: island ({},{}) got tier {}.",
-                    islandBlockX, islandBlockZ, tier);
         }
     }
 

@@ -46,7 +46,6 @@ public class AeroWorld {
     public static IslandStructureScheduler structureScheduler;
 
     public AeroWorld(IEventBus modEventBus, ModContainer modContainer) {
-        LOGGER.info("[AeroWorld] Initializing mod...");
 
         AeroWorldConfig.register(modContainer);
         AeroRegistries.register(modEventBus);
@@ -76,7 +75,6 @@ public class AeroWorld {
         // (нужно вызывать после прегенерации Chunky/C2ME и ДО импорта в Voxy/любой LOD-рендерер)
         NeoForge.EVENT_BUS.addListener(AeroWorldCommands::register);
 
-        LOGGER.info("[AeroWorld] Registration complete. World generation ready.");
     }
 
     // ── Регистрация структур в PhysicalStructures ─────────────────────────────
@@ -112,7 +110,6 @@ public class AeroWorld {
         // прямому запросу пользователя. Файлы blueprints/HAUL-01.excraft и
         // blueprints_reference/HAUL-01.excraft на диске не тронуты.
 
-        LOGGER.info("[AeroWorld] PhysicalStructures registrations complete.");
     }
 
     /** Регистрирует структуру, логируя ошибки без падения. */
@@ -120,13 +117,10 @@ public class AeroWorld {
         try {
             if (PhysicalStructures.isRegistered(def.id())) {
                 // Уже зарегистрирована (например, JSON-файл из датапака) — пропускаем
-                LOGGER.info("[AeroWorld] Structure '{}' already registered, skipping.", def.id());
             } else {
                 PhysicalStructures.registerStructure(def);
-                LOGGER.info("[AeroWorld] Registered structure: {}", def.id());
             }
         } catch (Exception e) {
-            LOGGER.error("[AeroWorld] Failed to register structure '{}': {}", def.id(), e.getMessage());
         }
     }
 
@@ -137,6 +131,5 @@ public class AeroWorld {
         // Наши runtime-регистрации защищены от удаления (registerRuntime),
         // но кеш размеров NBT нужно сбросить — файлы могли измениться.
         StructureSizeCache.invalidate();
-        LOGGER.info("[AeroWorld] Resource reload detected — StructureSizeCache invalidated.");
     }
 }

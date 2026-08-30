@@ -379,8 +379,6 @@ public class UpperIslandGenerator {
                                 int wx, int wy, int wz,
                                 int cx, int cz, String reason) {
         if (holeWarnCount.incrementAndGet() > MAX_HOLE_WARNINGS) return;
-        LOGGER.warn("[AeroWorld][L4-JELLY] ДЫРА chunk=[{},{}] block=({},{},{}) island=({},{}) | {}",
-                chunkX, chunkZ, wx, wy, wz, cx, cz, reason);
     }
 
     public int getCapTopY(int wx, int wz, IslandData d) {

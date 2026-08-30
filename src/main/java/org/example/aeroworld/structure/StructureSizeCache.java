@@ -47,13 +47,7 @@ public final class StructureSizeCache {
         CACHE.put(nbtLocation, size != null ? size : MISSING);
 
         if (size != null) {
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld] StructureSizeCache: cached '{}' → {}x{}x{}.",
-                    nbtLocation, size.getX(), size.getY(), size.getZ());
         } else {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] StructureSizeCache: could not read size for '{}'. Will skip chunk checks.",
-                    nbtLocation);
         }
 
         return size;
@@ -66,7 +60,5 @@ public final class StructureSizeCache {
     public static void invalidate() {
         int size = CACHE.size();
         CACHE.clear();
-        AeroWorld.LOGGER.info("[AeroWorld] StructureSizeCache: invalidated {} entr{}.",
-                size, size == 1 ? "y" : "ies");
     }
 }

@@ -178,25 +178,9 @@ public final class StructureSupportValidator {
         };
 
         if (result.accepted && LOG_ACCEPTED) {
-            LOGGER.debug("[AeroWorld][StructureVal] ПРИНЯТО {} @ {} ratio={} ({}/{})",
-                    structureId,
-                    formatBounds(bounds),
-                    String.format("%.2f", result.supportRatio),
-                    result.supportedSamples,
-                    result.totalSamples);
         }
         if (!result.accepted && LOG_REJECTED) {
-            LOGGER.warn("[AeroWorld][StructureVal] ОТКЛОНЕНО {} [{}] @ {} причина={} ratio={}/{} ({}% < {}%)",
-                    structureId, category, formatBounds(bounds),
-                    result.rejectionReason,
-                    result.supportedSamples, result.totalSamples,
-                    String.format("%.0f", result.supportRatio * 100),
-                    String.format("%.0f", result.requiredRatio * 100));
             if (!result.failingSamples.isEmpty()) {
-                LOGGER.warn("[AeroWorld][StructureVal]   первые несупортированные точки: {}",
-                        result.failingSamples.stream()
-                                .map(s -> "(" + s.x() + "," + s.z() + ")")
-                                .toList());
             }
         }
 
@@ -368,8 +352,6 @@ public final class StructureSupportValidator {
 
     private static void logRejection(ResourceLocation id, BoundingBox bounds, String reason) {
         if (LOG_REJECTED) {
-            LOGGER.warn("[AeroWorld][StructureVal] ОТКЛОНЕНО {} @ {} — {}",
-                    id, formatBounds(bounds), reason);
         }
     }
 

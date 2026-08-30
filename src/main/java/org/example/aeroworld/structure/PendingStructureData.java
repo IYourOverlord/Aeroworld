@@ -89,7 +89,6 @@ public class PendingStructureData extends SavedData {
             long nextRetryTick = e.contains("nextRetry") ? e.getLong("nextRetry") : 0L;
             data.pending.add(new Entry(pos, id, attempts, nextRetryTick));
         }
-        AeroWorld.LOGGER.info("[AeroWorld] PendingStructureData: loaded {} entries.", data.pending.size());
         return data;
     }
 
@@ -130,9 +129,6 @@ public class PendingStructureData extends SavedData {
             if (e.id().equals(id)
                     && e.pos().getX() == pos.getX()
                     && e.pos().getZ() == pos.getZ()) {
-                AeroWorld.LOGGER.debug(
-                        "[AeroWorld] PendingStructureData: duplicate suppressed '{}' at x={} z={}.",
-                        id, pos.getX(), pos.getZ());
                 return;
             }
         }

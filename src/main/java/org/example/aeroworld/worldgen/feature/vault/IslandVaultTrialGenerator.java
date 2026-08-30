@@ -221,9 +221,6 @@ public final class IslandVaultTrialGenerator {
             placed.add(pos);
         }
 
-        AeroWorld.LOGGER.debug(
-                "[AeroWorld] IslandVaultTrialGenerator: island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
-                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
     }
 
     /**
@@ -279,9 +276,6 @@ public final class IslandVaultTrialGenerator {
             placed.add(pos);
         }
 
-        AeroWorld.LOGGER.debug(
-                "[AeroWorld] IslandVaultTrialGenerator: ellipsoid island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
-                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
     }
 
     /**
@@ -348,9 +342,6 @@ public final class IslandVaultTrialGenerator {
             placed.add(pos);
         }
 
-        AeroWorld.LOGGER.debug(
-                "[AeroWorld] IslandVaultTrialGenerator: jellyfish island ({},{}) tier={} placed {} structure(s) in chunk ({},{}).",
-                island.cx, island.cz, tier, placed.size(), chunkX, chunkZ);
     }
 
     /**
@@ -836,26 +827,15 @@ public final class IslandVaultTrialGenerator {
                                                  BlockState state, CompoundTag tag) {
         boolean written = region.setBlock(pos, state, 3);
         if (!written || !region.getBlockState(pos).is(state.getBlock())) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] IslandVaultTrialGenerator: setBlock at {} was rejected by the engine " +
-                    "(likely far-chunk write outside decoration safe-radius) — skipping structure entirely, " +
-                    "no orphaned BlockEntity will be created.",
-                    pos);
             return false;
         }
 
         if (!(state.getBlock() instanceof EntityBlock entityBlock)) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] IslandVaultTrialGenerator: block at {} is not an EntityBlock — skipped NBT.",
-                    pos);
             return false;
         }
 
         BlockEntity be = entityBlock.newBlockEntity(pos, state);
         if (be == null) {
-            AeroWorld.LOGGER.warn(
-                    "[AeroWorld] IslandVaultTrialGenerator: newBlockEntity returned null at {} — skipped NBT.",
-                    pos);
             return false;
         }
 

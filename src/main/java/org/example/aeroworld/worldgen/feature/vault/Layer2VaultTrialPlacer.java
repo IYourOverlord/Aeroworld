@@ -82,9 +82,6 @@ public final class Layer2VaultTrialPlacer {
                     region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
                     chunkX, chunkZ);
 
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] Layer2VaultTrialPlacer: island ({},{}) got tier {}.",
-                    islandBlockX, islandBlockZ, tier);
         }
     }
 

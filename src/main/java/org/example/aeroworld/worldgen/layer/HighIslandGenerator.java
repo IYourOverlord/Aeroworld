@@ -282,8 +282,6 @@ public class HighIslandGenerator {
                                        int wx, int wy, int wz,
                                        int cx, int cz, String reason) {
         if (holeWarnCount.incrementAndGet() > MAX_HOLE_WARNINGS) return;
-        LOGGER.warn("[AeroWorld][L3-SPHERE] ДЫРА chunk=[{},{}] block=({},{},{}) island=({},{}) | {}",
-                chunkX, chunkZ, wx, wy, wz, cx, cz, reason);
     }
     /**
      * Возвращает нормализованное XZ-расстояние ({@code xzSq}) точки (wx, wz)

@@ -72,9 +72,6 @@ public final class Layer3StructurePlacer {
 
             AeroWorld.structureScheduler.enqueue(islandBlockX, islandBlockZ, HAUL_01_ID);
 
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] Layer3StructurePlacer: scheduled '{}' for island centre ({},{}).",
-                    HAUL_01_ID, islandBlockX, islandBlockZ);
         }
     }
 }

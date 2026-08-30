@@ -66,9 +66,6 @@ public final class Layer2StructurePlacer {
 
             AeroWorld.structureScheduler.enqueue(islandBlockX, islandBlockZ, TANK_ID);
 
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] Layer2StructurePlacer: scheduled '{}' for island centre ({},{}).",
-                    TANK_ID, islandBlockX, islandBlockZ);
         }
     }
 }

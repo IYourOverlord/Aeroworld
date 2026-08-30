@@ -6,46 +6,47 @@
       "entries": [
         {
           "type": "minecraft:item",
-          "weight": 500,
           "name": "minecraft:trial_key",
+          "conditions": [
+            {
+              "condition": "minecraft:random_chance",
+              "chance": 0.5
+            }
+          ],
           "functions": [
             {
               "function": "minecraft:set_count",
               "count": { "min": 2, "max": 3 }
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      "rolls": 1,
+      "entries": [
         {
           "type": "minecraft:item",
-          "weight": 165,
+          "weight": 1,
           "name": "minecraft:diamond",
           "functions": [
-            {
-              "function": "minecraft:set_count",
-              "count": { "min": 8, "max": 16 }
-            }
+            { "function": "minecraft:set_count", "count": { "min": 8, "max": 16 } }
           ]
         },
         {
           "type": "minecraft:item",
-          "weight": 165,
+          "weight": 1,
           "name": "minecraft:emerald",
           "functions": [
-            {
-              "function": "minecraft:set_count",
-              "count": { "min": 28, "max": 42 }
-            }
+            { "function": "minecraft:set_count", "count": { "min": 28, "max": 42 } }
           ]
         },
         {
           "type": "minecraft:item",
-          "weight": 170,
+          "weight": 1,
           "name": "minecraft:lapis_lazuli",
           "functions": [
-            {
-              "function": "minecraft:set_count",
-              "count": { "min": 28, "max": 52 }
-            }
+            { "function": "minecraft:set_count", "count": { "min": 28, "max": 52 } }
           ]
         }
       ]

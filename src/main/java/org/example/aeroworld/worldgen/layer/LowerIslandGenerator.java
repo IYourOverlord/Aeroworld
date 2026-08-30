@@ -38,6 +38,13 @@ public class LowerIslandGenerator {
      */
     private static final double TREE_EDGE_BAND_START = 0.6;
 
+    /**
+     * Порог шума для спавна сталактита под нижней поверхностью острова (выше = реже).
+     * AeroNoise.noise2D — classic Perlin, фактическая амплитуда ~[-0.7, 0.7],
+     * поэтому порог держим существенно ниже 1.0.
+     */
+    private static final double STALACTITE_THRESHOLD = 0.15;
+
     // ── Кэшированные BlockState ────────────────────────────────────────────────
     private static final BlockState BS_GRASS_BLOCK  = Blocks.GRASS_BLOCK    .defaultBlockState();
     private static final BlockState BS_DIRT         = Blocks.DIRT           .defaultBlockState();
@@ -64,6 +71,7 @@ public class LowerIslandGenerator {
     private final AeroNoise    heightVariance;
     private final AeroNoise    bridgeNoise;
     private final AeroNoise    treeNoise;
+    private final AeroNoise    stalactiteNoise;
     private final long         seed;
 
     /**
@@ -106,6 +114,7 @@ public class LowerIslandGenerator {
         this.heightVariance = new AeroNoise(worldSeed ^ 0x4L);
         this.bridgeNoise    = new AeroNoise(worldSeed ^ 0x5L);
         this.treeNoise      = new AeroNoise(worldSeed ^ 0x6L);
+        this.stalactiteNoise = new AeroNoise(worldSeed ^ 0x7L);
     }
 
     /** Конструктор с дефолтными настройками для тестов (создаёт собственный ChunkIslandCache). */
@@ -184,7 +193,7 @@ public class LowerIslandGenerator {
         // maxRadius + NOISE_DEFORM (собственный радиус) + bridgeMaxRange (длина моста)
         double maxInfluence = maxRadius + NOISE_DEFORM + bridgeMaxRange;
         int maxMargin = (int) Math.ceil(maxInfluence);
-        
+
         LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
@@ -212,7 +221,7 @@ public class LowerIslandGenerator {
             for (IslandData other : islandData) {
                 if (other.cx == src.cx && other.cz == src.cz) continue;
                 double distSq = (double)(src.cx - other.cx) * (src.cx - other.cx)
-                              + (double)(src.cz - other.cz) * (src.cz - other.cz);
+                        + (double)(src.cz - other.cz) * (src.cz - other.cz);
                 if (distSq > (double) bridgeMaxRange * bridgeMaxRange) continue;
                 long bridgeHash = hash(src.cx, src.cz, other.cx, other.cz);
                 double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
@@ -227,7 +236,7 @@ public class LowerIslandGenerator {
             IslandData d = islandData[i];
             double margin = NOISE_DEFORM + d.radius;
             inBounds[i] = !(d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
-                            d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
+                    d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -255,6 +264,7 @@ public class LowerIslandGenerator {
                         boolean prevSolid = false; // solid state of the block one step ABOVE
                         int depthFromSurface = 0;
                         int surfaceY = -1;
+                        int bottomSurfaceY = -1; // самый нижний solid-блок острова (низ), для сталактитов
                         for (int wy = d.topY; wy >= d.bottomY; wy--) {
                             boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
                             if (solid) {
@@ -271,6 +281,7 @@ public class LowerIslandGenerator {
                                             : BS_STONE;
                                 }
                                 chunk.setBlockState(wx, wy, wz, block);
+                                bottomSurfaceY = wy;
                             }
                             prevSolid = solid;
                         }
@@ -280,6 +291,9 @@ public class LowerIslandGenerator {
                         if (isInTreeEdgeBand(xz.distSq, d.radius)) {
                             placeTrunk(chunk, wx, wz, surfaceY, pos);
                         }
+
+                        // Сталактиты на нижней грани острова (1-3 блока вниз).
+                        placeStalactite(chunk, wx, wz, bottomSurfaceY);
                     }
 
                     // Bridges
@@ -331,7 +345,7 @@ public class LowerIslandGenerator {
      * если дерево здесь не растёт.
      */
     private int placeTrunk(ChunkWriter chunk, int wx, int wz,
-                            int surfaceY, BlockPos.MutableBlockPos pos) {
+                           int surfaceY, BlockPos.MutableBlockPos pos) {
         if (surfaceY < 0) return -1;
         double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
         if (tn < 0.55) return -1;
@@ -348,6 +362,29 @@ public class LowerIslandGenerator {
             if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, log);
         }
         return surfaceY + trunkHeight;
+    }
+
+    /**
+     * Сталактит на нижней грани острова: столбик камня длиной 1-3 блока, растущий вниз
+     * от нижней solid-поверхности. Пишется только в текущий чанк (1×1 по XZ) — безопасно
+     * для ChunkAccess.
+     */
+    private void placeStalactite(ChunkWriter chunk, int wx, int wz, int bottomSurfaceY) {
+        if (bottomSurfaceY < 0) return;
+
+        double sn = stalactiteNoise.noise2D(wx * 0.22 + 1000, wz * 0.22 + 1000);
+        if (sn < STALACTITE_THRESHOLD) return;
+
+        double lenSample = stalactiteNoise.noise2D(wx * 0.37 + 2000, wz * 0.37 + 2000);
+        int length = 1 + (int)((lenSample + 1.0) * 0.5 * 3); // 1..3
+        if (length > 3) length = 3;
+
+        for (int dy = 1; dy <= length; dy++) {
+            int wy = bottomSurfaceY - dy;
+            if (wy < LAYER_MIN_Y) break;
+            if (!chunk.getBlockState(wx, wy, wz).isAir()) break;
+            chunk.setBlockState(wx, wy, wz, BS_STONE);
+        }
     }
 
     /**

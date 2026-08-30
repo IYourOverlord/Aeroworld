@@ -200,15 +200,9 @@ public final class ProximityTriggerHandler {
             }
 
             if (processed % 200 == 0) {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld] forcePlaceAll: {}/{} обработано, {} успешно размещено.",
-                        processed, total, successCount);
             }
         }
 
-        AeroWorld.LOGGER.info(
-                "[AeroWorld] forcePlaceAll: завершено. {}/{} структур размещено успешно.",
-                successCount, total);
         return successCount;
     }
 
@@ -225,10 +219,6 @@ public final class ProximityTriggerHandler {
 
         // ── Лимит попыток ────────────────────────────────────────────────────
         if (entry.isExhausted()) {
-            AeroWorld.LOGGER.error(
-                    "[AeroWorld] Giving up on '{}' at x={} z={} after {} attempts. " +
-                            "Check that the NBT file exists and the island surface is accessible.",
-                    id, x, z, MAX_ATTEMPTS_LOG);
             data.remove(entry);
             return;
         }
@@ -236,9 +226,6 @@ public final class ProximityTriggerHandler {
         // ── 1. Реальная поверхность острова ─────────────────────────────────
         int surfaceY = findRealSurface(level, x, z);
         if (surfaceY < 0) {
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] No surface found at x={} z={} for '{}' (attempt {}/{}).",
-                    x, z, id, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
             data.replaceEntry(entry, entry.withNextRetry(currentTick));
             return;
         }
@@ -255,9 +242,6 @@ public final class ProximityTriggerHandler {
         if (structureSize != null) {
             // ── 3. Все чанки зоны должны быть FULL ──────────────────────────
             if (!StructurePlacementHelper.areChunksReady(level, origin, structureSize)) {
-                AeroWorld.LOGGER.debug(
-                        "[AeroWorld] Chunks not FULL for '{}' at {} (attempt {}/{}).",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
                 return;
             }
@@ -266,10 +250,6 @@ public final class ProximityTriggerHandler {
             // Первые 2 попытки пропускаем: carver-pass мог ещё не восстановить острова.
             if (entry.attempts() >= 2
                     && !StructurePlacementHelper.isSpaceClear(level, origin, structureSize)) {
-                AeroWorld.LOGGER.warn(
-                        "[AeroWorld] Space occupied for '{}' at {} (attempt {}/{}). " +
-                                "Another structure or terrain block is in the way.",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
                 return;
             }
@@ -293,10 +273,6 @@ public final class ProximityTriggerHandler {
 
             if (entry.attempts() >= 2
                     && !StructurePlacementHelper.isSpaceClear(level, origin, fallbackSize)) {
-                AeroWorld.LOGGER.warn(
-                        "[AeroWorld] Space occupied for '{}' at {} (attempt {}/{}). " +
-                                "Another structure or terrain block (e.g. a vault/trial spawner) is in the way.",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
                 return;
             }
@@ -312,14 +288,8 @@ public final class ProximityTriggerHandler {
             // это штатный сценарий и команда Toolgun'а выполняется от консоли.
             boolean ok = StructureSourceProviderRegistry.place(level, origin, id, null);
             if (ok) {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld] Placed '{}' at {} (attempt {}/{}) — SUCCESS (excraft/Toolgun).",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.remove(entry);
             } else {
-                AeroWorld.LOGGER.warn(
-                        "[AeroWorld] excraft placement failed for '{}' at {} (attempt {}/{}). Will retry.",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
             }
             return;
@@ -331,22 +301,12 @@ public final class ProximityTriggerHandler {
 
         switch (result) {
             case SUCCESS -> {
-                AeroWorld.LOGGER.info(
-                        "[AeroWorld] Placed '{}' at {} (attempt {}/{}) — SUCCESS.",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.remove(entry);
             }
             case UNKNOWN_ID -> {
-                AeroWorld.LOGGER.error(
-                        "[AeroWorld] Structure '{}' is not registered in PhysicalStructures. " +
-                                "Add it via PhysicalStructures.registerStructure() or a JSON file. Removing entry.",
-                        defId);
                 data.remove(entry);
             }
             case LOAD_FAILED -> {
-                AeroWorld.LOGGER.warn(
-                        "[AeroWorld] LOAD_FAILED for '{}' at {} (attempt {}/{}). Will retry.",
-                        id, origin, entry.attempts() + 1, MAX_ATTEMPTS_LOG);
                 data.replaceEntry(entry, entry.withNextRetry(currentTick));
             }
         }

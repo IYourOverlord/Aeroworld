@@ -58,9 +58,6 @@ public class IslandStructureScheduler {
                 | ((long)(islandBlockZ >> 4) & 0xFFFFFFFFL) << 32;
 
         if (!seenChunks.add(chunkKey)) {
-            AeroWorld.LOGGER.debug(
-                    "[AeroWorld] Scheduler: duplicate suppressed '{}' at chunk ({},{}).",
-                    id, islandBlockX >> 4, islandBlockZ >> 4);
             return;
         }
 
@@ -68,9 +65,6 @@ public class IslandStructureScheduler {
         BlockPos pos = new BlockPos(islandBlockX, 0, islandBlockZ);
         queue.add(new PendingStructureData.Entry(pos, id));
 
-        AeroWorld.LOGGER.debug(
-                "[AeroWorld] Scheduler: enqueued '{}' at island ({},{}).",
-                id, islandBlockX, islandBlockZ);
     }
 
     // ── Server-thread ─────────────────────────────────────────────────────────
@@ -93,9 +87,6 @@ public class IslandStructureScheduler {
         }
 
         if (count > 0) {
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld] Scheduler: flushed {} new entr{}  to SavedData.",
-                    count, count == 1 ? "y" : "ies");
         }
     }
 
@@ -105,6 +96,5 @@ public class IslandStructureScheduler {
      */
     public void resetSeenChunks() {
         seenChunks.clear();
-        AeroWorld.LOGGER.info("[AeroWorld] Scheduler: seenChunks cache cleared.");
     }
 }
