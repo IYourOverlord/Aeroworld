@@ -817,6 +817,12 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         super.applyBiomeDecoration(region, chunk, structureManager);
 
+        // Очищаем ванильную растительность (деревья/траву из биомов), попавшую
+        // в центральную зону острова Layer 2, где расположены Vault/Trial Spawner.
+        // Кастомные деревья туда и так не ставятся (TREE_EDGE_BAND_START), но
+        // ванильная биомная декорация об этой зоне не знает.
+        if (lowerIslands != null) lowerIslands.clearVanillaVegetationInCentralZone(region, chunk);
+
         // Крупные, кучные, разноплановые деревья на вершинах гор Layer 1 —
         // ванильные горные биомы почти безлесные, это намеренная кастомная
         // декорация поверх обычной. См. javadoc MountainForestScatter.

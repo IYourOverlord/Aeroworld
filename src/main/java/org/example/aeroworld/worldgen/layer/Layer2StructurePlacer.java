@@ -7,6 +7,9 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
+import org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer;
+import org.example.aeroworld.worldgen.feature.vault.VaultTrialSpawnTier;
+import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import java.util.List;
@@ -15,6 +18,11 @@ import java.util.List;
  * Layer2StructurePlacer — регистрирует позиции для структур на островах Layer 2
  * через {@link org.example.aeroworld.structure.IslandStructureScheduler}.
  *
+ * <p>tank21 ставится только на "самых крупных" островах Layer 2: обычных
+ * (не архипелажных) островах или центрах архипелага, для которых тир вольтов/
+ * спавнеров испытаний ({@link VaultTrialSpawnTier}) — {@code RICH}. Спутники
+ * архипелага исключены всегда, так как RICH-тир на них в принципе невозможен
+ * (см. {@code Layer2VaultTrialPlacer}).</p>
  */
 public final class Layer2StructurePlacer {
 
@@ -22,6 +30,7 @@ public final class Layer2StructurePlacer {
     private static final ResourceLocation TANK_ID =
             ResourceLocation.fromNamespaceAndPath("physical_structures", "tank21");
 
+    private final long worldSeed;
     private final ChunkIslandCache sharedChunkCache;
 
     public Layer2StructurePlacer(long worldSeed) {
@@ -29,6 +38,7 @@ public final class Layer2StructurePlacer {
     }
 
     public Layer2StructurePlacer(long worldSeed, ChunkIslandCache sharedChunkCache) {
+        this.worldSeed = worldSeed;
         this.sharedChunkCache = sharedChunkCache;
     }
 
@@ -64,8 +74,30 @@ public final class Layer2StructurePlacer {
             // чтобы избежать двойной регистрации при обработке соседних чанков.
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
 
+            if (!isEligibleForTank(generator, islandBlockX, islandBlockZ)) continue;
+
             AeroWorld.structureScheduler.enqueue(islandBlockX, islandBlockZ, TANK_ID);
 
         }
+    }
+
+    /**
+     * tank21 разрешён только на островах, где Vault/Trial Spawner получит
+     * максимальный тир ({@link VaultTrialSpawnTier#RICH}) — это значит, что
+     * остров не спутник архипелага (RICH на спутниках невозможен по правилам
+     * {@code Layer2VaultTrialPlacer}) и попал в верхнюю часть распределения
+     * тиров по хэшу координат центра.
+     */
+    private boolean isEligibleForTank(LowerIslandGenerator generator, int islandBlockX, int islandBlockZ) {
+        long packed = ChunkKey.of(islandBlockX, islandBlockZ);
+        IslandPlacer placer = generator.getPlacer();
+
+        boolean isSatellite = !placer.isArchipelagoCentre(packed)
+                && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
+                        != IslandPlacer.NO_ISLAND;
+        if (isSatellite) return false;
+
+        VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickTierStatic(worldSeed, islandBlockX, islandBlockZ);
+        return tier == VaultTrialSpawnTier.RICH;
     }
 }
