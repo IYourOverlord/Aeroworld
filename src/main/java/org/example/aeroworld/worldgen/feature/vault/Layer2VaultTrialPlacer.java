@@ -8,6 +8,7 @@ import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
+import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -36,6 +37,16 @@ public final class Layer2VaultTrialPlacer {
     private static final double POOR_CHANCE   = 0.50;
     private static final double MEDIUM_CHANCE = 0.35;
     // RICH_CHANCE — остаток (0.15), вычисляется неявно.
+
+    /**
+     * Вероятности тиров для спутников архипелага. RICH исключён по требованию —
+     * на спутниках может быть только POOR или MEDIUM.
+     */
+    private static final double SATELLITE_POOR_CHANCE = 0.60;
+    // SATELLITE_MEDIUM_CHANCE — остаток (0.40), вычисляется неявно.
+
+    /** Шанс, что вольт/спавнер вообще появится на спутнике архипелага (в отличие от обычного острова/центра — там 100%). */
+    private static final double SATELLITE_SPAWN_CHANCE = 0.25;
 
     private static final double NOISE_DEFORM = 18.0; // должно совпадать с LowerIslandGenerator.NOISE_DEFORM
 
@@ -69,8 +80,17 @@ public final class Layer2VaultTrialPlacer {
 
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
 
+            IslandPlacer placer = generator.getPlacer();
+            boolean isSatellite = !placer.isArchipelagoCentre(packed)
+                    && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
+                            != IslandPlacer.NO_ISLAND;
+
+            if (isSatellite && !rollSatelliteSpawn(islandBlockX, islandBlockZ)) continue;
+
             IslandData island = generator.getIslandData(islandBlockX, islandBlockZ);
-            VaultTrialSpawnTier tier = pickTier(islandBlockX, islandBlockZ);
+            VaultTrialSpawnTier tier = isSatellite
+                    ? pickSatelliteTier(islandBlockX, islandBlockZ)
+                    : pickTier(islandBlockX, islandBlockZ);
 
             RandomSource rng = RandomSource.create(
                     worldSeed
@@ -83,6 +103,41 @@ public final class Layer2VaultTrialPlacer {
                     chunkX, chunkZ);
 
         }
+    }
+
+    /**
+     * Детерминированно решает, появится ли вольт/спавнер на спутнике архипелага
+     * (шанс {@link #SATELLITE_SPAWN_CHANCE}). Центры архипелага и обычные острова
+     * получают структуру всегда — этот roll применяется только к спутникам.
+     */
+    private boolean rollSatelliteSpawn(int islandBlockX, int islandBlockZ) {
+        long h = worldSeed
+                ^ ((long) islandBlockX * 2246822519L)
+                ^ ((long) islandBlockZ * 3266489917L)
+                ^ 0x5A7E177EL;
+        h = h ^ (h >>> 33);
+        h *= 0xFF51AFD7ED558CCDL;
+        h = h ^ (h >>> 33);
+        double roll = ((h >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
+        return roll < SATELLITE_SPAWN_CHANCE;
+    }
+
+    /**
+     * Выбор тира для спутника архипелага — только POOR или MEDIUM, RICH исключён.
+     */
+    private VaultTrialSpawnTier pickSatelliteTier(int islandBlockX, int islandBlockZ) {
+        long h = worldSeed
+                ^ ((long) islandBlockX * 668265263L)
+                ^ ((long) islandBlockZ * 341873128712L)
+                ^ 0x51ED270B7DBL
+                ^ 0xA5C7112EA1L;
+        h = h ^ (h >>> 33);
+        h *= 0xFF51AFD7ED558CCDL;
+        h = h ^ (h >>> 33);
+
+        double roll = ((h >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
+
+        return roll < SATELLITE_POOR_CHANCE ? VaultTrialSpawnTier.POOR : VaultTrialSpawnTier.MEDIUM;
     }
 
     /**
