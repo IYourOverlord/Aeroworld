@@ -19,10 +19,10 @@ import java.util.List;
  * через {@link org.example.aeroworld.structure.IslandStructureScheduler}.
  *
  * <p>tank21 ставится только на "самых крупных" островах Layer 2: обычных
- * (не архипелажных) островах или центрах архипелага, для которых тир вольтов/
- * спавнеров испытаний ({@link VaultTrialSpawnTier}) — {@code RICH}. Спутники
- * архипелага исключены всегда, так как RICH-тир на них в принципе невозможен
- * (см. {@code Layer2VaultTrialPlacer}).</p>
+ * (не архипелажных) островах, для которых тир вольтов/спавнеров испытаний
+ * ({@link VaultTrialSpawnTier}) — {@code RICH}. Любой остров архипелага
+ * (и центр, и спутники) исключён всегда — RICH-тир на них в принципе
+ * невозможен по правилам {@code Layer2VaultTrialPlacer}.</p>
  */
 public final class Layer2StructurePlacer {
 
@@ -92,10 +92,16 @@ public final class Layer2StructurePlacer {
         long packed = ChunkKey.of(islandBlockX, islandBlockZ);
         IslandPlacer placer = generator.getPlacer();
 
-        boolean isSatellite = !placer.isArchipelagoCentre(packed)
+        boolean isArchipelagoCentre = placer.isArchipelagoCentre(packed);
+        boolean isSatellite = !isArchipelagoCentre
                 && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
                         != IslandPlacer.NO_ISLAND;
-        if (isSatellite) return false;
+        // RICH (и, следовательно, tank21) запрещён для ЛЮБОГО острова архипелага —
+        // и для центра, и для спутников. Реальный тир архипелажных островов
+        // выбирается через pickSatelliteTier (POOR/MEDIUM only, см.
+        // Layer2VaultTrialPlacer), поэтому pickTierStatic ниже вызывается
+        // только для действительно обычных островов.
+        if (isArchipelagoCentre || isSatellite) return false;
 
         VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickTierStatic(worldSeed, islandBlockX, islandBlockZ);
         return tier == VaultTrialSpawnTier.RICH;

@@ -39,8 +39,9 @@ public final class Layer2VaultTrialPlacer {
     // RICH_CHANCE — остаток (0.15), вычисляется неявно.
 
     /**
-     * Вероятности тиров для спутников архипелага. RICH исключён по требованию —
-     * на спутниках может быть только POOR или MEDIUM.
+     * Вероятности тиров для спутников архипелага, а также для самого центра
+     * архипелага. RICH исключён по требованию — ни центр, ни спутники архипелага
+     * не должны давать максимальный тир, только обычные (неархипелажные) острова.
      */
     private static final double SATELLITE_POOR_CHANCE = 0.60;
     // SATELLITE_MEDIUM_CHANCE — остаток (0.40), вычисляется неявно.
@@ -81,14 +82,19 @@ public final class Layer2VaultTrialPlacer {
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
 
             IslandPlacer placer = generator.getPlacer();
-            boolean isSatellite = !placer.isArchipelagoCentre(packed)
+            boolean isArchipelagoCentre = placer.isArchipelagoCentre(packed);
+            boolean isSatellite = !isArchipelagoCentre
                     && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
                             != IslandPlacer.NO_ISLAND;
+            boolean isArchipelagoIsland = isArchipelagoCentre || isSatellite;
 
             if (isSatellite && !rollSatelliteSpawn(islandBlockX, islandBlockZ)) continue;
 
             IslandData island = generator.getIslandData(islandBlockX, islandBlockZ);
-            VaultTrialSpawnTier tier = isSatellite
+            // RICH запрещён для ЛЮБОГО острова архипелага — и центра, и спутников.
+            // Центр архипелага использует тот же ограниченный (POOR/MEDIUM) выбор
+            // тира, что и спутник, чтобы не получить RICH наравне с обычными островами.
+            VaultTrialSpawnTier tier = isArchipelagoIsland
                     ? pickSatelliteTier(islandBlockX, islandBlockZ)
                     : pickTier(islandBlockX, islandBlockZ);
 
@@ -123,7 +129,9 @@ public final class Layer2VaultTrialPlacer {
     }
 
     /**
-     * Выбор тира для спутника архипелага — только POOR или MEDIUM, RICH исключён.
+     * Выбор тира для острова архипелага (спутника или самого центра) — только
+     * POOR или MEDIUM, RICH исключён. Имя метода сохранено для минимальности
+     * диффа, но с этого исправления вызывается и для центра архипелага тоже.
      */
     private VaultTrialSpawnTier pickSatelliteTier(int islandBlockX, int islandBlockZ) {
         long h = worldSeed

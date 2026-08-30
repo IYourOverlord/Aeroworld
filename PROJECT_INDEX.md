@@ -61,7 +61,7 @@ org.example.aeroworld
     │   ├── HighIslandGenerator.java     — Layer 3: эллипсоиды
     │   ├── UpperIslandGenerator.java    — Layer 4: медузы/щупальца
     │   ├── Layer2StructurePlacer.java   — ставит tank21 в очередь
-    │   └── Layer3StructurePlacer.java   — ставит excraft:HAUL-01 в очередь
+    │   └── Layer3StructurePlacer.java   — ставит 
     └── structure/                 — валидация структур (деревни и т.п.) под кастомный рельеф
         └── StructureSupportValidator.java  — ★ главный класс валидации (вызывается из createStructures)
 ```
@@ -94,10 +94,10 @@ org.example.aeroworld
 
 ---
 
-## 4. Размещение кастомных структур (tank21 / HAUL-01)
+## 4. Размещение кастомных структур (tank21)
 
 - **`tank21`** — NBT структура (Layer 2), регистрируется через `PhysicalStructures`.
-- **`HAUL-01`** — файл `.excraft` (Layer 3), размещается через `StructureSourceProviderRegistry`.
+
 
 Поток: C2ME WorldGen Поток -> `IslandStructureScheduler` -> `PendingStructureData` (SavedData) -> Игрок подходит близко (`ProximityTriggerHandler`) -> `StructurePlacementHelper` -> `spawnStructureResult`.
 
