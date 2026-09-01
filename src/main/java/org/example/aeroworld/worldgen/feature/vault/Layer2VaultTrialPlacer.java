@@ -96,7 +96,7 @@ public final class Layer2VaultTrialPlacer {
 
             IslandVaultTrialGenerator.placeForIsland(
                     region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
-                    chunkX, chunkZ);
+                    chunkX, chunkZ, isArchipelagoCentre);
 
         }
     }
