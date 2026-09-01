@@ -19,7 +19,14 @@ import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
+import org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer;
+import org.example.aeroworld.worldgen.feature.vault.VaultTrialSpawnTier;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
 
+import net.minecraft.commands.SharedSuggestionProvider;
+
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -66,7 +73,14 @@ public final class AeroWorldCommands {
                 .then(Commands.literal("findIsland4")
                         .executes(AeroWorldCommands::runFindIsland4))
                 .then(Commands.literal("findIsland2")
-                        .executes(ctx -> runFindLowerIsland(ctx, 2)))
+                        .executes(ctx -> runFindLowerIsland(ctx, 2))
+                        .then(Commands.argument("islandType", StringArgumentType.word())
+                                .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
+                                        new String[]{"normal", "archipelago_centre", "satellite"}, builder))
+                                .then(Commands.argument("tier", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
+                                                new String[]{"POOR", "MEDIUM", "RICH"}, builder))
+                                        .executes(AeroWorldCommands::runFindLowerIslandTyped))))
                 .then(Commands.literal("findIsland3")
                         .executes(AeroWorldCommands::runFindHighIsland)));
     }
@@ -374,6 +388,175 @@ public final class AeroWorldCommands {
 
         source.sendSuccess(() -> Component.literal(
                 "[AeroWorld] Ближайший остров слоя 3: X=" + fx + " Z=" + fz +
+                        " (Y " + data.bottomY + "\u2013" + data.topY + "), кольцо сетки #" + fring +
+                        " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
+        return 1;
+    }
+
+    /**
+     * {@code /aeroworld findIsland2 <normal|archipelago_centre|satellite> <POOR|MEDIUM|RICH>} —
+     * спиральный поиск ближайшего острова слоя 2 заданного типа И тира вольтов/
+     * спавнеров испытаний одновременно.
+     *
+     * <p>Тип острова определяется через {@link IslandPlacer#isArchipelagoCentre}
+     * и {@link IslandPlacer#findArchipelagoCentreFor} — та же классификация,
+     * что использует {@code Layer2StructurePlacer.isEligibleForTank} и
+     * {@code Layer2VaultTrialPlacer.placeForChunk}, чтобы результат команды не
+     * расходился с тем, что реально сгенерирует мир.</p>
+     *
+     * <p>Тир вычисляется через {@link Layer2VaultTrialPlacer#pickTierStatic}
+     * для {@code normal}/{@code archipelago_centre} (RICH возможен только тут)
+     * и через отдельный статический метод для {@code satellite}, где RICH
+     * в принципе недостижим (см. {@code pickSatelliteTierStatic}).</p>
+     */
+    private static int runFindLowerIslandTyped(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+
+        boolean isAeroWorld = level.dimensionTypeRegistration().unwrapKey()
+                .map(k -> k.location().getNamespace().equals(AeroWorld.MOD_ID))
+                .orElse(false);
+        if (!isAeroWorld) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Эту команду нужно выполнять находясь в измерении aeroworld " +
+                            "(сейчас: " + level.dimension().location() + "). " +
+                            "Используйте /execute in aeroworld:aeroworld run aeroworld findIsland2 <тип> <тир>"));
+            return 0;
+        }
+
+        String rawType = StringArgumentType.getString(ctx, "islandType").toLowerCase(Locale.ROOT);
+        String rawTier = StringArgumentType.getString(ctx, "tier").toUpperCase(Locale.ROOT);
+
+        boolean wantCentre, wantSatellite, wantNormal;
+        switch (rawType) {
+            case "normal"              -> { wantNormal = true;  wantCentre = false; wantSatellite = false; }
+            case "archipelago_centre"  -> { wantNormal = false; wantCentre = true;  wantSatellite = false; }
+            case "satellite"           -> { wantNormal = false; wantCentre = false; wantSatellite = true;  }
+            default -> {
+                source.sendFailure(Component.literal(
+                        "[AeroWorld] Неизвестный тип острова: '" + rawType +
+                                "'. Допустимо: normal, archipelago_centre, satellite."));
+                return 0;
+            }
+        }
+
+        VaultTrialSpawnTier wantTier;
+        try {
+            wantTier = VaultTrialSpawnTier.valueOf(rawTier);
+        } catch (IllegalArgumentException e) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Неизвестный тир: '" + rawTier + "'. Допустимо: POOR, MEDIUM, RICH."));
+            return 0;
+        }
+        if (wantSatellite && wantTier == VaultTrialSpawnTier.RICH) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] RICH недостижим для satellite — острова-спутники архипелага " +
+                            "ограничены тирами POOR/MEDIUM (см. Layer2VaultTrialPlacer)."));
+            return 0;
+        }
+
+        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        if (!(generator instanceof AeroWorldChunkGenerator aeroGen)) {
+            source.sendFailure(Component.literal("[AeroWorld] Неожиданный тип генератора: " + generator.getClass()));
+            return 0;
+        }
+
+        LowerIslandGenerator lowerIslands = aeroGen.getLowerIslands();
+        if (lowerIslands == null) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] lowerIslands ещё не инициализирован — сгенерируйте хотя бы один чанк (просто полетайте) и повторите."));
+            return 0;
+        }
+
+        IslandPlacer placer = lowerIslands.getPlacer();
+        int gridChunks = placer.gridSizeChunks();
+        int searchRadius = lowerIslands.getSearchRadius();
+        long worldSeed = aeroGen.getWorldSeed();
+
+        BlockPos origin = BlockPos.containing(source.getPosition());
+        int originCellX = Math.floorDiv(origin.getX() >> 4, gridChunks);
+        int originCellZ = Math.floorDiv(origin.getZ() >> 4, gridChunks);
+
+        final int MAX_RING = 512; // типизированный поиск реже находит совпадение — нужен больший запас
+        long found = IslandPlacer.NO_ISLAND;
+        int foundRing = -1;
+        search:
+        for (int ring = 0; ring <= MAX_RING; ring++) {
+            for (int dcx = -ring; dcx <= ring; dcx++) {
+                for (int dcz = -ring; dcz <= ring; dcz++) {
+                    if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
+                    long centre = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (centre == IslandPlacer.NO_ISLAND) continue;
+
+                    int cx = ChunkKey.x(centre), cz = ChunkKey.z(centre);
+                    boolean isCentre = placer.isArchipelagoCentre(centre);
+
+                    if (isCentre) {
+                        if (!wantCentre) continue;
+                        VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickSatelliteTierStatic(worldSeed, cx, cz);
+                        if (tier != wantTier) continue;
+                        found = centre;
+                        foundRing = ring;
+                        break search;
+                    } else {
+                        if (!wantNormal) continue;
+                        VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickTierStatic(worldSeed, cx, cz);
+                        if (tier != wantTier) continue;
+                        found = centre;
+                        foundRing = ring;
+                        break search;
+                    }
+                }
+            }
+        }
+
+        // Спутники не находятся по сетке центров — они располагаются вокруг уже
+        // найденного центра архипелага и требуют отдельного, вложенного поиска.
+        if (wantSatellite) {
+            search2:
+            for (int ring = 0; ring <= MAX_RING; ring++) {
+                for (int dcx = -ring; dcx <= ring; dcx++) {
+                    for (int dcz = -ring; dcz <= ring; dcz++) {
+                        if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
+                        long centre = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                        if (centre == IslandPlacer.NO_ISLAND || !placer.isArchipelagoCentre(centre)) continue;
+
+                        long[] satellites = placer.getSatellitesForCentre(centre);
+                        for (long satellite : satellites) {
+                            int sx = ChunkKey.x(satellite), sz = ChunkKey.z(satellite);
+                            VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickSatelliteTierStatic(worldSeed, sx, sz);
+                            if (tier != wantTier) continue;
+                            found = satellite;
+                            foundRing = ring;
+                            break search2;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (found == IslandPlacer.NO_ISLAND) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Остров слоя 2 типа '" + rawType + "' с тиром " + wantTier +
+                            " не найден даже в радиусе " + MAX_RING + " ячеек сетки (~" +
+                            (MAX_RING * gridChunks * 16) + " блоков). Попробуйте более распространённую комбинацию."));
+            return 0;
+        }
+
+        IslandData data = lowerIslands.getIslandData(ChunkKey.x(found), ChunkKey.z(found));
+        int teleportY = data.topY + 5;
+
+        final int fx = ChunkKey.x(found), fz = ChunkKey.z(found), fring = foundRing;
+        final String type = rawType;
+        boolean teleported = false;
+        if (source.getEntity() instanceof ServerPlayer player) {
+            player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());
+            teleported = true;
+        }
+        final boolean tp = teleported;
+
+        source.sendSuccess(() -> Component.literal(
+                "[AeroWorld] Найден остров слоя 2 (" + type + ", тир " + wantTier + "): X=" + fx + " Z=" + fz +
                         " (Y " + data.bottomY + "\u2013" + data.topY + "), кольцо сетки #" + fring +
                         " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
         return 1;

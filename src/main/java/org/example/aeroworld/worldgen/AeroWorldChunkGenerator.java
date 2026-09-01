@@ -174,6 +174,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     /** Layer 2: нижние острова (Y 300–400). Null до первой инициализации seed. */
     public LowerIslandGenerator getLowerIslands() { return lowerIslands; }
 
+    public long getWorldSeed() { return worldSeed; }
+
     /** Layer 3: высотные острова (Y 1000–1100). Null до первой инициализации seed. */
     public HighIslandGenerator getHighIslands()   { return highIslands; }
 

@@ -39,9 +39,9 @@ public class IslandPlacer {
     /**
      * Во сколько раз уменьшен радиус/высота спутника относительно центра архипелага
      * (а не относительно обычного острова). Итоговый масштаб спутника от обычного
-     * острова — {@code ARCHIPELAGO_SCALE * SATELLITE_SCALE} = 0.25.
+     * острова — {@code ARCHIPELAGO_SCALE * SATELLITE_SCALE} = 0.15.
      */
-    public static final double SATELLITE_SCALE = 0.5;
+    public static final double SATELLITE_SCALE = 0.3;
 
     /**
      * Расстояние от центра архипелага до спутника, в блоках (кольцо вокруг центра).

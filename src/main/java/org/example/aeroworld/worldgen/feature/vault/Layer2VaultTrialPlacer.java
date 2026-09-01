@@ -106,7 +106,7 @@ public final class Layer2VaultTrialPlacer {
 
             IslandVaultTrialGenerator.placeForIsland(
                     region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
-                    chunkX, chunkZ);
+                    chunkX, chunkZ, !isArchipelagoIsland);
 
         }
     }
@@ -134,6 +134,16 @@ public final class Layer2VaultTrialPlacer {
      * диффа, но с этого исправления вызывается и для центра архипелага тоже.
      */
     private VaultTrialSpawnTier pickSatelliteTier(int islandBlockX, int islandBlockZ) {
+        return pickSatelliteTierStatic(worldSeed, islandBlockX, islandBlockZ);
+    }
+
+    /**
+     * Статический вариант {@link #pickSatelliteTier(int, int)} — используется
+     * внешним кодом (например, командой {@code /aeroworld findIsland2}), которому
+     * нужно узнать тир архипелажного острова (центра или спутника) без создания
+     * экземпляра {@code Layer2VaultTrialPlacer}. RICH недостижим.
+     */
+    public static VaultTrialSpawnTier pickSatelliteTierStatic(long worldSeed, int islandBlockX, int islandBlockZ) {
         long h = worldSeed
                 ^ ((long) islandBlockX * 668265263L)
                 ^ ((long) islandBlockZ * 341873128712L)

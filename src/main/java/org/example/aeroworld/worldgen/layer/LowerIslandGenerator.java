@@ -78,6 +78,15 @@ public class LowerIslandGenerator {
     private final int    maxHeight;
     private final double maxRadius;
     private final double minRadius;
+
+    /**
+     * Собственный диапазон радиуса спутника архипелага — НЕ производный от
+     * minRadius/maxRadius обычного острова, чтобы избежать огромного разброса
+     * размеров спутников (см. javadoc computeIslandData). Значения подобраны
+     * так, чтобы спутник был заметно, но не драматично, меньше центра архипелага.
+     */
+    private static final double MIN_SATELLITE_RADIUS = 5.5;
+    private static final double MAX_SATELLITE_RADIUS = 15.5;
     private final int    gridChunks;
     private final double spawnChance;
     private final int    yVariance;
@@ -154,9 +163,11 @@ public class LowerIslandGenerator {
 
     private IslandData computeIslandData(int cx, int cz) {
         // Определяем архипелажный статус этого острова: либо он сам центр архипелага
-        // (тогда масштаб применяется к нему самому), либо спутник существующего центра
-        // (тогда масштаб и базовые параметры считаются от координат центра архипелага,
-        // чтобы все острова архипелага были одного размера — половина от обычного).
+        // (тогда масштаб применяется к нему самому от его собственных координат),
+        // либо спутник существующего центра (тогда используется отдельный узкий
+        // диапазон радиуса MIN/MAX_SATELLITE_RADIUS, не связанный с базовым шумом
+        // центра — иначе спутники крупных архипелагов получались вдвое больше
+        // спутников мелких архипелагов).
         long selfPacked = ChunkKey.of(cx, cz);
         boolean isArchipelagoCentre = placer.isArchipelagoCentre(selfPacked);
         long archipelagoCentre = isArchipelagoCentre
@@ -164,32 +175,33 @@ public class LowerIslandGenerator {
                 : placer.findArchipelagoCentreFor(cx, cz, searchRadius);
         boolean isArchipelagoIsland = isArchipelagoCentre || archipelagoCentre != IslandPlacer.NO_ISLAND;
 
-        // Базовые параметры (высота/радиус) всегда считаются от координат центра
-        // архипелага, если это спутник — гарантирует одинаковый масштаб у всех
-        // островов одного архипелага независимо от собственной позиции спутника.
-        int baseCx = isArchipelagoIsland && !isArchipelagoCentre
-                ? ChunkKey.x(archipelagoCentre) : cx;
-        int baseCz = isArchipelagoIsland && !isArchipelagoCentre
-                ? ChunkKey.z(archipelagoCentre) : cz;
-
-        double nOff  = heightVariance.noise2D(baseCx * 0.0015 + 9999, baseCz * 0.0015 + 9999);
+        // Базовые параметры (высота/радиус) для ОБЫЧНОГО острова или ЦЕНТРА
+        // архипелага всегда считаются от координат самого острова.
+        double nOff  = heightVariance.noise2D(cx * 0.0015 + 9999, cz * 0.0015 + 9999);
         int yOffset  = (int) Math.round(nOff * yVariance);
 
         int layerMid = (LAYER_MIN_Y + LAYER_MAX_Y) / 2;
         int centreY  = layerMid + yOffset;
 
-        double hFrac = 0.4 + (heightVariance.noise2D(baseCx * 0.007, baseCz * 0.007) + 1.0) * 0.5 * 0.6;
+        double hFrac = 0.4 + (heightVariance.noise2D(cx * 0.007, cz * 0.007) + 1.0) * 0.5 * 0.6;
         int islandH  = (int)(maxHeight * hFrac);
 
-        double v      = (heightVariance.noise2D(baseCx * 0.004, baseCz * 0.004) + 1.0) * 0.5;
+        double v      = (heightVariance.noise2D(cx * 0.004, cz * 0.004) + 1.0) * 0.5;
         double radius = minRadius + v * (maxRadius - minRadius);
 
-        if (isArchipelagoIsland) {
-            double scale = isArchipelagoCentre
-                    ? IslandPlacer.ARCHIPELAGO_SCALE
-                    : IslandPlacer.ARCHIPELAGO_SCALE * IslandPlacer.SATELLITE_SCALE;
-            islandH = (int) Math.round(islandH * scale);
-            radius  = radius * scale;
+        if (isArchipelagoCentre) {
+            islandH = (int) Math.round(islandH * IslandPlacer.ARCHIPELAGO_SCALE);
+            radius  = radius * IslandPlacer.ARCHIPELAGO_SCALE;
+        } else if (isArchipelagoIsland) {
+            // Спутник: НЕ наследует базовый радиус центра архипелага (тот мог
+            // быть близко к maxRadius, что делало часть спутников почти вдвое
+            // крупнее остальных). Вместо этого — собственный узкий диапазон,
+            // привязанный к координатам самого спутника, с лёгкой вариацией
+            // ради естественности, но без огромного разброса. Итоговый радиус
+            // — MIN_SATELLITE_RADIUS..MAX_SATELLITE_RADIUS блоков.
+            double sv = (heightVariance.noise2D(cx * 0.02 + 4242, cz * 0.02 + 4242) + 1.0) * 0.5;
+            radius  = MIN_SATELLITE_RADIUS + sv * (MAX_SATELLITE_RADIUS - MIN_SATELLITE_RADIUS);
+            islandH = (int) Math.round(islandH * IslandPlacer.ARCHIPELAGO_SCALE * IslandPlacer.SATELLITE_SCALE);
         }
 
         int bottomY  = centreY - islandH / 2;
@@ -464,7 +476,8 @@ public class LowerIslandGenerator {
                         if (bs.isAir()) continue;
                         if (bs.is(BlockTags.LOGS) || bs.is(BlockTags.LEAVES)
                                 || bs.is(BlockTags.SAPLINGS) || bs.is(BlockTags.FLOWERS)
-                                || bs.is(BlockTags.REPLACEABLE_BY_TREES)) {
+                                || bs.is(BlockTags.REPLACEABLE_BY_TREES)
+                                || bs.is(Blocks.SNOW) || bs.is(Blocks.SNOW_BLOCK)) {
                             region.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                         }
                     }
@@ -646,16 +659,40 @@ public class LowerIslandGenerator {
             double lineZ = bp.src().cz + t * (bp.other().cz - bp.src().cz);
             double perpDistSq = (wx - lineX) * (wx - lineX) + (wz - lineZ) * (wz - lineZ);
 
-            double bridgeWidth = 2.5 + bridgeNoise.noise2D(wx * 0.1, wz * 0.1) * 1.0;
+            // Продольный шум (вдоль оси моста, по t) — независимая частота от
+            // поперечного, чтобы неровности не выглядели периодической решёткой.
+            double along = bridgeNoise.noise2D(t * 40.0 + 500.0, bp.bridgeSalt());
+
+            // Ширина: базовая вариация + продольная волна, чтобы мост сужался/
+            // расширялся неравномерно по длине, а не только "дрожал" по краям.
+            double bridgeWidth = 2.5
+                    + bridgeNoise.noise2D(wx * 0.1, wz * 0.1) * 1.0
+                    + along * 1.2;
             if (perpDistSq > bridgeWidth * bridgeWidth) continue;
 
-            for (int dy = 0; dy <= 1; dy++) {
-                int wy = bp.bridgeY() + dy;
+            // Прогиб высоты вдоль пути — естественная тропа не идеально горизонтальна.
+            // Амплитуда ограничена (±2), чтобы не порвать соединение с островами
+            // на самых концах моста (там t близко к 0.05/0.95, sin-затухание уже гасит).
+            double sag = Math.sin(t * Math.PI) * 1.3; // выгиб вниз к середине, 0 на концах
+            double wobble = bridgeNoise.noise2D(t * 25.0 + 1000.0, bp.bridgeSalt() * 1.7) * 1.4;
+            int yOffset = (int) Math.round(sag + wobble);
+            int baseY = bp.bridgeY() - yOffset;
+
+            // Толщина сечения тоже варьируется (1 или 2 блока) вместо фиксированных
+            // двух слоёв — рваный, а не экструдированный профиль.
+            double thicknessRoll = bridgeNoise.noise2D(wx * 0.07 + 300.0, wz * 0.07 + 300.0);
+            int extraLayer = thicknessRoll > 0.15 ? 1 : 0;
+
+            for (int dy = -1; dy <= 1 + extraLayer; dy++) {
+                int wy = baseY + dy;
                 BlockState bridgeBlock;
+                boolean isEdge = perpDistSq > (bridgeWidth - 0.8) * (bridgeWidth - 0.8);
                 if (bp.amethyst()) {
-                    bridgeBlock = (dy == 0) ? BS_AMETHYST_BLOCK : BS_AMETHYST_CLUSTER;
+                    // Нижний слой и рваные края — блок, верх — кластер (кристаллы торчат неровно).
+                    boolean placeCluster = dy >= 1 || (isEdge && thicknessRoll > 0.4);
+                    bridgeBlock = placeCluster ? BS_AMETHYST_CLUSTER : BS_AMETHYST_BLOCK;
                 } else {
-                    bridgeBlock = (dy == 0) ? BS_OAK_LOG : BS_MANGROVE;
+                    bridgeBlock = (dy <= 0) ? BS_OAK_LOG : BS_MANGROVE;
                 }
                 if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, bridgeBlock);
             }
@@ -681,7 +718,17 @@ public class LowerIslandGenerator {
         return h ^ (h >>> 31);
     }
 
-    private record BridgePair(IslandData src, IslandData other, int bridgeY, boolean amethyst) {}
+    private record BridgePair(IslandData src, IslandData other, int bridgeY, boolean amethyst) {
+        /** Детерминированная "соль" для продольного шума — уникальна для каждой пары островов. */
+        double bridgeSalt() {
+            long h = ((long) src.cx * 341873128712L) ^ ((long) src.cz * 132897987541L)
+                    ^ ((long) other.cx * 2654435761L) ^ ((long) other.cz * 998244353L);
+            h = h ^ (h >>> 33);
+            h *= 0xFF51AFD7ED558CCDL;
+            h = h ^ (h >>> 33);
+            return (h & 0xFFFFFL) / (double) 0xFFFFFL * 1000.0;
+        }
+    }
     /**
      * Возвращает реальный Y верхней поверхности острова в точке (wx, wz)
      * с учётом шумовой деформации — для корректного LOD-рендеринга.
