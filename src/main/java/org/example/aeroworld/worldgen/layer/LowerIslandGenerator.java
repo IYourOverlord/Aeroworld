@@ -86,7 +86,7 @@ public class LowerIslandGenerator {
      * так, чтобы спутник был заметно, но не драматично, меньше центра архипелага.
      */
     private static final double MIN_SATELLITE_RADIUS = 5.5;
-    private static final double MAX_SATELLITE_RADIUS = 15.5;
+    private static final double MAX_SATELLITE_RADIUS = 10.5;
     private final int    gridChunks;
     private final double spawnChance;
     private final int    yVariance;
