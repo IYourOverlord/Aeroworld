@@ -192,14 +192,6 @@ public final class IslandVaultTrialGenerator {
      * @param chunkX     координата чанка (в чанках), вызвавшего decoration — используется
      *                    только для диагностического лога, поиск точки им не ограничен
      * @param chunkZ     см. {@code chunkX}
-     * @param excludeTankZone true — резервировать зону вокруг центра острова под
-     *                    physical_structures:tank21 (обычные острова, где tank21
-     *                    действительно может быть поставлен); false — не резервировать
-     *                    (архипелажные острова, где tank21 никогда не появляется, см.
-     *                    {@code Layer2StructurePlacer.isEligibleForTank}) — иначе на
-     *                    маленьких островах-спутниках это исключение съедало всё
-     *                    доступное пространство поиска, и часть Vault/Trial Spawner
-     *                    молча не размещалась (см. javadoc {@link #findBuriedSpot}).
      */
     public static void placeForIsland(WorldGenLevel region,
                                        IslandShape shape,
@@ -209,13 +201,12 @@ public final class IslandVaultTrialGenerator {
                                        VaultTrialLootConfig loot,
                                        RandomSource rng,
                                        int chunkX,
-                                       int chunkZ,
-                                       boolean excludeTankZone) {
+                                       int chunkZ) {
 
         List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
 
         for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ, excludeTankZone);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
             if (pos == null) continue;
             if (!placeVault(region, pos, loot)) continue;
             clearAboveBlock(region, pos);
@@ -223,7 +214,7 @@ public final class IslandVaultTrialGenerator {
         }
 
         for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ, excludeTankZone);
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ);
             if (pos == null) continue;
             if (!placeTrialSpawner(region, pos, loot)) continue;
             clearAboveBlock(region, pos);
@@ -399,19 +390,9 @@ public final class IslandVaultTrialGenerator {
                                             RandomSource rng,
                                             List<BlockPos> alreadyPlaced,
                                             int chunkX,
-                                            int chunkZ,
-                                            boolean excludeTankZone) {
+                                            int chunkZ) {
 
         double innerRadius = island.radius * 0.7;
-        // На маленьких островах (спутники архипелага, центры архипелага) фиксированный
-        // EFFECTIVE_EXCLUSION_RADIUS=7.0 может оказаться БОЛЬШЕ innerRadius (0.7×island.radius),
-        // делая кольцо кандидатов пустым — тогда все структуры, кроме первой (успевшей занять
-        // единственную случайно найденную точку до истощения попыток), молча пропадают
-        // (см. "if (pos == null) continue;" в placeForIsland). tank21 в принципе никогда не
-        // ставится на архипелажных островах (см. Layer2StructurePlacer.isEligibleForTank),
-        // поэтому исключать зону вокруг центра под него там не нужно — excludeTankZone=false
-        // отключает эту проверку и возвращает исходное, куда более широкое пространство поиска.
-        double exclusionRadius = excludeTankZone ? EFFECTIVE_EXCLUSION_RADIUS : 0.0;
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
             // Сэмплируем точку СРАЗУ внутри чанка-инициатора decoration
@@ -452,7 +433,7 @@ public final class IslandVaultTrialGenerator {
             // радиусом tank21 — см. javadoc EFFECTIVE_EXCLUSION_RADIUS.
             double distFromCentreSq = (double)(wx - island.cx) * (wx - island.cx)
                     + (double)(wz - island.cz) * (wz - island.cz);
-            if (distFromCentreSq < exclusionRadius * exclusionRadius) continue;
+            if (distFromCentreSq < EFFECTIVE_EXCLUSION_RADIUS * EFFECTIVE_EXCLUSION_RADIUS) continue;
 
             // Не выходим за пределы разумного тела острова (0.7 радиуса) —
             // страховка от случая, когда чанк частично лежит далеко за

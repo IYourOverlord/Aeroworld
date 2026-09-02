@@ -2,10 +2,14 @@ package org.example.aeroworld.worldgen.layer;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DripstoneThickness;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.WorldGenLevel;
+import net.minecraft.tags.BlockTags;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandCache;
@@ -54,11 +58,35 @@ public class LowerIslandGenerator {
     private static final BlockState BS_OAK_LEAVES   = Blocks.OAK_LEAVES     .defaultBlockState();
     private static final BlockState BS_BIRCH_LEAVES = Blocks.BIRCH_LEAVES   .defaultBlockState();
     private static final BlockState BS_MANGROVE     = Blocks.MANGROVE_ROOTS .defaultBlockState();
+    private static final BlockState BS_AMETHYST_BLOCK   = Blocks.AMETHYST_BLOCK.defaultBlockState();
+    private static final BlockState BS_AMETHYST_CLUSTER = Blocks.AMETHYST_CLUSTER.defaultBlockState();
+    private static final BlockState BS_DRIPSTONE_BLOCK = Blocks.DRIPSTONE_BLOCK.defaultBlockState();
+    private static final BlockState BS_DRIPSTONE_TIP_DOWN = Blocks.POINTED_DRIPSTONE.defaultBlockState()
+            .setValue(BlockStateProperties.VERTICAL_DIRECTION, Direction.DOWN)
+            .setValue(BlockStateProperties.DRIPSTONE_THICKNESS, DripstoneThickness.TIP);
+    private static final BlockState BS_DRIPSTONE_FRUSTUM_DOWN = Blocks.POINTED_DRIPSTONE.defaultBlockState()
+            .setValue(BlockStateProperties.VERTICAL_DIRECTION, Direction.DOWN)
+            .setValue(BlockStateProperties.DRIPSTONE_THICKNESS, DripstoneThickness.FRUSTUM);
+    private static final BlockState BS_DRIPSTONE_MIDDLE_DOWN = Blocks.POINTED_DRIPSTONE.defaultBlockState()
+            .setValue(BlockStateProperties.VERTICAL_DIRECTION, Direction.DOWN)
+            .setValue(BlockStateProperties.DRIPSTONE_THICKNESS, DripstoneThickness.MIDDLE);
+    private static final BlockState BS_DRIPSTONE_BASE_DOWN = Blocks.POINTED_DRIPSTONE.defaultBlockState()
+            .setValue(BlockStateProperties.VERTICAL_DIRECTION, Direction.DOWN)
+            .setValue(BlockStateProperties.DRIPSTONE_THICKNESS, DripstoneThickness.BASE);
 
     // ── Настройки (из пресета) ────────────────────────────────────────────────
     private final int    maxHeight;
     private final double maxRadius;
     private final double minRadius;
+
+    /**
+     * Собственный диапазон радиуса спутника архипелага — НЕ производный от
+     * minRadius/maxRadius обычного острова, чтобы избежать огромного разброса
+     * размеров спутников (см. javadoc computeIslandData). Значения подобраны
+     * так, чтобы спутник был заметно, но не драматично, меньше центра архипелага.
+     */
+    private static final double MIN_SATELLITE_RADIUS = 5.5;
+    private static final double MAX_SATELLITE_RADIUS = 10.5;
     private final int    gridChunks;
     private final double spawnChance;
     private final int    yVariance;
@@ -109,7 +137,7 @@ public class LowerIslandGenerator {
         this.bridgeChance   = cfg.bridgeChance();
         this.searchRadius   = Math.max(2, (int) Math.ceil(cfg.maxRadius() / (gridChunks * 16.0)) + 1);
         this.chunkCache     = sharedChunkCache;
-        this.placer         = new IslandPlacer(worldSeed ^ 0x2L, gridChunks, spawnChance);
+        this.placer         = new IslandPlacer(worldSeed ^ 0x2L, gridChunks, spawnChance, true);
         this.shape          = new IslandShape(worldSeed ^ 0x3L);
         this.heightVariance = new AeroNoise(worldSeed ^ 0x4L);
         this.bridgeNoise    = new AeroNoise(worldSeed ^ 0x5L);
@@ -134,6 +162,21 @@ public class LowerIslandGenerator {
     }
 
     private IslandData computeIslandData(int cx, int cz) {
+        // Определяем архипелажный статус этого острова: либо он сам центр архипелага
+        // (тогда масштаб применяется к нему самому от его собственных координат),
+        // либо спутник существующего центра (тогда используется отдельный узкий
+        // диапазон радиуса MIN/MAX_SATELLITE_RADIUS, не связанный с базовым шумом
+        // центра — иначе спутники крупных архипелагов получались вдвое больше
+        // спутников мелких архипелагов).
+        long selfPacked = ChunkKey.of(cx, cz);
+        boolean isArchipelagoCentre = placer.isArchipelagoCentre(selfPacked);
+        long archipelagoCentre = isArchipelagoCentre
+                ? selfPacked
+                : placer.findArchipelagoCentreFor(cx, cz, searchRadius);
+        boolean isArchipelagoIsland = isArchipelagoCentre || archipelagoCentre != IslandPlacer.NO_ISLAND;
+
+        // Базовые параметры (высота/радиус) для ОБЫЧНОГО острова или ЦЕНТРА
+        // архипелага всегда считаются от координат самого острова.
         double nOff  = heightVariance.noise2D(cx * 0.0015 + 9999, cz * 0.0015 + 9999);
         int yOffset  = (int) Math.round(nOff * yVariance);
 
@@ -143,6 +186,24 @@ public class LowerIslandGenerator {
         double hFrac = 0.4 + (heightVariance.noise2D(cx * 0.007, cz * 0.007) + 1.0) * 0.5 * 0.6;
         int islandH  = (int)(maxHeight * hFrac);
 
+        double v      = (heightVariance.noise2D(cx * 0.004, cz * 0.004) + 1.0) * 0.5;
+        double radius = minRadius + v * (maxRadius - minRadius);
+
+        if (isArchipelagoCentre) {
+            islandH = (int) Math.round(islandH * IslandPlacer.ARCHIPELAGO_SCALE);
+            radius  = radius * IslandPlacer.ARCHIPELAGO_SCALE;
+        } else if (isArchipelagoIsland) {
+            // Спутник: НЕ наследует базовый радиус центра архипелага (тот мог
+            // быть близко к maxRadius, что делало часть спутников почти вдвое
+            // крупнее остальных). Вместо этого — собственный узкий диапазон,
+            // привязанный к координатам самого спутника, с лёгкой вариацией
+            // ради естественности, но без огромного разброса. Итоговый радиус
+            // — MIN_SATELLITE_RADIUS..MAX_SATELLITE_RADIUS блоков.
+            double sv = (heightVariance.noise2D(cx * 0.02 + 4242, cz * 0.02 + 4242) + 1.0) * 0.5;
+            radius  = MIN_SATELLITE_RADIUS + sv * (MAX_SATELLITE_RADIUS - MIN_SATELLITE_RADIUS);
+            islandH = (int) Math.round(islandH * IslandPlacer.ARCHIPELAGO_SCALE * IslandPlacer.SATELLITE_SCALE);
+        }
+
         int bottomY  = centreY - islandH / 2;
         int topY     = bottomY + islandH;
 
@@ -150,11 +211,10 @@ public class LowerIslandGenerator {
         if (topY    > LAYER_MAX_Y) { topY    = LAYER_MAX_Y; bottomY = topY - islandH; }
         bottomY = Math.max(bottomY, LAYER_MIN_Y);
 
-        double v      = (heightVariance.noise2D(cx * 0.004, cz * 0.004) + 1.0) * 0.5;
-        double radius = minRadius + v * (maxRadius - minRadius);
-
         // Вычисляем один раз — profile и noiseIntensity зависят только от центра острова.
         // Без кэширования они пересчитывались для каждой из 256 XZ-колонок чанка (пункт R).
+        // Профиль/шум всегда берём от собственных координат острова (cx,cz) —
+        // это делает форму каждого спутника уникальной, а не идентичной копией центра.
         int    profile        = IslandShape.computeProfile(cx, cz);
         double noiseIntensity = shape.computeNoiseIntensity(cx, cz);
 
@@ -193,7 +253,7 @@ public class LowerIslandGenerator {
         // maxRadius + NOISE_DEFORM (собственный радиус) + bridgeMaxRange (длина моста)
         double maxInfluence = maxRadius + NOISE_DEFORM + bridgeMaxRange;
         int maxMargin = (int) Math.ceil(maxInfluence);
-
+        
         LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
@@ -217,16 +277,51 @@ public class LowerIslandGenerator {
         // Precompute active bridge pairs: dist/roll/bridgeY depend only on island centers.
         // Without this, fillBridges recomputed Math.sqrt + hash for every XZ-column (256×).
         List<BridgePair> bridgePairs = new ArrayList<>();
+
+        // Гарантированные аметистовые мосты: каждый спутник архипелага соединяется
+        // со своим центром со 100% вероятностью (в отличие от обычных мостов —
+        // без этого архипелаг мог остаться без связей при неудачном roll).
+        for (IslandData src : islandData) {
+            long srcArchCentre = placer.isArchipelagoCentre(ChunkKey.of(src.cx, src.cz))
+                    ? ChunkKey.of(src.cx, src.cz)
+                    : placer.findArchipelagoCentreFor(src.cx, src.cz, searchRadius);
+            if (srcArchCentre == IslandPlacer.NO_ISLAND) continue;
+            // src — спутник или центр архипелага. Соединяем спутник с центром.
+            if (placer.isArchipelagoCentre(ChunkKey.of(src.cx, src.cz))) continue; // сам центр — не соединяем с собой
+            int centreCx = ChunkKey.x(srcArchCentre);
+            int centreCz = ChunkKey.z(srcArchCentre);
+            for (IslandData other : islandData) {
+                if (other.cx == centreCx && other.cz == centreCz) {
+                    bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, true));
+                    break;
+                }
+            }
+        }
+
         for (IslandData src : islandData) {
             for (IslandData other : islandData) {
                 if (other.cx == src.cx && other.cz == src.cz) continue;
+                // Пропускаем пары, уже добавленные как гарантированный аметистовый мост архипелага.
+                boolean alreadyBridged = false;
+                for (BridgePair bp : bridgePairs) {
+                    if (bp.src().cx == src.cx && bp.src().cz == src.cz
+                            && bp.other().cx == other.cx && bp.other().cz == other.cz) {
+                        alreadyBridged = true;
+                        break;
+                    }
+                }
+                if (alreadyBridged) continue;
+
                 double distSq = (double)(src.cx - other.cx) * (src.cx - other.cx)
-                        + (double)(src.cz - other.cz) * (src.cz - other.cz);
+                              + (double)(src.cz - other.cz) * (src.cz - other.cz);
                 if (distSq > (double) bridgeMaxRange * bridgeMaxRange) continue;
                 long bridgeHash = hash(src.cx, src.cz, other.cx, other.cz);
                 double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
                 if (roll > bridgeChance) continue;
-                bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1));
+
+                boolean amethyst = placer.isSameArchipelago(src.cx, src.cz, other.cx, other.cz)
+                        || placer.isSameArchipelago(other.cx, other.cz, src.cx, src.cz);
+                bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, amethyst));
             }
         }
 
@@ -236,7 +331,7 @@ public class LowerIslandGenerator {
             IslandData d = islandData[i];
             double margin = NOISE_DEFORM + d.radius;
             inBounds[i] = !(d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
-                    d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
+                            d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -327,6 +422,70 @@ public class LowerIslandGenerator {
     /** Форма острова этого слоя. Используется Layer2VaultTrialPlacer для поиска точек внутри тела острова. */
     public IslandShape getShape() { return shape; }
 
+    // ── Очистка ванильной растительности в центре острова ─────────────────────
+
+    /**
+     * Удаляет ванильную растительность (деревья, саженцы, траву, грибы),
+     * попавшую в центральную зону острова (тот же {@code TREE_EDGE_BAND_START},
+     * что и для кастомных деревьев Layer 2) через биомную декорацию
+     * {@code super.applyBiomeDecoration()}.
+     *
+     * <p>Центральная зона зарезервирована под Vault/Trial Spawner
+     * ({@link org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer}) —
+     * кастомные деревья там и так не растут (см. {@link #isInTreeEdgeBand}),
+     * но ванильные биомные деревья/трава об этом не знают и накладываются сверху.
+     *
+     * <p>Вызывать сразу после {@code super.applyBiomeDecoration()}, до
+     * {@link #placeTreesInRegion} — сканирует колонку от {@code d.topY} до
+     * {@code d.topY + 16} (запас на высоту деревьев) и сносит блоки из
+     * {@link BlockTags#LOGS}, {@link BlockTags#LEAVES}, {@link BlockTags#SAPLINGS},
+     * {@link BlockTags#REPLACEABLE_BY_TREES} и {@link BlockTags#FLOWERS}.
+     */
+    public void clearVanillaVegetationInCentralZone(WorldGenLevel region, ChunkAccess chunk) {
+        int chunkX = chunk.getPos().x;
+        int chunkZ = chunk.getPos().z;
+        int baseX  = chunkX << 4;
+        int baseZ  = chunkZ << 4;
+
+        LongArrayList centres = chunkCache.get(LAYER_ID, chunkX, chunkZ,
+                key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
+        if (centres.isEmpty()) return;
+
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
+
+            for (int lx = 0; lx < 16; lx++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    int wx = baseX + lx;
+                    int wz = baseZ + lz;
+
+                    IslandShape.XZCache xz = shape.precomputeXZ(
+                            wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                            d.shapeNoiseIntensity, d.shapeProfile);
+
+                    // Только центральная зона (там, где кастомные деревья не растут).
+                    if (isInTreeEdgeBand(xz.distSq, d.radius)) continue;
+                    if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) continue; // XZ вне острова
+
+                    for (int wy = d.topY; wy <= d.topY + 16; wy++) {
+                        pos.set(wx, wy, wz);
+                        BlockState bs = region.getBlockState(pos);
+                        if (bs.isAir()) continue;
+                        if (bs.is(BlockTags.LOGS) || bs.is(BlockTags.LEAVES)
+                                || bs.is(BlockTags.SAPLINGS) || bs.is(BlockTags.FLOWERS)
+                                || bs.is(BlockTags.REPLACEABLE_BY_TREES)
+                                || bs.is(Blocks.SNOW) || bs.is(Blocks.SNOW_BLOCK)) {
+                            region.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Деревья ───────────────────────────────────────────────────────────────
 
     /**
@@ -345,7 +504,7 @@ public class LowerIslandGenerator {
      * если дерево здесь не растёт.
      */
     private int placeTrunk(ChunkWriter chunk, int wx, int wz,
-                           int surfaceY, BlockPos.MutableBlockPos pos) {
+                            int surfaceY, BlockPos.MutableBlockPos pos) {
         if (surfaceY < 0) return -1;
         double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
         if (tn < 0.55) return -1;
@@ -365,8 +524,10 @@ public class LowerIslandGenerator {
     }
 
     /**
-     * Сталактит на нижней грани острова: столбик камня длиной 1-3 блока, растущий вниз
-     * от нижней solid-поверхности. Пишется только в текущий чанк (1×1 по XZ) — безопасно
+     * Сталактит (Pointed Dripstone) на нижней грани острова: растёт вниз от блока
+     * dripstone_block, установленного вместо нижнего solid-блока острова.
+     * Длина 1–3 сегмента, направление VERTICAL_DIRECTION=DOWN, форма TIP/FRUSTUM/MIDDLE/BASE
+     * как у ванильного сталактита. Пишется только в текущий чанк (1×1 по XZ) — безопасно
      * для ChunkAccess.
      */
     private void placeStalactite(ChunkWriter chunk, int wx, int wz, int bottomSurfaceY) {
@@ -379,11 +540,27 @@ public class LowerIslandGenerator {
         int length = 1 + (int)((lenSample + 1.0) * 0.5 * 3); // 1..3
         if (length > 3) length = 3;
 
+        // Основание сталактита заменяет нижний solid-блок острова на dripstone_block.
+        chunk.setBlockState(wx, bottomSurfaceY, wz, BS_DRIPSTONE_BLOCK);
+
         for (int dy = 1; dy <= length; dy++) {
             int wy = bottomSurfaceY - dy;
             if (wy < LAYER_MIN_Y) break;
             if (!chunk.getBlockState(wx, wy, wz).isAir()) break;
-            chunk.setBlockState(wx, wy, wz, BS_STONE);
+
+            BlockState segment;
+            if (dy == length) {
+                segment = BS_DRIPSTONE_TIP_DOWN; // самый нижний сегмент — острие
+            } else if (length == 1) {
+                segment = BS_DRIPSTONE_TIP_DOWN;
+            } else if (dy == 1) {
+                segment = BS_DRIPSTONE_BASE_DOWN; // сегмент у основания
+            } else if (dy == length - 1) {
+                segment = BS_DRIPSTONE_FRUSTUM_DOWN; // сужение перед остриём
+            } else {
+                segment = BS_DRIPSTONE_MIDDLE_DOWN;
+            }
+            chunk.setBlockState(wx, wy, wz, segment);
         }
     }
 
@@ -482,14 +659,41 @@ public class LowerIslandGenerator {
             double lineZ = bp.src().cz + t * (bp.other().cz - bp.src().cz);
             double perpDistSq = (wx - lineX) * (wx - lineX) + (wz - lineZ) * (wz - lineZ);
 
-            double bridgeWidth = 2.5 + bridgeNoise.noise2D(wx * 0.1, wz * 0.1) * 1.0;
+            // Продольный шум (вдоль оси моста, по t) — независимая частота от
+            // поперечного, чтобы неровности не выглядели периодической решёткой.
+            double along = bridgeNoise.noise2D(t * 40.0 + 500.0, bp.bridgeSalt());
+
+            // Ширина: базовая вариация + продольная волна, чтобы мост сужался/
+            // расширялся неравномерно по длине, а не только "дрожал" по краям.
+            double bridgeWidth = 2.5
+                    + bridgeNoise.noise2D(wx * 0.1, wz * 0.1) * 1.0
+                    + along * 1.2;
             if (perpDistSq > bridgeWidth * bridgeWidth) continue;
 
-            for (int dy = 0; dy <= 1; dy++) {
-                int wy = bp.bridgeY() + dy;
-                BlockState bridgeBlock = (dy == 0)
-                        ? BS_OAK_LOG
-                        : BS_MANGROVE;
+            // Прогиб высоты вдоль пути — естественная тропа не идеально горизонтальна.
+            // Амплитуда ограничена (±2), чтобы не порвать соединение с островами
+            // на самых концах моста (там t близко к 0.05/0.95, sin-затухание уже гасит).
+            double sag = Math.sin(t * Math.PI) * 1.3; // выгиб вниз к середине, 0 на концах
+            double wobble = bridgeNoise.noise2D(t * 25.0 + 1000.0, bp.bridgeSalt() * 1.7) * 1.4;
+            int yOffset = (int) Math.round(sag + wobble);
+            int baseY = bp.bridgeY() - yOffset;
+
+            // Толщина сечения тоже варьируется (1 или 2 блока) вместо фиксированных
+            // двух слоёв — рваный, а не экструдированный профиль.
+            double thicknessRoll = bridgeNoise.noise2D(wx * 0.07 + 300.0, wz * 0.07 + 300.0);
+            int extraLayer = thicknessRoll > 0.15 ? 1 : 0;
+
+            for (int dy = -1; dy <= 1 + extraLayer; dy++) {
+                int wy = baseY + dy;
+                BlockState bridgeBlock;
+                boolean isEdge = perpDistSq > (bridgeWidth - 0.8) * (bridgeWidth - 0.8);
+                if (bp.amethyst()) {
+                    // Нижний слой и рваные края — блок, верх — кластер (кристаллы торчат неровно).
+                    boolean placeCluster = dy >= 1 || (isEdge && thicknessRoll > 0.4);
+                    bridgeBlock = placeCluster ? BS_AMETHYST_CLUSTER : BS_AMETHYST_BLOCK;
+                } else {
+                    bridgeBlock = (dy <= 0) ? BS_OAK_LOG : BS_MANGROVE;
+                }
                 if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, bridgeBlock);
             }
         }
@@ -514,7 +718,17 @@ public class LowerIslandGenerator {
         return h ^ (h >>> 31);
     }
 
-    private record BridgePair(IslandData src, IslandData other, int bridgeY) {}
+    private record BridgePair(IslandData src, IslandData other, int bridgeY, boolean amethyst) {
+        /** Детерминированная "соль" для продольного шума — уникальна для каждой пары островов. */
+        double bridgeSalt() {
+            long h = ((long) src.cx * 341873128712L) ^ ((long) src.cz * 132897987541L)
+                    ^ ((long) other.cx * 2654435761L) ^ ((long) other.cz * 998244353L);
+            h = h ^ (h >>> 33);
+            h *= 0xFF51AFD7ED558CCDL;
+            h = h ^ (h >>> 33);
+            return (h & 0xFFFFFL) / (double) 0xFFFFFL * 1000.0;
+        }
+    }
     /**
      * Возвращает реальный Y верхней поверхности острова в точке (wx, wz)
      * с учётом шумовой деформации — для корректного LOD-рендеринга.

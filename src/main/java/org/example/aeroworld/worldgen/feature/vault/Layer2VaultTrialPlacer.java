@@ -8,6 +8,7 @@ import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
+import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -32,7 +33,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
  */
 public final class Layer2VaultTrialPlacer {
 
-    /** Вероятности тиров для Layer 2. В сумме должны давать 1.0. */
+    /** Вероятности тиров для Layer 2 (обычные острова вне архипелага). В сумме должны давать 1.0. */
     private static final double POOR_CHANCE   = 0.50;
     private static final double MEDIUM_CHANCE = 0.35;
     // RICH_CHANCE — остаток (0.15), вычисляется неявно.
@@ -53,7 +54,7 @@ public final class Layer2VaultTrialPlacer {
      * повторной генерации структур при декорации соседних чанков региона.
      */
     public void placeForChunk(WorldGenLevel region, ChunkAccess chunk,
-                               LowerIslandGenerator generator, IslandShape shape) {
+                              LowerIslandGenerator generator, IslandShape shape) {
 
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
@@ -69,8 +70,23 @@ public final class Layer2VaultTrialPlacer {
 
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
 
+            IslandPlacer placer = generator.getPlacer();
+            boolean isArchipelagoCentre = placer.isArchipelagoCentre(packed);
+            boolean isSatellite = !isArchipelagoCentre
+                    && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
+                    != IslandPlacer.NO_ISLAND;
+
             IslandData island = generator.getIslandData(islandBlockX, islandBlockZ);
-            VaultTrialSpawnTier tier = pickTier(islandBlockX, islandBlockZ);
+            VaultTrialSpawnTier tier;
+            if (isArchipelagoCentre) {
+                // Центр архипелага — всегда второй уровень (MEDIUM), 100% появления.
+                tier = VaultTrialSpawnTier.MEDIUM;
+            } else if (isSatellite) {
+                // Спутники архипелага — всегда первый уровень (POOR), 100% появления.
+                tier = VaultTrialSpawnTier.POOR;
+            } else {
+                tier = pickTier(islandBlockX, islandBlockZ);
+            }
 
             RandomSource rng = RandomSource.create(
                     worldSeed
@@ -79,23 +95,16 @@ public final class Layer2VaultTrialPlacer {
                             ^ 0xFACE5EEDL);
 
             IslandVaultTrialGenerator.placeForIsland(
-                    region,
-                    shape,
-                    island,
-                    NOISE_DEFORM,
-                    tier,
-                    VaultTrialLootConfig.LAYER_2,
-                    rng,
-                    chunkX,
-                    chunkZ,
-                    true
-            );
+                    region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
+                    chunkX, chunkZ);
 
         }
     }
 
     /**
      * Детерминированный выбор тира по координатам центра острова.
+     * Применяется только к обычным островам вне архипелагов —
+     * центры и спутники архипелага получают фиксированный тир (см. {@link #placeForChunk}).
      * Не зависит от порядка генерации чанков — тот же остров всегда получит тот же тир.
      */
     private VaultTrialSpawnTier pickTier(int islandBlockX, int islandBlockZ) {
