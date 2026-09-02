@@ -61,7 +61,7 @@ org.example.aeroworld
     │   ├── HighIslandGenerator.java     — Layer 3: эллипсоиды
     │   ├── UpperIslandGenerator.java    — Layer 4: медузы/щупальца
     │   ├── Layer2StructurePlacer.java   — ставит tank21 в очередь
-    │   └── Layer3StructurePlacer.java   — ставит 
+    │    
     └── structure/                 — валидация структур (деревни и т.п.) под кастомный рельеф
         └── StructureSupportValidator.java  — ★ главный класс валидации (вызывается из createStructures)
 ```

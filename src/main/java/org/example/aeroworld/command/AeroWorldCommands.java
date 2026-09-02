@@ -404,10 +404,12 @@ public final class AeroWorldCommands {
      * {@code Layer2VaultTrialPlacer.placeForChunk}, чтобы результат команды не
      * расходился с тем, что реально сгенерирует мир.</p>
      *
-     * <p>Тир вычисляется через {@link Layer2VaultTrialPlacer#pickTierStatic}
-     * для {@code normal}/{@code archipelago_centre} (RICH возможен только тут)
-     * и через отдельный статический метод для {@code satellite}, где RICH
-     * в принципе недостижим (см. {@code pickSatelliteTierStatic}).</p>
+     * <p>Тир вычисляется через {@link Layer2VaultTrialPlacer pickTierStatic}
+     * только для {@code normal} (RICH возможен только тут). Для
+     * {@code archipelago_centre} тир фиксирован — всегда {@code MEDIUM}
+     * ({@link Layer2VaultTrialPlacer#archipelagoCentreTier}); для
+     * {@code satellite} — всегда {@code POOR}
+     * ({@link Layer2VaultTrialPlacer#satelliteTier}).</p>
      */
     private static int runFindLowerIslandTyped(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
@@ -448,10 +450,16 @@ public final class AeroWorldCommands {
                     "[AeroWorld] Неизвестный тир: '" + rawTier + "'. Допустимо: POOR, MEDIUM, RICH."));
             return 0;
         }
-        if (wantSatellite && wantTier == VaultTrialSpawnTier.RICH) {
+        if (wantSatellite && wantTier != VaultTrialSpawnTier.POOR) {
             source.sendFailure(Component.literal(
-                    "[AeroWorld] RICH недостижим для satellite — острова-спутники архипелага " +
-                            "ограничены тирами POOR/MEDIUM (см. Layer2VaultTrialPlacer)."));
+                    "[AeroWorld] Тир спутников архипелага фиксирован — всегда POOR " +
+                            "(см. Layer2VaultTrialPlacer)."));
+            return 0;
+        }
+        if (wantCentre && wantTier != VaultTrialSpawnTier.MEDIUM) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Тир центра архипелага фиксирован — всегда MEDIUM " +
+                            "(см. Layer2VaultTrialPlacer)."));
             return 0;
         }
 
@@ -493,8 +501,7 @@ public final class AeroWorldCommands {
 
                     if (isCentre) {
                         if (!wantCentre) continue;
-                        VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickSatelliteTierStatic(worldSeed, cx, cz);
-                        if (tier != wantTier) continue;
+                        if (Layer2VaultTrialPlacer.archipelagoCentreTier() != wantTier) continue;
                         found = centre;
                         foundRing = ring;
                         break search;
@@ -521,11 +528,9 @@ public final class AeroWorldCommands {
                         long centre = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
                         if (centre == IslandPlacer.NO_ISLAND || !placer.isArchipelagoCentre(centre)) continue;
 
+                        if (Layer2VaultTrialPlacer.satelliteTier() != wantTier) continue;
                         long[] satellites = placer.getSatellitesForCentre(centre);
                         for (long satellite : satellites) {
-                            int sx = ChunkKey.x(satellite), sz = ChunkKey.z(satellite);
-                            VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickSatelliteTierStatic(worldSeed, sx, sz);
-                            if (tier != wantTier) continue;
                             found = satellite;
                             foundRing = ring;
                             break search2;
