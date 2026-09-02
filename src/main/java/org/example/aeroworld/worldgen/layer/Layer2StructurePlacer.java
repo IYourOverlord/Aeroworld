@@ -7,6 +7,9 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
+import org.example.aeroworld.worldgen.feature.vault.VaultTrialSpawnTier;
+import org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer;
+import org.example.aeroworld.worldgen.noise.IslandPlacer;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
 import java.util.List;
@@ -22,6 +25,7 @@ public final class Layer2StructurePlacer {
     private static final ResourceLocation TANK_ID =
             ResourceLocation.fromNamespaceAndPath("physical_structures", "tank21");
 
+    private final long worldSeed;
     private final ChunkIslandCache sharedChunkCache;
 
     public Layer2StructurePlacer(long worldSeed) {
@@ -29,6 +33,7 @@ public final class Layer2StructurePlacer {
     }
 
     public Layer2StructurePlacer(long worldSeed, ChunkIslandCache sharedChunkCache) {
+        this.worldSeed = worldSeed;
         this.sharedChunkCache = sharedChunkCache;
     }
 
@@ -63,6 +68,18 @@ public final class Layer2StructurePlacer {
             // Обрабатываем только острова, чей центр находится в текущем чанке,
             // чтобы избежать двойной регистрации при обработке соседних чанков.
             if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
+
+            // tank21 ставится только на островах с тиром RICH. RICH недостижим
+            // для островов архипелага (центра/спутника) — см. Layer2VaultTrialPlacer,
+            // поэтому такие острова сразу отсекаются без вычисления тира.
+            IslandPlacer placer = generator.getPlacer();
+            boolean isArchipelagoIsland = placer.isArchipelagoCentre(packed)
+                    || placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
+                    != IslandPlacer.NO_ISLAND;
+            if (isArchipelagoIsland) continue;
+
+            VaultTrialSpawnTier tier = Layer2VaultTrialPlacer.pickTierStatic(worldSeed, islandBlockX, islandBlockZ);
+            if (tier != VaultTrialSpawnTier.RICH) continue;
 
             AeroWorld.structureScheduler.enqueue(islandBlockX, islandBlockZ, TANK_ID);
 
