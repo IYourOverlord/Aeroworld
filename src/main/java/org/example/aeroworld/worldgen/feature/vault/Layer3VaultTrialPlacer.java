@@ -44,16 +44,21 @@ public final class Layer3VaultTrialPlacer {
 
     private final long worldSeed;
     private final ChunkIslandCache sharedChunkCache;
+    private final IslandVaultTrialCache sharedVaultTrialCache;
 
-    public Layer3VaultTrialPlacer(long worldSeed, ChunkIslandCache sharedChunkCache) {
+    public Layer3VaultTrialPlacer(long worldSeed, ChunkIslandCache sharedChunkCache,
+                                   IslandVaultTrialCache sharedVaultTrialCache) {
         this.worldSeed = worldSeed;
         this.sharedChunkCache = sharedChunkCache;
+        this.sharedVaultTrialCache = sharedVaultTrialCache;
     }
 
     /**
      * Вызывается из фазы декорации ({@code applyBiomeDecoration}) для каждого чанка.
-     * Обрабатывает только острова, чей центр находится в этом чанке — избегает
-     * повторной генерации структур при декорации соседних чанков региона.
+     *
+     * <p>Обрабатывает каждый чанк, чей 16×16-квадрат пересекает {@code island.radius}
+     * от центра острова — недостающие структуры тира доразмещаются постепенно
+     * между вызовами для разных чанков одного острова (см. {@link IslandVaultTrialCache}).</p>
      */
     public void placeForChunk(WorldGenLevel region, ChunkAccess chunk,
                                HighIslandGenerator generator) {
@@ -70,23 +75,41 @@ public final class Layer3VaultTrialPlacer {
             int islandBlockX = ChunkKey.x(packed);
             int islandBlockZ = ChunkKey.z(packed);
 
-            if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
-
             IslandData island = generator.getIslandData(islandBlockX, islandBlockZ);
+
+            if (!chunkIntersectsRadius(chunkX, chunkZ, islandBlockX, islandBlockZ, island.radius)) continue;
+
             VaultTrialSpawnTier tier = pickTier(islandBlockX, islandBlockZ);
+
+            IslandVaultTrialCache.Progress progress = sharedVaultTrialCache.getOrCreate(
+                    islandBlockX, islandBlockZ, tier.vaultCount(), tier.trialSpawnerCount());
+            if (progress.isComplete()) continue;
 
             RandomSource rng = RandomSource.create(
                     worldSeed
                             ^ ((long) islandBlockX * 341873128712L)
                             ^ ((long) islandBlockZ * 132897987541L)
                             ^ 0xFACE5EEDL
-                            ^ L3_RNG_SALT); // отличается от Layer2, чтобы не совпасть детерминированно
+                            ^ L3_RNG_SALT // отличается от Layer2, чтобы не совпасть детерминированно
+                            ^ ((long) chunkX * 0x9E3779B97F4A7C15L)
+                            ^ ((long) chunkZ * 0xC2B2AE3D27D4EB4FL));
 
             IslandVaultTrialGenerator.placeForEllipsoidIsland(
                     region, generator, island, tier, VaultTrialLootConfig.LAYER_3, rng,
-                    chunkX, chunkZ);
+                    chunkX, chunkZ, progress);
 
         }
+    }
+
+    /** См. {@code Layer2VaultTrialPlacer.chunkIntersectsRadius} — идентичная грубая проверка XZ-пересечения. */
+    private static boolean chunkIntersectsRadius(int chunkX, int chunkZ, int cx, int cz, double radius) {
+        int minX = chunkX << 4;
+        int minZ = chunkZ << 4;
+        int nearestX = Math.max(minX, Math.min(cx, minX + 15));
+        int nearestZ = Math.max(minZ, Math.min(cz, minZ + 15));
+        double dx = nearestX - cx;
+        double dz = nearestZ - cz;
+        return dx * dx + dz * dz <= radius * radius;
     }
 
     /**

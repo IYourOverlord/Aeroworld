@@ -91,6 +91,15 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
      */
     private volatile ChunkIslandCache sharedChunkIslandCache = new ChunkIslandCache();
 
+    /**
+     * Общий кэш накопительного прогресса Vault/Trial по острову (см.
+     * {@link org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache}) —
+     * один на все три Layer'а, аналогично {@link #sharedChunkIslandCache}.
+     * Пересоздаётся вместе с ним при смене seed.
+     */
+    private volatile org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache sharedVaultTrialCache =
+            new org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache();
+
     // ── Кэшированные BlockState для applyLayer1Surface и getBaseColumn ────────
     private static final BlockState BS_STONE      = Blocks.STONE      .defaultBlockState();
     private static final BlockState BS_DEEPSLATE  = Blocks.DEEPSLATE  .defaultBlockState();
@@ -195,8 +204,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         worldSeed       = seed;
         seedInitialized = true;
 
-        // Пересоздаём общий кэш при смене seed — старые записи принадлежат другому миру.
+        // Пересоздаём общие кэши при смене seed — старые записи принадлежат другому миру.
         sharedChunkIslandCache = new ChunkIslandCache();
+        sharedVaultTrialCache = new org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache();
 
         layer1       = new Layer1FlatGenerator(seed);
         lowerIslands = new LowerIslandGenerator(seed, settings.layer2(), sharedChunkIslandCache);
@@ -208,9 +218,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         // ── Инициализируем placers с актуальным seed ──────────────────────────
         structurePlacer       = new Layer2StructurePlacer(seed, sharedChunkIslandCache);
-        layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache);
-        layer3VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer(seed, sharedChunkIslandCache);
-        layer4VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer(seed, sharedChunkIslandCache);
+        layer2VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer(seed, sharedChunkIslandCache, sharedVaultTrialCache);
+        layer3VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer3VaultTrialPlacer(seed, sharedChunkIslandCache, sharedVaultTrialCache);
+        layer4VaultTrialPlacer = new org.example.aeroworld.worldgen.feature.vault.Layer4VaultTrialPlacer(seed, sharedChunkIslandCache, sharedVaultTrialCache);
         // ─────────────────────────────────────────────────────────────────────
 
         AeroWorld.structureScheduler = new IslandStructureScheduler();

@@ -47,16 +47,26 @@ public final class Layer2VaultTrialPlacer {
 
     private final long worldSeed;
     private final ChunkIslandCache sharedChunkCache;
+    private final IslandVaultTrialCache sharedVaultTrialCache;
 
-    public Layer2VaultTrialPlacer(long worldSeed, ChunkIslandCache sharedChunkCache) {
+    public Layer2VaultTrialPlacer(long worldSeed, ChunkIslandCache sharedChunkCache,
+                                   IslandVaultTrialCache sharedVaultTrialCache) {
         this.worldSeed = worldSeed;
         this.sharedChunkCache = sharedChunkCache;
+        this.sharedVaultTrialCache = sharedVaultTrialCache;
     }
 
     /**
      * Вызывается из фазы декорации ({@code applyBiomeDecoration}) для каждого чанка.
-     * Обрабатывает только острова, чей центр находится в этом чанке — избегает
-     * повторной генерации структур при декорации соседних чанков региона.
+     *
+     * <p>В отличие от прежней версии, обрабатывает не только чанк центра
+     * острова, а КАЖДЫЙ чанк, чей 16×16-квадрат пересекает {@code island.radius}
+     * от центра — недостающие структуры тира доразмещаются постепенно, по мере
+     * генерации разных чанков одного острова (см. {@link IslandVaultTrialCache}
+     * и javadoc {@link IslandVaultTrialGenerator#placeForIsland}). Грубая
+     * XZ-проверка пересечения ниже отсеивает подавляющее большинство чанков в
+     * радиусе поиска {@code searchRadius}, для которых остров физически не
+     * может иметь тело в этом чанке.</p>
      */
     public void placeForChunk(WorldGenLevel region, ChunkAccess chunk,
                               LowerIslandGenerator generator, IslandShape shape) {
@@ -73,8 +83,6 @@ public final class Layer2VaultTrialPlacer {
             int islandBlockX = ChunkKey.x(packed);
             int islandBlockZ = ChunkKey.z(packed);
 
-            if ((islandBlockX >> 4) != chunkX || (islandBlockZ >> 4) != chunkZ) continue;
-
             IslandPlacer placer = generator.getPlacer();
             boolean isArchipelagoCentre = placer.isArchipelagoCentre(packed);
             boolean isSatellite = !isArchipelagoCentre
@@ -85,6 +93,15 @@ public final class Layer2VaultTrialPlacer {
             if (isSatellite && !rollSatelliteSpawn(islandBlockX, islandBlockZ)) continue;
 
             IslandData island = generator.getIslandData(islandBlockX, islandBlockZ);
+
+            // Грубая проверка пересечения XZ: этот чанк должен реально лежать
+            // в пределах тела острова (иначе findBuriedSpot* заведомо не найдёт
+            // валидную колонку в нём — не стоит тратить RNG/CAS на пустой чанк).
+            // Используем ближайшую точку чанка 16×16 до центра острова, а не
+            // только угол/центр чанка — иначе диагональные чанки на границе
+            // radius ошибочно отсекались бы.
+            if (!chunkIntersectsRadius(chunkX, chunkZ, islandBlockX, islandBlockZ, island.radius)) continue;
+
             // Тир островов архипелага фиксирован: центр всегда MEDIUM,
             // спутники всегда POOR. RICH недостижим ни для одного из них —
             // только для обычных (неархипелажных) островов.
@@ -97,17 +114,38 @@ public final class Layer2VaultTrialPlacer {
                 tier = pickTier(islandBlockX, islandBlockZ);
             }
 
+            IslandVaultTrialCache.Progress progress = sharedVaultTrialCache.getOrCreate(
+                    islandBlockX, islandBlockZ, tier.vaultCount(), tier.trialSpawnerCount());
+            if (progress.isComplete()) continue;
+
             RandomSource rng = RandomSource.create(
                     worldSeed
                             ^ ((long) islandBlockX * 341873128712L)
                             ^ ((long) islandBlockZ * 132897987541L)
-                            ^ 0xFACE5EEDL);
+                            ^ 0xFACE5EEDL
+                            ^ ((long) chunkX * 0x9E3779B97F4A7C15L)
+                            ^ ((long) chunkZ * 0xC2B2AE3D27D4EB4FL));
 
             IslandVaultTrialGenerator.placeForIsland(
                     region, shape, island, NOISE_DEFORM, tier, VaultTrialLootConfig.LAYER_2, rng,
-                    chunkX, chunkZ, !isArchipelagoIsland);
+                    chunkX, chunkZ, !isArchipelagoIsland, progress);
 
         }
+    }
+
+    /**
+     * Грубая проверка пересечения квадрата чанка 16×16 со сферой радиуса
+     * {@code radius} вокруг центра острова — ближайшая точка чанка к центру
+     * не дальше {@code radius} (расстояние по осям клампится в границы чанка).
+     */
+    private static boolean chunkIntersectsRadius(int chunkX, int chunkZ, int cx, int cz, double radius) {
+        int minX = chunkX << 4;
+        int minZ = chunkZ << 4;
+        int nearestX = Math.max(minX, Math.min(cx, minX + 15));
+        int nearestZ = Math.max(minZ, Math.min(cz, minZ + 15));
+        double dx = nearestX - cx;
+        double dz = nearestZ - cz;
+        return dx * dx + dz * dz <= radius * radius;
     }
 
     /**

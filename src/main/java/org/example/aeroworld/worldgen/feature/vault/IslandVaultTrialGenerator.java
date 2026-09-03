@@ -16,7 +16,6 @@ import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.example.aeroworld.worldgen.noise.IslandShape;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -200,6 +199,11 @@ public final class IslandVaultTrialGenerator {
      *                    маленьких островах-спутниках это исключение съедало всё
      *                    доступное пространство поиска, и часть Vault/Trial Spawner
      *                    молча не размещалась (см. javadoc {@link #findBuriedSpot}).
+     * @param progress   накопительный прогресс острова ({@link IslandVaultTrialCache}) —
+     *                    общий для всех чанков этого острова; цикл идёт, пока в нём
+     *                    остаются недоразмещённые структуры тира, а не фиксированное
+     *                    число раз, и уже поставленные позиции (в т.ч. из ДРУГИХ
+     *                    чанков этого острова) участвуют в проверке {@code MIN_SPACING}.
      */
     public static void placeForIsland(WorldGenLevel region,
                                        IslandShape shape,
@@ -210,26 +214,32 @@ public final class IslandVaultTrialGenerator {
                                        RandomSource rng,
                                        int chunkX,
                                        int chunkZ,
-                                       boolean excludeTankZone) {
+                                       boolean excludeTankZone,
+                                       IslandVaultTrialCache.Progress progress) {
 
-        List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
-
-        for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ, excludeTankZone);
-            if (pos == null) continue;
-            if (!placeVault(region, pos, loot)) continue;
+        while (progress.vaultsRemaining.get() > 0) {
+            if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, progress.placed, chunkX, chunkZ, excludeTankZone);
+            if (pos == null || !placeVault(region, pos, loot)) {
+                progress.vaultsRemaining.incrementAndGet();
+                if (pos == null) break; // этот чанк исчерпан — дальнейшие попытки здесь тоже провалятся
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
 
-        for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, placed, chunkX, chunkZ, excludeTankZone);
-            if (pos == null) continue;
-            if (!placeTrialSpawner(region, pos, loot)) continue;
+        while (progress.trialSpawnersRemaining.get() > 0) {
+            if (progress.trialSpawnersRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpot(region, shape, island, noiseDeform, rng, progress.placed, chunkX, chunkZ, excludeTankZone);
+            if (pos == null || !placeTrialSpawner(region, pos, loot)) {
+                progress.trialSpawnersRemaining.incrementAndGet();
+                if (pos == null) break;
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
-
     }
 
     /**
@@ -257,6 +267,7 @@ public final class IslandVaultTrialGenerator {
      * @param rng        детерминированный источник случайности (по острову, не по чанку!)
      * @param chunkX     координата чанка (в чанках), вызвавшего decoration
      * @param chunkZ     см. {@code chunkX}
+     * @param progress   накопительный прогресс острова, см. {@link #placeForIsland}.
      */
     public static void placeForEllipsoidIsland(WorldGenLevel region,
                                                 HighIslandGenerator generator,
@@ -265,26 +276,32 @@ public final class IslandVaultTrialGenerator {
                                                 VaultTrialLootConfig loot,
                                                 RandomSource rng,
                                                 int chunkX,
-                                                int chunkZ) {
+                                                int chunkZ,
+                                                IslandVaultTrialCache.Progress progress) {
 
-        List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
-
-        for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, placed, chunkX, chunkZ);
-            if (pos == null) continue;
-            if (!placeVault(region, pos, loot)) continue;
+        while (progress.vaultsRemaining.get() > 0) {
+            if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, progress.placed, chunkX, chunkZ);
+            if (pos == null || !placeVault(region, pos, loot)) {
+                progress.vaultsRemaining.incrementAndGet();
+                if (pos == null) break;
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
 
-        for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, placed, chunkX, chunkZ);
-            if (pos == null) continue;
-            if (!placeTrialSpawner(region, pos, loot)) continue;
+        while (progress.trialSpawnersRemaining.get() > 0) {
+            if (progress.trialSpawnersRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpotEllipsoid(region, generator, island, rng, progress.placed, chunkX, chunkZ);
+            if (pos == null || !placeTrialSpawner(region, pos, loot)) {
+                progress.trialSpawnersRemaining.incrementAndGet();
+                if (pos == null) break;
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
-
     }
 
     /**
@@ -323,6 +340,7 @@ public final class IslandVaultTrialGenerator {
      * @param rng        детерминированный источник случайности (по острову, не по чанку!)
      * @param chunkX     координата чанка (в чанках), вызвавшего decoration
      * @param chunkZ     см. {@code chunkX}
+     * @param progress   накопительный прогресс острова, см. {@link #placeForIsland}.
      */
     public static void placeForJellyfishIsland(WorldGenLevel region,
                                                  UpperIslandGenerator generator,
@@ -331,26 +349,32 @@ public final class IslandVaultTrialGenerator {
                                                  VaultTrialLootConfig loot,
                                                  RandomSource rng,
                                                  int chunkX,
-                                                 int chunkZ) {
+                                                 int chunkZ,
+                                                 IslandVaultTrialCache.Progress progress) {
 
-        List<BlockPos> placed = new ArrayList<>(tier.vaultCount() + tier.trialSpawnerCount());
-
-        for (int i = 0; i < tier.vaultCount(); i++) {
-            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, placed, chunkX, chunkZ);
-            if (pos == null) continue;
-            if (!placeVault(region, pos, loot)) continue;
+        while (progress.vaultsRemaining.get() > 0) {
+            if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, progress.placed, chunkX, chunkZ);
+            if (pos == null || !placeVault(region, pos, loot)) {
+                progress.vaultsRemaining.incrementAndGet();
+                if (pos == null) break;
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
 
-        for (int i = 0; i < tier.trialSpawnerCount(); i++) {
-            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, placed, chunkX, chunkZ);
-            if (pos == null) continue;
-            if (!placeTrialSpawner(region, pos, loot)) continue;
+        while (progress.trialSpawnersRemaining.get() > 0) {
+            if (progress.trialSpawnersRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
+            BlockPos pos = findBuriedSpotCap(region, generator, island, rng, progress.placed, chunkX, chunkZ);
+            if (pos == null || !placeTrialSpawner(region, pos, loot)) {
+                progress.trialSpawnersRemaining.incrementAndGet();
+                if (pos == null) break;
+                continue;
+            }
             clearAboveBlock(region, pos);
-            placed.add(pos);
+            progress.placed.add(pos);
         }
-
     }
 
     /**
