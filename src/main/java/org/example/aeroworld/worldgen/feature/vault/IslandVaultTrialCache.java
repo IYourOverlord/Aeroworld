@@ -58,24 +58,77 @@ public final class IslandVaultTrialCache {
 
     private final ConcurrentHashMap<Long, Progress> map = new ConcurrentHashMap<>();
 
-    private static long key(int cx, int cz) {
-        return ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+    /**
+     * Составной ключ {@code (layerId, cx, cz)}, а НЕ просто {@code (cx, cz)}.
+     *
+     * <p><b>Почему это критично:</b> экземпляр этого кэша один общий на все три
+     * слоя ({@code AeroWorldChunkGenerator} передаёт один и тот же
+     * {@code sharedVaultTrialCache} в {@code Layer2VaultTrialPlacer},
+     * {@code Layer3VaultTrialPlacer} и {@code Layer4VaultTrialPlacer}). Каждый
+     * слой использует свой {@code IslandPlacer} с собственной сеткой и солью
+     * seed, но их острова распределены НЕЗАВИСИМО по одной и той же плоскости
+     * XZ (различаются только диапазоном Y, который этот кэш не видит) — при
+     * плотных пресетах (например {@code dense_archipelago}: grid=10/14/12)
+     * остров одного слоя регулярно оказывается в той же (или очень близкой)
+     * точке XZ, что и остров/спутник другого слоя, а спутники архипелага Layer2
+     * (кольцо вокруг центра, до 6 штук) дополнительно увеличивают плотность
+     * занятых XZ-точек. Без {@code layerId} в ключе {@code getOrCreate} для
+     * острова слоя A мог вернуть уже существующую запись, ранее созданную для
+     * острова слоя B с теми же {@code (cx,cz)} — оба слоя тогда делили ОДИН
+     * общий счётчик {@code vaultsRemaining}/{@code trialSpawnersRemaining} и
+     * список {@code placed}, из-за чего конкретный физический остров получал
+     * структуры сверх своего тира (ровно баг со скриншота: POOR-спутник с
+     * лимитом 1+1 получал 5 или 3 объекта — фактически сумму своих и чужих).</p>
+     */
+    private static long key(int layerId, int cx, int cz) {
+        long h = ((long) layerId) * 0x9E3779B97F4A7C15L
+                ^ ((long) cx * 341873128712L)
+                ^ ((long) cz * 132897987541L);
+        h = h ^ (h >>> 33);
+        h *= 0xFF51AFD7ED558CCDL;
+        h = h ^ (h >>> 33);
+        h *= 0xC4CEB9FE1A85EC53L;
+        return h ^ (h >>> 33);
     }
 
     /**
-     * Возвращает (создавая при первом обращении) прогресс острова.
-     * {@code vaultCount}/{@code trialSpawnerCount} используются ТОЛЬКО при
-     * первом создании записи — тир острова детерминирован по его координатам,
-     * поэтому повторные вызовы с теми же аргументами для того же острова
-     * идемпотентны и не меняют уже созданный {@link Progress}.
+     * Возвращает (создавая при первом обращении) прогресс острова слоя
+     * {@code layerId}. {@code vaultCount}/{@code trialSpawnerCount} используются
+     * ТОЛЬКО при первом создании записи — тир острова детерминирован по его
+     * координатам, поэтому повторные вызовы с теми же аргументами для того же
+     * острова идемпотентны и не меняют уже созданный {@link Progress}.
+     *
+     * @param layerId идентификатор слоя (см. {@code LowerIslandGenerator.LAYER_ID},
+     *                {@code HighIslandGenerator.LAYER_ID}, {@code UpperIslandGenerator.LAYER_ID}) —
+     *                обязателен для различения островов разных слоёв с
+     *                совпадающими XZ-координатами, см. {@link #key}.
      */
-    public Progress getOrCreate(int cx, int cz, int vaultCount, int trialSpawnerCount) {
-        return map.computeIfAbsent(key(cx, cz), k -> new Progress(vaultCount, trialSpawnerCount));
+    public Progress getOrCreate(int layerId, int cx, int cz, int vaultCount, int trialSpawnerCount) {
+        return map.computeIfAbsent(key(layerId, cx, cz), k -> new Progress(vaultCount, trialSpawnerCount));
+    }
+
+    /**
+     * То же, что {@link #getOrCreate(int, int, int, int, int)}, но также сообщает
+     * вызывающему, была ли запись только что создана ({@code true}) или уже
+     * существовала под этим ключом ({@code true} == "new"). Нужно для
+     * диагностики коллизий ключа между разными физическими островами — если для
+     * одного и того же {@code (layerId,cx,cz)} два разных места кода передают
+     * разные {@code vaultCount}/{@code trialSpawnerCount}, но получают одну и ту
+     * же (уже существующую) запись, это явный симптом бага "остров получает
+     * структуры соседа".
+     */
+    public Progress getOrCreate(int layerId, int cx, int cz, int vaultCount, int trialSpawnerCount,
+                                java.util.function.Consumer<Boolean> wasCreatedCallback) {
+        long k = key(layerId, cx, cz);
+        boolean[] created = {false};
+        Progress p = map.computeIfAbsent(k, kk -> { created[0] = true; return new Progress(vaultCount, trialSpawnerCount); });
+        if (wasCreatedCallback != null) wasCreatedCallback.accept(created[0]);
+        return p;
     }
 
     /** Освобождает запись острова (используется опционально при полном наборе, чтобы не раздувать карту бесконечно). */
-    public void release(int cx, int cz) {
-        map.remove(key(cx, cz));
+    public void release(int layerId, int cx, int cz) {
+        map.remove(key(layerId, cx, cz));
     }
 
     public int size() {

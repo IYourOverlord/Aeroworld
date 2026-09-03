@@ -56,6 +56,10 @@ public class IslandPlacer {
     private final int  gridSizeChunks;   // minimum spacing in chunks between island centres
     private final double spawnChance;    // 0.0 – 1.0, probability an island spawns in a cell
     private final boolean archipelagosEnabled;
+    private final double maxRadiusEstimate; // worst-case остров-радиус этого слоя, для anti-overlap сдвига
+
+    /** Минимальный гарантированный зазор между краями (не центрами) соседних островов, блоков. */
+    private static final double MIN_ISLAND_GAP = 24.0;
 
     /**
      * @param worldSeed       the world seed
@@ -63,7 +67,7 @@ public class IslandPlacer {
      * @param spawnChance     probability [0,1] that a cell actually has an island
      */
     public IslandPlacer(long worldSeed, int gridSizeChunks, double spawnChance) {
-        this(worldSeed, gridSizeChunks, spawnChance, false);
+        this(worldSeed, gridSizeChunks, spawnChance, false, 0.0);
     }
 
     /**
@@ -77,10 +81,29 @@ public class IslandPlacer {
      *                            точки-спутники, о которых их собственная генерация формы не знает.
      */
     public IslandPlacer(long worldSeed, int gridSizeChunks, double spawnChance, boolean archipelagosEnabled) {
+        this(worldSeed, gridSizeChunks, spawnChance, archipelagosEnabled, 0.0);
+    }
+
+    /**
+     * @param worldSeed           the world seed
+     * @param gridSizeChunks      cell size in chunks; islands are at most 1 per cell
+     * @param spawnChance         probability [0,1] that a cell actually has an island
+     * @param archipelagosEnabled см. {@link #IslandPlacer(long, int, double, boolean)}
+     * @param maxRadiusEstimate   worst-case радиус острова этого слоя (обычно {@code cfg.maxRadius()}).
+     *                            Используется ТОЛЬКО для anti-overlap отталкивания центров соседних
+     *                            занятых ячеек друг от друга (см. {@link #getCentreForCell}) — точный
+     *                            радиус конкретного острова вычисляется позже отдельным шумом в
+     *                            {@code LowerIslandGenerator.computeIslandData} и здесь неизвестен,
+     *                            поэтому берём консервативную верхнюю оценку. {@code 0.0} отключает
+     *                            отталкивание (используется старыми вызывающими без anti-overlap).
+     */
+    public IslandPlacer(long worldSeed, int gridSizeChunks, double spawnChance, boolean archipelagosEnabled,
+                        double maxRadiusEstimate) {
         this.worldSeed           = worldSeed;
         this.gridSizeChunks      = gridSizeChunks;
         this.spawnChance         = spawnChance;
         this.archipelagosEnabled = archipelagosEnabled;
+        this.maxRadiusEstimate   = maxRadiusEstimate;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -125,8 +148,105 @@ public class IslandPlacer {
     /**
      * Returns the island centre packed as {@code long} ({@link ChunkKey#of(int,int)})
      * for the given grid cell, or {@link #NO_ISLAND} if no island spawns there.
+     *
+     * <p><b>Anti-overlap отталкивание:</b> если {@code maxRadiusEstimate > 0}, после
+     * вычисления "сырой" (raw) позиции центра в ячейке она сдвигается прочь от
+     * сырых позиций всех непосредственно соседних занятых ячеек (в кольце 3×3),
+     * если расстояние между ними меньше {@code maxRadiusEstimate*2 + MIN_ISLAND_GAP}
+     * (консервативная оценка: оба острова — worst-case максимального радиуса
+     * слоя). Раньше сетка гарантировала только {@code margin} чанков от края
+     * ЯЧЕЙКИ, что НЕ гарантирует зазор между самими островами — два соседних
+     * острова у общей границы ячеек с радиусами, близкими к {@code maxRadius},
+     * визуально наплывали друг на друга (особенно заметно на архипелагах
+     * {@code dense_archipelago}, где {@code grid_chunks=10}, {@code max_radius=60}).</p>
+     *
+     * <p>Отталкивание НЕ рекурсивно: соседи берутся по их СЫРЫМ (нескорректированным)
+     * позициям — иначе потребовался бы неограниченный каскад пересчётов (сосед
+     * отталкивается от своего соседа, который отталкивается от текущей ячейки, и
+     * так далее). Раз каждая соседняя ячейка тоже применяет то же самое
+     * отталкивание СИММЕТРИЧНО (та же формула, тот же порог) относительно СВОИХ
+     * соседей — включая текущую, — на практике зазор соблюдается с обеих сторон:
+     * после однократного взаимного сдвига оба острова уже не ближе половины
+     * требуемого зазора друг к другу, а обычно дальше, т.к. сдвиг применяется в
+     * направлении "прочь от всех соседей сразу" (векторная сумма), а не только
+     * от одного конкретного.</p>
      */
     public long getCentreForCell(int cellX, int cellZ) {
+        long raw = rawCentreForCell(cellX, cellZ);
+        if (raw == NO_ISLAND) return NO_ISLAND;
+        if (maxRadiusEstimate <= 0.0) return raw;
+
+        int rawX = ChunkKey.x(raw);
+        int rawZ = ChunkKey.z(raw);
+
+        double minCentreDist = maxRadiusEstimate * 2.0 + MIN_ISLAND_GAP;
+
+        double pushX = 0.0, pushZ = 0.0;
+        boolean anyNeighbour = false;
+
+        for (int dcx = -1; dcx <= 1; dcx++) {
+            for (int dcz = -1; dcz <= 1; dcz++) {
+                if (dcx == 0 && dcz == 0) continue;
+                long neighbourRaw = rawCentreForCell(cellX + dcx, cellZ + dcz);
+                if (neighbourRaw == NO_ISLAND) continue;
+
+                int nx = ChunkKey.x(neighbourRaw);
+                int nz = ChunkKey.z(neighbourRaw);
+
+                // Если сосед — центр архипелага, его реально занятая область — не
+                // точка, а диск радиусом до SATELLITE_DIST_MAX (там, где сидят
+                // спутники), плюс их собственный worst-case радиус. Без этого
+                // обычный остров соседней ячейки отталкивался бы только от точки
+                // ЦЕНТРА архипелага и продолжал бы наплывать на его спутников —
+                // именно баг со скриншота (обычные острова перекрывают спутников).
+                double neighbourEffectiveRadius = maxRadiusEstimate;
+                if (archipelagosEnabled && isArchipelagoCentre(neighbourRaw)) {
+                    neighbourEffectiveRadius = SATELLITE_DIST_MAX
+                            + maxRadiusEstimate * ARCHIPELAGO_SCALE * SATELLITE_SCALE;
+                }
+                double requiredDist = maxRadiusEstimate + neighbourEffectiveRadius + MIN_ISLAND_GAP;
+
+                double dx = rawX - nx;
+                double dz = rawZ - nz;
+                double dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist >= requiredDist || dist < 1e-6) continue;
+
+                // Вклад тем сильнее, чем ближе к порогу нарушен зазор; нормализованное направление "прочь".
+                double weight = (requiredDist - dist) / requiredDist;
+                pushX += (dx / dist) * weight;
+                pushZ += (dz / dist) * weight;
+                anyNeighbour = true;
+            }
+        }
+
+        if (!anyNeighbour) return raw;
+
+        double pushLen = Math.sqrt(pushX * pushX + pushZ * pushZ);
+        if (pushLen < 1e-6) return raw; // силы взаимно погасились (симметричный случай) — оставляем как есть
+
+        // Сдвигаем на величину, достаточную для устранения худшего нарушения, но не
+        // выходя за пределы своей ячейки (иначе легко залезть в ЕЩЁ одну чужую).
+        int cellMinX = cellX * gridSizeChunks * 16;
+        int cellMinZ = cellZ * gridSizeChunks * 16;
+        int cellMaxX = cellMinX + gridSizeChunks * 16 - 1;
+        int cellMaxZ = cellMinZ + gridSizeChunks * 16 - 1;
+
+        double maxShift = (gridSizeChunks * 16) * 0.5; // не более половины ячейки за один проход
+        double shiftX = (pushX / pushLen) * Math.min(maxShift, (maxRadiusEstimate * 2.0 + MIN_ISLAND_GAP) * 0.5);
+        double shiftZ = (pushZ / pushLen) * Math.min(maxShift, (maxRadiusEstimate * 2.0 + MIN_ISLAND_GAP) * 0.5);
+
+        int newX = clamp((int) Math.round(rawX + shiftX), cellMinX, cellMaxX);
+        int newZ = clamp((int) Math.round(rawZ + shiftZ), cellMinZ, cellMaxZ);
+
+        return ChunkKey.of(newX, newZ);
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return v < min ? min : (v > max ? max : v);
+    }
+
+    /** Нескорректированная (до anti-overlap отталкивания) позиция центра ячейки — детерминирована только по хэшу. */
+    private long rawCentreForCell(int cellX, int cellZ) {
         long hash = hash(cellX, cellZ);
 
         // Spawn chance check

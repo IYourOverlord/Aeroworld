@@ -85,7 +85,7 @@ public class LowerIslandGenerator {
      * размеров спутников (см. javadoc computeIslandData). Значения подобраны
      * так, чтобы спутник был заметно, но не драматично, меньше центра архипелага.
      */
-    private static final double MIN_SATELLITE_RADIUS = 10.5;
+    private static final double MIN_SATELLITE_RADIUS = 5.5;
     private static final double MAX_SATELLITE_RADIUS = 15.5;
     private final int    gridChunks;
     private final double spawnChance;
@@ -137,7 +137,7 @@ public class LowerIslandGenerator {
         this.bridgeChance   = cfg.bridgeChance();
         this.searchRadius   = Math.max(2, (int) Math.ceil(cfg.maxRadius() / (gridChunks * 16.0)) + 1);
         this.chunkCache     = sharedChunkCache;
-        this.placer         = new IslandPlacer(worldSeed ^ 0x2L, gridChunks, spawnChance, true);
+        this.placer         = new IslandPlacer(worldSeed ^ 0x2L, gridChunks, spawnChance, true, cfg.maxRadius());
         this.shape          = new IslandShape(worldSeed ^ 0x3L);
         this.heightVariance = new AeroNoise(worldSeed ^ 0x4L);
         this.bridgeNoise    = new AeroNoise(worldSeed ^ 0x5L);
@@ -253,7 +253,7 @@ public class LowerIslandGenerator {
         // maxRadius + NOISE_DEFORM (собственный радиус) + bridgeMaxRange (длина моста)
         double maxInfluence = maxRadius + NOISE_DEFORM + bridgeMaxRange;
         int maxMargin = (int) Math.ceil(maxInfluence);
-        
+
         LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
@@ -313,7 +313,7 @@ public class LowerIslandGenerator {
                 if (alreadyBridged) continue;
 
                 double distSq = (double)(src.cx - other.cx) * (src.cx - other.cx)
-                              + (double)(src.cz - other.cz) * (src.cz - other.cz);
+                        + (double)(src.cz - other.cz) * (src.cz - other.cz);
                 if (distSq > (double) bridgeMaxRange * bridgeMaxRange) continue;
                 long bridgeHash = hash(src.cx, src.cz, other.cx, other.cz);
                 double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
@@ -331,7 +331,7 @@ public class LowerIslandGenerator {
             IslandData d = islandData[i];
             double margin = NOISE_DEFORM + d.radius;
             inBounds[i] = !(d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
-                            d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
+                    d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -504,7 +504,7 @@ public class LowerIslandGenerator {
      * если дерево здесь не растёт.
      */
     private int placeTrunk(ChunkWriter chunk, int wx, int wz,
-                            int surfaceY, BlockPos.MutableBlockPos pos) {
+                           int surfaceY, BlockPos.MutableBlockPos pos) {
         if (surfaceY < 0) return -1;
         double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
         if (tn < 0.55) return -1;

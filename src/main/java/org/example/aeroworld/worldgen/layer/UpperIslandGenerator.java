@@ -105,7 +105,7 @@ public class UpperIslandGenerator {
         this.tentacleBend   = cfg.tentacleBend();
         this.searchRadius   = Math.max(2, (int) Math.ceil(cfg.maxRadius() / (cfg.gridChunks() * 16.0)) + 1);
         this.chunkCache     = sharedChunkCache;
-        this.placer         = new IslandPlacer(worldSeed ^ 0x20L, cfg.gridChunks(), cfg.spawnChance());
+        this.placer         = new IslandPlacer(worldSeed ^ 0x20L, cfg.gridChunks(), cfg.spawnChance(), false, cfg.maxRadius());
         this.heightVariance = new AeroNoise(worldSeed ^ 0x22L);
         this.capEdgeNoise   = new AeroNoise(worldSeed ^ 0x23L);
         this.tentacleNoise  = new AeroNoise(worldSeed ^ 0x24L);
@@ -170,7 +170,7 @@ public class UpperIslandGenerator {
         // задеть текущий чанк даже с учётом щупалец и искажений.
         double maxInfluence = maxRadius + tentacleBend * 2.0 + CAP_NOISE_DEF;
         int maxMargin = (int) Math.ceil(maxInfluence);
-        
+
         LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);

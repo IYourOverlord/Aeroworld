@@ -83,7 +83,7 @@ public class HighIslandGenerator {
         this.noiseDeform    = cfg.noiseDeform();
         this.searchRadius   = Math.max(2, (int) Math.ceil(cfg.maxRadius() / (cfg.gridChunks() * 16.0)) + 1);
         this.chunkCache     = sharedChunkCache;
-        this.placer         = new IslandPlacer(worldSeed ^ 0x10L, cfg.gridChunks(), cfg.spawnChance());
+        this.placer         = new IslandPlacer(worldSeed ^ 0x10L, cfg.gridChunks(), cfg.spawnChance(), false, cfg.maxRadius());
         this.heightVariance = new AeroNoise(worldSeed ^ 0x12L);
         this.edgeNoise      = new AeroNoise(worldSeed ^ 0x13L);
         this.shapeNoise     = new AeroNoise(worldSeed ^ 0x14L);
@@ -164,7 +164,7 @@ public class HighIslandGenerator {
         // задеть текущий чанк. В Layer 3 эллипсоиды могут растягиваться до radius * 1.5.
         double maxInfluence = maxRadius * 1.5 + noiseDeform;
         int maxMargin = (int) Math.ceil(maxInfluence);
-        
+
         LongArrayList filteredCentres = new LongArrayList();
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
@@ -258,8 +258,8 @@ public class HighIslandGenerator {
      * вычисляются один раз снаружи (см. fillChunk).
      */
     boolean isSphereBlockSolid(int wx, int wy, int wz,
-                                IslandData d,
-                                double ax, double ay, double az) {
+                               IslandData d,
+                               double ax, double ay, double az) {
         if (wy < d.bottomY || wy > d.topY) return false;
 
         double invAx = 1.0 / ax;

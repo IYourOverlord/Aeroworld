@@ -206,16 +206,16 @@ public final class IslandVaultTrialGenerator {
      *                    чанков этого острова) участвуют в проверке {@code MIN_SPACING}.
      */
     public static void placeForIsland(WorldGenLevel region,
-                                       IslandShape shape,
-                                       IslandData island,
-                                       double noiseDeform,
-                                       VaultTrialSpawnTier tier,
-                                       VaultTrialLootConfig loot,
-                                       RandomSource rng,
-                                       int chunkX,
-                                       int chunkZ,
-                                       boolean excludeTankZone,
-                                       IslandVaultTrialCache.Progress progress) {
+                                      IslandShape shape,
+                                      IslandData island,
+                                      double noiseDeform,
+                                      VaultTrialSpawnTier tier,
+                                      VaultTrialLootConfig loot,
+                                      RandomSource rng,
+                                      int chunkX,
+                                      int chunkZ,
+                                      boolean excludeTankZone,
+                                      IslandVaultTrialCache.Progress progress) {
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
@@ -227,6 +227,9 @@ public final class IslandVaultTrialGenerator {
             }
             clearAboveBlock(region, pos);
             progress.placed.add(pos);
+            org.example.aeroworld.AeroWorld.LOGGER.info(
+                    "[AeroWorld][VaultTrial][L2] VAULT placed island=({},{}) tier={} pos={} chunk=({},{}) placedTotal={}",
+                    island.cx, island.cz, tier, pos, chunkX, chunkZ, progress.placed.size());
         }
 
         while (progress.trialSpawnersRemaining.get() > 0) {
@@ -239,6 +242,9 @@ public final class IslandVaultTrialGenerator {
             }
             clearAboveBlock(region, pos);
             progress.placed.add(pos);
+            org.example.aeroworld.AeroWorld.LOGGER.info(
+                    "[AeroWorld][VaultTrial][L2] TRIAL_SPAWNER placed island=({},{}) tier={} pos={} chunk=({},{}) placedTotal={}",
+                    island.cx, island.cz, tier, pos, chunkX, chunkZ, progress.placed.size());
         }
     }
 
@@ -270,14 +276,14 @@ public final class IslandVaultTrialGenerator {
      * @param progress   накопительный прогресс острова, см. {@link #placeForIsland}.
      */
     public static void placeForEllipsoidIsland(WorldGenLevel region,
-                                                HighIslandGenerator generator,
-                                                IslandData island,
-                                                VaultTrialSpawnTier tier,
-                                                VaultTrialLootConfig loot,
-                                                RandomSource rng,
-                                                int chunkX,
-                                                int chunkZ,
-                                                IslandVaultTrialCache.Progress progress) {
+                                               HighIslandGenerator generator,
+                                               IslandData island,
+                                               VaultTrialSpawnTier tier,
+                                               VaultTrialLootConfig loot,
+                                               RandomSource rng,
+                                               int chunkX,
+                                               int chunkZ,
+                                               IslandVaultTrialCache.Progress progress) {
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
@@ -343,14 +349,14 @@ public final class IslandVaultTrialGenerator {
      * @param progress   накопительный прогресс острова, см. {@link #placeForIsland}.
      */
     public static void placeForJellyfishIsland(WorldGenLevel region,
-                                                 UpperIslandGenerator generator,
-                                                 IslandData island,
-                                                 VaultTrialSpawnTier tier,
-                                                 VaultTrialLootConfig loot,
-                                                 RandomSource rng,
-                                                 int chunkX,
-                                                 int chunkZ,
-                                                 IslandVaultTrialCache.Progress progress) {
+                                               UpperIslandGenerator generator,
+                                               IslandData island,
+                                               VaultTrialSpawnTier tier,
+                                               VaultTrialLootConfig loot,
+                                               RandomSource rng,
+                                               int chunkX,
+                                               int chunkZ,
+                                               IslandVaultTrialCache.Progress progress) {
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
@@ -417,14 +423,14 @@ public final class IslandVaultTrialGenerator {
      * возвращаемого значения {@code setBlock} в {@link #placeBlockWithEntity}.
      */
     private static BlockPos findBuriedSpot(WorldGenLevel region,
-                                            IslandShape shape,
-                                            IslandData island,
-                                            double noiseDeform,
-                                            RandomSource rng,
-                                            List<BlockPos> alreadyPlaced,
-                                            int chunkX,
-                                            int chunkZ,
-                                            boolean excludeTankZone) {
+                                           IslandShape shape,
+                                           IslandData island,
+                                           double noiseDeform,
+                                           RandomSource rng,
+                                           List<BlockPos> alreadyPlaced,
+                                           int chunkX,
+                                           int chunkZ,
+                                           boolean excludeTankZone) {
 
         double innerRadius = island.radius * 0.7;
         // На маленьких островах (спутники архипелага, центры архипелага) фиксированный
@@ -548,12 +554,12 @@ public final class IslandVaultTrialGenerator {
      * обоснованием каждой проверки.
      */
     private static BlockPos findBuriedSpotEllipsoid(WorldGenLevel region,
-                                                      HighIslandGenerator generator,
-                                                      IslandData island,
-                                                      RandomSource rng,
-                                                      List<BlockPos> alreadyPlaced,
-                                                      int chunkX,
-                                                      int chunkZ) {
+                                                    HighIslandGenerator generator,
+                                                    IslandData island,
+                                                    RandomSource rng,
+                                                    List<BlockPos> alreadyPlaced,
+                                                    int chunkX,
+                                                    int chunkZ) {
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
             // Сэмплируем точку строго внутри чанка-инициатора decoration —
@@ -636,12 +642,12 @@ public final class IslandVaultTrialGenerator {
      * {@link #placeForJellyfishIsland}).</p>
      */
     private static BlockPos findBuriedSpotCap(WorldGenLevel region,
-                                                UpperIslandGenerator generator,
-                                                IslandData island,
-                                                RandomSource rng,
-                                                List<BlockPos> alreadyPlaced,
-                                                int chunkX,
-                                                int chunkZ) {
+                                              UpperIslandGenerator generator,
+                                              IslandData island,
+                                              RandomSource rng,
+                                              List<BlockPos> alreadyPlaced,
+                                              int chunkX,
+                                              int chunkZ) {
 
         double innerRadius = island.radius * CAP_INNER_RADIUS_FACTOR;
 
@@ -795,8 +801,8 @@ public final class IslandVaultTrialGenerator {
      * @param ominous          зловещий конфиг спавнит немного больше мобов одновременно
      */
     private static CompoundTag buildSpawnerConfig(ResourceLocation lootTable,
-                                                    List<VaultTrialLootConfig.SpawnPotential> spawnPotentials,
-                                                    boolean ominous) {
+                                                  List<VaultTrialLootConfig.SpawnPotential> spawnPotentials,
+                                                  boolean ominous) {
         CompoundTag cfg = new CompoundTag();
 
         ListTag potentials = new ListTag();
@@ -867,7 +873,7 @@ public final class IslandVaultTrialGenerator {
      *         осиротевшие данные в чанке.
      */
     private static boolean placeBlockWithEntity(WorldGenLevel region, BlockPos pos,
-                                                 BlockState state, CompoundTag tag) {
+                                                BlockState state, CompoundTag tag) {
         boolean written = region.setBlock(pos, state, 3);
         if (!written || !region.getBlockState(pos).is(state.getBlock())) {
             return false;
