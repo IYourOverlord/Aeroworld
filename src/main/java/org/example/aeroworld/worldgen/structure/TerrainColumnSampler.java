@@ -316,9 +316,99 @@ public final class TerrainColumnSampler {
 
     private boolean computeHasSolid(int wx, int wz, int fromY) {
         int layer = getLayerForY(fromY);
-        for (int dy = 0; dy <= SUPPORT_SCAN_DEPTH; dy++) {
-            int y = fromY - dy;
-            if (isSolidAt(wx, y, wz, layer)) return true;
+        int minY = fromY - SUPPORT_SCAN_DEPTH;
+
+        // Для Layer 2–4: быстрая проверка пересечения диапазона [fromY - SUPPORT_SCAN_DEPTH, fromY]
+        // с геометрией острова напрямую за один проход по списку островов без поблочного цикла.
+        switch (layer) {
+            case 2: return hasLayer2SolidInRange(wx, wz, minY, fromY);
+            case 3: return hasLayer3SolidInRange(wx, wz, minY, fromY);
+            case 4: return hasLayer4SolidInRange(wx, wz, minY, fromY);
+            case 1:
+            default:
+                for (int y = fromY; y >= minY; y--) {
+                    if (isSolidAt(wx, y, wz, 1)) return true;
+                }
+                return false;
+        }
+    }
+
+    /**
+     * Быстрая конусная аппроксимация Layer 2: проверяет, пересекает ли диапазон [minY, maxY]
+     * тело острова в точке (wx, wz).
+     */
+    private boolean hasLayer2SolidInRange(int wx, int wz, int minY, int maxY) {
+        if (maxY < LowerIslandGenerator.LAYER_MIN_Y || minY > LowerIslandGenerator.LAYER_MAX_Y) return false;
+        int chunkX = wx >> 4, chunkZ = wz >> 4;
+        LongArrayList centres = sharedChunkCache.get(
+                LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                key -> layer2.getPlacer().getIslandCentresForChunk(
+                        chunkX, chunkZ, layer2.getSearchRadius()));
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer2.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
+            if (minY > d.topY || maxY < d.bottomY) continue;
+            double dx = wx - d.cx, dz = wz - d.cz;
+            double distSq = dx * dx + dz * dz;
+            if (distSq > d.radius * d.radius) continue;
+
+            // Конусная аппроксимация формы острова: радиус сужается книзу.
+            // Проверяем верхнюю доступную точку интервала (maxY в пределах острова).
+            int testY = Math.min(maxY, d.topY);
+            double t = (double) (testY - d.bottomY) / (double) Math.max(1, d.topY - d.bottomY);
+            double coneR = d.radius * Math.max(0.1, t);
+            if (distSq <= coneR * coneR) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Быстрая эллипсоидная аппроксимация Layer 3: проверяет диапазон [minY, maxY].
+     */
+    private boolean hasLayer3SolidInRange(int wx, int wz, int minY, int maxY) {
+        if (maxY < HighIslandGenerator.LAYER_MIN_Y || minY > HighIslandGenerator.LAYER_MAX_Y) return false;
+        int chunkX = wx >> 4, chunkZ = wz >> 4;
+        LongArrayList centres = sharedChunkCache.get(
+                HighIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                key -> layer3.getPlacer().getIslandCentresForChunk(
+                        chunkX, chunkZ, layer3.getSearchRadius()));
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer3.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
+            if (minY > d.topY || maxY < d.bottomY) continue;
+            double ax = (d.ellipsoidAxes != null) ? d.ellipsoidAxes[0] : d.radius;
+            double ay = (d.ellipsoidAxes != null) ? d.ellipsoidAxes[1] : (d.topY - d.bottomY) * 0.5;
+            double az = (d.ellipsoidAxes != null) ? d.ellipsoidAxes[2] : d.radius;
+            double cy = (d.topY + d.bottomY) * 0.5;
+
+            double dx = (wx - d.cx) / Math.max(1.0, ax);
+            double dz = (wz - d.cz) / Math.max(1.0, az);
+            double horiz = dx * dx + dz * dz;
+            if (horiz > 1.0) continue;
+
+            int testY = Math.max(minY, Math.min(maxY, (int) Math.round(cy)));
+            double dy = (testY - cy) / Math.max(1.0, ay);
+            if (horiz + dy * dy <= 1.0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Быстрая купольная аппроксимация Layer 4: проверяет диапазон [minY, maxY].
+     */
+    private boolean hasLayer4SolidInRange(int wx, int wz, int minY, int maxY) {
+        if (maxY < UpperIslandGenerator.LAYER_MIN_Y || minY > UpperIslandGenerator.LAYER_MAX_Y) return false;
+        int chunkX = wx >> 4, chunkZ = wz >> 4;
+        LongArrayList centres = sharedChunkCache.get(
+                UpperIslandGenerator.LAYER_ID, chunkX, chunkZ,
+                key -> layer4.getPlacer().getIslandCentresForChunk(
+                        chunkX, chunkZ, layer4.getSearchRadius()));
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            IslandData d = layer4.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
+            if (minY > d.topY || maxY < d.bottomY) continue;
+            double dx = wx - d.cx, dz = wz - d.cz;
+            if (dx * dx + dz * dz <= d.radius * d.radius) return true;
         }
         return false;
     }

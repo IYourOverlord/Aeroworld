@@ -79,7 +79,7 @@ worldgen/
 │       └── VaultTrialSpawnTier.java       — тиры богатства спавна (POOR / MEDIUM / RICH)
 ├── layer/
 │   ├── Layer1FlatGenerator.java     — хелпер границ Layer 1 (-64..300) и делегат сэмплинга высот (surfaceHeight/topmostHeight); генерация блоков удалена
-│   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты
+│   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты (кэширование пар BridgePair на остров, AABB-фильтр чанка, fillBridges вынесен из цикла по островам)
 │   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды
 │   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (купол + 10 щупалец)
 │   └── Layer2StructurePlacer.java   — постановка tank21 в очередь только на обычных островах с тиром RICH
@@ -136,7 +136,7 @@ worldgen/
    - `lowerIslands.placeTreesInRegion()` — размещение листвы деревьев Layer 2 в регионе 3×3 чанка.
    - Размещение Vault / Trial Spawner через `layer2VaultTrialPlacer`, `layer3VaultTrialPlacer`, `layer4VaultTrialPlacer`.
    - `Layer1OreFilter.applyToChunk()` — удаление остаточных руд по всей высоте чанка (-64..2096).
-   - `sharedChunkIslandCache.releaseAll(chunkX, chunkZ, 3)` — освобождение кэша центров островов для чанка.
+   - Автоматическое LRU-управление кэшем центров островов (`ChunkIslandCache`, емкость 4096 слотов) без преждевременного ручного сброса, предотвращающее повторный расчет при последующих вызовах `getBaseHeight` / `getBaseColumn` / спавна мобов.
 
 ---
 

@@ -119,6 +119,12 @@ public class LowerIslandGenerator {
     private final IslandCache islandCache = new IslandCache();
 
     /**
+     * Кэш мостов для острова.
+     * Устраняет вложенный O(N^2) поиск пар мостов при каждом вызове fillChunk.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Long, List<BridgePair>> islandBridgeCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
      * Кэш списка центров островов для чанка.
      * Устраняет повторный обход ячеек сетки при втором вызове fillChunk
      * из restoreIslandsInChunk.
@@ -275,53 +281,21 @@ public class LowerIslandGenerator {
         }
 
         // Precompute active bridge pairs: dist/roll/bridgeY depend only on island centers.
-        // Without this, fillBridges recomputed Math.sqrt + hash for every XZ-column (256×).
-        List<BridgePair> bridgePairs = new ArrayList<>();
-
-        // Гарантированные аметистовые мосты: каждый спутник архипелага соединяется
-        // со своим центром со 100% вероятностью (в отличие от обычных мостов —
-        // без этого архипелаг мог остаться без связей при неудачном roll).
-        for (IslandData src : islandData) {
-            long srcArchCentre = placer.isArchipelagoCentre(ChunkKey.of(src.cx, src.cz))
-                    ? ChunkKey.of(src.cx, src.cz)
-                    : placer.findArchipelagoCentreFor(src.cx, src.cz, searchRadius);
-            if (srcArchCentre == IslandPlacer.NO_ISLAND) continue;
-            // src — спутник или центр архипелага. Соединяем спутник с центром.
-            if (placer.isArchipelagoCentre(ChunkKey.of(src.cx, src.cz))) continue; // сам центр — не соединяем с собой
-            int centreCx = ChunkKey.x(srcArchCentre);
-            int centreCz = ChunkKey.z(srcArchCentre);
-            for (IslandData other : islandData) {
-                if (other.cx == centreCx && other.cz == centreCz) {
-                    bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, true));
-                    break;
+        // Bridges are cached per island in islandBridgeCache, eliminating O(N^2) loops per chunk.
+        List<BridgePair> chunkBridges = new ArrayList<>();
+        double bridgeMargin = 6.0; // max half-width + sag margin
+        for (IslandData d : islandData) {
+            List<BridgePair> pairs = getBridgesForIsland(d);
+            for (BridgePair bp : pairs) {
+                // AABB filter: test if bridge segment bounding box overlaps chunk [baseX..baseX+15, baseZ..baseZ+15]
+                int minBx = Math.min(bp.src().cx, bp.other().cx);
+                int maxBx = Math.max(bp.src().cx, bp.other().cx);
+                int minBz = Math.min(bp.src().cz, bp.other().cz);
+                int maxBz = Math.max(bp.src().cz, bp.other().cz);
+                if (maxBx + bridgeMargin >= baseX && minBx - bridgeMargin <= baseX + 15
+                        && maxBz + bridgeMargin >= baseZ && minBz - bridgeMargin <= baseZ + 15) {
+                    chunkBridges.add(bp);
                 }
-            }
-        }
-
-        for (IslandData src : islandData) {
-            for (IslandData other : islandData) {
-                if (other.cx == src.cx && other.cz == src.cz) continue;
-                // Пропускаем пары, уже добавленные как гарантированный аметистовый мост архипелага.
-                boolean alreadyBridged = false;
-                for (BridgePair bp : bridgePairs) {
-                    if (bp.src().cx == src.cx && bp.src().cz == src.cz
-                            && bp.other().cx == other.cx && bp.other().cz == other.cz) {
-                        alreadyBridged = true;
-                        break;
-                    }
-                }
-                if (alreadyBridged) continue;
-
-                double distSq = (double)(src.cx - other.cx) * (src.cx - other.cx)
-                        + (double)(src.cz - other.cz) * (src.cz - other.cz);
-                if (distSq > (double) bridgeMaxRange * bridgeMaxRange) continue;
-                long bridgeHash = hash(src.cx, src.cz, other.cx, other.cz);
-                double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
-                if (roll > bridgeChance) continue;
-
-                boolean amethyst = placer.isSameArchipelago(src.cx, src.cz, other.cx, other.cz)
-                        || placer.isSameArchipelago(other.cx, other.cz, src.cx, src.cz);
-                bridgePairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, amethyst));
             }
         }
 
@@ -390,9 +364,11 @@ public class LowerIslandGenerator {
                         // Сталактиты на нижней грани острова (1-3 блока вниз).
                         placeStalactite(chunk, wx, wz, bottomSurfaceY);
                     }
+                }
 
-                    // Bridges
-                    fillBridges(chunk, wx, wz, d, bridgePairs, pos);
+                // Bridges: executed ONCE per column across chunk-intersecting bridges
+                if (!chunkBridges.isEmpty()) {
+                    fillBridges(chunk, wx, wz, chunkBridges);
                 }
             }
         }
@@ -646,11 +622,67 @@ public class LowerIslandGenerator {
 
     // ── Мосты ─────────────────────────────────────────────────────────────────
 
-    private void fillBridges(ChunkWriter chunk, int wx, int wz,
-                             IslandData src, List<BridgePair> pairs,
-                             BlockPos.MutableBlockPos pos) {
+    private List<BridgePair> getBridgesForIsland(IslandData src) {
+        long key = ChunkKey.of(src.cx, src.cz);
+        return islandBridgeCache.computeIfAbsent(key, k -> {
+            List<BridgePair> pairs = new ArrayList<>();
+            // Поиск соседних центров островов в радиусе searchRadius
+            int cellX = Math.floorDiv(src.cx, gridChunks * 16);
+            int cellZ = Math.floorDiv(src.cz, gridChunks * 16);
+
+            // 1. Гарантированный аметистовый мост к центру архипелага, если src - спутник
+            long srcArchCentre = placer.isArchipelagoCentre(key)
+                    ? key
+                    : placer.findArchipelagoCentreFor(src.cx, src.cz, searchRadius);
+            if (srcArchCentre != IslandPlacer.NO_ISLAND && !placer.isArchipelagoCentre(key)) {
+                IslandData centreData = getIslandData(ChunkKey.x(srcArchCentre), ChunkKey.z(srcArchCentre));
+                pairs.add(new BridgePair(src, centreData, Math.min(src.topY, centreData.topY) - 1, true));
+            }
+
+            // 2. Обычные и аметистовые мосты к соседним островам в радиусе bridgeMaxRange
+            for (int dcx = -searchRadius; dcx <= searchRadius; dcx++) {
+                for (int dcz = -searchRadius; dcz <= searchRadius; dcz++) {
+                    long centre = placer.getCentreForCell(cellX + dcx, cellZ + dcz);
+                    if (centre == IslandPlacer.NO_ISLAND) continue;
+
+                    addCandidateBridge(src, centre, pairs);
+
+                    if (placer.isArchipelagoCentre(centre)) {
+                        for (long sat : placer.getSatellitesForCentre(centre)) {
+                            addCandidateBridge(src, sat, pairs);
+                        }
+                    }
+                }
+            }
+            return pairs.isEmpty() ? List.of() : pairs;
+        });
+    }
+
+    private void addCandidateBridge(IslandData src, long otherPacked, List<BridgePair> pairs) {
+        int ocx = ChunkKey.x(otherPacked);
+        int ocz = ChunkKey.z(otherPacked);
+        if (ocx == src.cx && ocz == src.cz) return;
+
+        // Чтобы не проверять пары дважды или дублировать гарантированный мост:
         for (BridgePair bp : pairs) {
-            if (bp.src().cx != src.cx || bp.src().cz != src.cz) continue;
+            if (bp.other().cx == ocx && bp.other().cz == ocz) return;
+        }
+
+        double distSq = (double)(src.cx - ocx) * (src.cx - ocx) + (double)(src.cz - ocz) * (src.cz - ocz);
+        if (distSq > (double) bridgeMaxRange * bridgeMaxRange) return;
+
+        long bridgeHash = hash(src.cx, src.cz, ocx, ocz);
+        double roll = ((bridgeHash >>> 1) & 0xFFFFFFL) / (double) 0xFFFFFFL;
+        if (roll > bridgeChance) return;
+
+        IslandData other = getIslandData(ocx, ocz);
+        boolean amethyst = placer.isSameArchipelago(src.cx, src.cz, ocx, ocz)
+                || placer.isSameArchipelago(ocx, ocz, src.cx, src.cz);
+        pairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, amethyst));
+    }
+
+    private void fillBridges(ChunkWriter chunk, int wx, int wz, List<BridgePair> pairs) {
+        for (BridgePair bp : pairs) {
 
             double t = projectPointOntoSegment(wx, wz, bp.src().cx, bp.src().cz, bp.other().cx, bp.other().cz);
             if (t < 0.05 || t > 0.95) continue;

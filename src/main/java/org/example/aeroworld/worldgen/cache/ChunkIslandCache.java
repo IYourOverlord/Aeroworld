@@ -48,10 +48,13 @@ import java.util.function.LongFunction;
  */
 public final class ChunkIslandCache {
 
-    private static final int MAX_SIZE = 1024;
+    public static final int MAX_SIZE = 4096;
 
     private final ConcurrentHashMap<Long, LongArrayList> map =
-            new ConcurrentHashMap<>(MAX_SIZE * 2, 0.75f, 8);
+            new ConcurrentHashMap<>(MAX_SIZE * 2, 0.75f, 16);
+
+    private final java.util.concurrent.ConcurrentLinkedDeque<Long> lruOrder =
+            new java.util.concurrent.ConcurrentLinkedDeque<>();
 
     // ── Строим составной ключ ──────────────────────────────────────────────────
 
@@ -86,50 +89,49 @@ public final class ChunkIslandCache {
      * @param factory функция-вычислитель (вызывается минимум раз на (layerId, chunkX, chunkZ))
      */
     public LongArrayList get(int layerId, int chunkX, int chunkZ,
-                           LongFunction<LongArrayList> factory) {
+                             LongFunction<LongArrayList> factory) {
         long key = composeKey(layerId, chunkX, chunkZ);
         LongArrayList existing = map.get(key);
         if (existing != null) return existing;
 
-        // Боксинг только на cache miss — computeIfAbsent принимает Function<Long,V>
-        LongArrayList computed = map.computeIfAbsent(key, k -> factory.apply(k));
+        LongArrayList computed = map.computeIfAbsent(key, k -> {
+            LongArrayList list = factory.apply(k);
+            lruOrder.addLast(k);
+            return list;
+        });
 
-        if (map.size() > MAX_SIZE) {
-            Long evict = map.keys().nextElement();
-            if (evict != null && evict != key) map.remove(evict);
+        // Потокобезопасное LRU-вытеснение устаревших записей при переполнении кэша
+        while (map.size() > MAX_SIZE) {
+            Long oldestKey = lruOrder.pollFirst();
+            if (oldestKey != null) {
+                map.remove(oldestKey);
+            } else {
+                break;
+            }
         }
+
         return computed;
     }
 
     /**
-     * Освобождает запись для одного слоя конкретного чанка.
-     * Вызывается каждым генератором через {@code releaseChunkCache(chunkX, chunkZ)}.
-     *
-     * @param layerId идентификатор слоя (0 = Lower, 1 = High, 2 = Upper)
-     * @param chunkX  координата чанка X
-     * @param chunkZ  координата чанка Z
+     * Больше не требует ручного сброса: кэш автоматически вытесняется по LRU.
+     * Оставлено для обратной совместимости.
      */
     public void release(int layerId, int chunkX, int chunkZ) {
-        map.remove(composeKey(layerId, chunkX, chunkZ));
+        // No-op: LRU управляет жизненным циклом записей
     }
 
     /**
-     * Освобождает записи для всех слоёв от 0 до {@code maxLayerId - 1}
-     * за один вызов. Используется в {@code AeroWorldChunkGenerator}
-     * вместо трёх отдельных {@code releaseChunkCache}.
-     *
-     * @param chunkX     координата чанка X
-     * @param chunkZ     координата чанка Z
-     * @param maxLayerId количество слоёв (эксклюзивно); обычно = 3
+     * Больше не требует ручного сброса: кэш автоматически вытесняется по LRU.
+     * Оставлено для обратной совместимости.
      */
     public void releaseAll(int chunkX, int chunkZ, int maxLayerId) {
-        for (int i = 0; i < maxLayerId; i++) {
-            map.remove(composeKey(i, chunkX, chunkZ));
-        }
+        // No-op: LRU управляет жизненным циклом записей
     }
 
     public void invalidate() {
         map.clear();
+        lruOrder.clear();
     }
 
     public int size() {

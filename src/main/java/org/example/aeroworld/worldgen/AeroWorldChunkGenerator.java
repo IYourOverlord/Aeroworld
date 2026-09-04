@@ -834,10 +834,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // как от кастомных генераторов (отключены выше), так и от ванильной
         // руды, которую могла разместить super.applyBiomeDecoration().
         Layer1OreFilter.applyToChunk(chunk);
-
-        // Освобождаем записи всех трёх слоёв чанка из кэша центров островов
-        // после завершения всех стадий генерации и декорации чанка.
-        sharedChunkIslandCache.releaseAll(chunkX, chunkZ, 3);
     }
 
     @Override
