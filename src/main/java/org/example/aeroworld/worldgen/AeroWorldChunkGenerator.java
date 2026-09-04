@@ -112,19 +112,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     private volatile org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache sharedVaultTrialCache =
             new org.example.aeroworld.worldgen.feature.vault.IslandVaultTrialCache();
 
-    private final Supplier<List<FeatureSorter.StepFeatureData>> aeroFeaturesPerStep = net.neoforged.neoforge.common.util.Lazy.of(
-            () -> FeatureSorter.buildFeaturesPerStep(
-                    List.copyOf(this.getBiomeSource().possibleBiomes()),
-                    holder -> holder.value().getGenerationSettings().features(),
-                    true
-            )
-    );
 
-    @Override
-    public void refreshFeaturesPerStep() {
-        super.refreshFeaturesPerStep();
-        ((net.neoforged.neoforge.common.util.Lazy<?>) this.aeroFeaturesPerStep).invalidate();
-    }
 
     // ── Кэшированные BlockState для applyLayer1Surface и getBaseColumn ────────
     private static final BlockState BS_STONE      = Blocks.STONE      .defaultBlockState();
@@ -685,19 +673,16 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Карстовые воронки запускаем только на шаге AIR в пределах Layer 1 (Y < 300)
         if (step == GenerationStep.Carving.AIR && layer1 != null) {
             org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(
-                    chunk, seed, layer1::topmostHeight, biomeManager);
+                    chunk, seed, layer1::topmostHeight);
         }
     }
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel region, ChunkAccess chunk,
                                      StructureManager structureManager) {
-        if (!(region instanceof WorldGenRegion wgr)) {
-            applyFilteredBiomeDecoration(region, chunk, structureManager);
-            return;
+        if (region instanceof WorldGenRegion wgr) {
+            init(wgr.getLevel().getChunkSource().randomState());
         }
-        RandomState randomState = wgr.getLevel().getChunkSource().randomState();
-        init(randomState);
 
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
@@ -727,11 +712,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // при любом пути генерации чанка, включая DH. Если createStructures
         // уже успел отклонить структуру (StructureStart.INVALID_START),
         // повторная проверка здесь безвредна и дешева (валидатор идемпотентен).
-        // Валидация структур полностью выполняется на этапе createStructures().
-        // Дублирование в applyBiomeDecoration удалено для максимального TPS/генерации чанков.
-
-        // Вызываем фильтрованную биомную декорацию, полностью исключающую шаг UNDERGROUND_ORES
-        applyFilteredBiomeDecoration(region, chunk, structureManager);
+        // Делегируем стандартную декорацию биомов ванильному/C2ME пайплайну
+        super.applyBiomeDecoration(region, chunk, structureManager);
 
         // Очищаем ванильную растительность (деревья/траву из биомов), попавшую
         // в центральную зону острова Layer 2, где расположены Vault/Trial Spawner.
@@ -766,118 +748,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         if (upperIslands != null && layer4VaultTrialPlacer != null) {
             layer4VaultTrialPlacer.placeForChunk(region, chunk, upperIslands);
         }
-
-        // Фильтр зачищает ВЕСЬ чанк от случайных руд в качестве быстрой O(1) проверки палитры
-        Layer1OreFilter.applyToChunk(chunk);
-    }
-
-    private void applyFilteredBiomeDecoration(WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
-        ChunkPos chunkpos = chunk.getPos();
-        if (net.minecraft.SharedConstants.debugVoidTerrain(chunkpos)) return;
-
-        SectionPos sectionpos = SectionPos.of(chunkpos, level.getMinSection());
-        BlockPos blockpos = sectionpos.origin();
-        net.minecraft.core.Registry<net.minecraft.world.level.levelgen.structure.Structure> registry =
-                level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
-        Map<Integer, List<net.minecraft.world.level.levelgen.structure.Structure>> map =
-                registry.stream().collect(Collectors.groupingBy(s -> s.step().ordinal()));
-        List<FeatureSorter.StepFeatureData> list = this.aeroFeaturesPerStep.get();
-        WorldgenRandom worldgenrandom = new WorldgenRandom(new XoroshiroRandomSource(RandomSupport.generateUniqueSeed()));
-        long i = worldgenrandom.setDecorationSeed(level.getSeed(), blockpos.getX(), blockpos.getZ());
-        Set<Holder<Biome>> set = new ObjectArraySet<>();
-        ChunkPos.rangeClosed(sectionpos.chunk(), 1).forEach(pos -> {
-            ChunkAccess chunkaccess = level.getChunk(pos.x, pos.z);
-            for (LevelChunkSection levelchunksection : chunkaccess.getSections()) {
-                levelchunksection.getBiomes().getAll(set::add);
-            }
-        });
-        set.retainAll(this.biomeSource.possibleBiomes());
-        int j = list.size();
-
-        try {
-            net.minecraft.core.Registry<PlacedFeature> registry1 =
-                    level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.PLACED_FEATURE);
-            int i1 = Math.max(GenerationStep.Decoration.values().length, j);
-
-            for (int k = 0; k < i1; k++) {
-                // ПОЛНОЕ ИСКЛЮЧЕНИЕ ШАГА ГЕНЕРАЦИИ РУД
-                if (k == GenerationStep.Decoration.UNDERGROUND_ORES.ordinal()) {
-                    continue;
-                }
-
-                int l = 0;
-                if (structureManager.shouldGenerateStructures()) {
-                    for (net.minecraft.world.level.levelgen.structure.Structure structure : map.getOrDefault(k, Collections.emptyList())) {
-                        worldgenrandom.setFeatureSeed(i, l, k);
-                        Supplier<String> supplier = () -> registry.getResourceKey(structure).map(Object::toString).orElseGet(structure::toString);
-
-                        try {
-                            level.setCurrentlyGenerating(supplier);
-                            structureManager.startsForStructure(sectionpos, structure)
-                                    .forEach(start -> start.placeInChunk(level, structureManager, this, worldgenrandom, getWritableArea(chunk), chunkpos));
-                        } catch (Exception exception) {
-                            CrashReport crashreport1 = CrashReport.forThrowable(exception, "Feature placement");
-                            crashreport1.addCategory("Feature").setDetail("Description", supplier::get);
-                            throw new ReportedException(crashreport1);
-                        }
-
-                        l++;
-                    }
-                }
-
-                if (k < j) {
-                    IntSet intset = new IntArraySet();
-
-                    for (Holder<Biome> holder : set) {
-                        List<HolderSet<PlacedFeature>> list1 = holder.value().getGenerationSettings().features();
-                        if (k < list1.size()) {
-                            HolderSet<PlacedFeature> holderset = list1.get(k);
-                            FeatureSorter.StepFeatureData stepData = list.get(k);
-                            holderset.stream()
-                                    .map(Holder::value)
-                                    .forEach(f -> intset.add(stepData.indexMapping().applyAsInt(f)));
-                        }
-                    }
-
-                    int j1 = intset.size();
-                    int[] aint = intset.toIntArray();
-                    java.util.Arrays.sort(aint);
-                    FeatureSorter.StepFeatureData stepData = list.get(k);
-
-                    for (int k1 = 0; k1 < j1; k1++) {
-                        int l1 = aint[k1];
-                        PlacedFeature placedfeature = stepData.features().get(l1);
-                        Supplier<String> supplier1 = () -> registry1.getResourceKey(placedfeature).map(Object::toString).orElseGet(placedfeature::toString);
-                        worldgenrandom.setFeatureSeed(i, l1, k);
-
-                        try {
-                            level.setCurrentlyGenerating(supplier1);
-                            placedfeature.placeWithBiomeCheck(level, this, worldgenrandom, blockpos);
-                        } catch (Exception exception1) {
-                            CrashReport crashreport2 = CrashReport.forThrowable(exception1, "Feature placement");
-                            crashreport2.addCategory("Feature").setDetail("Description", supplier1::get);
-                            throw new ReportedException(crashreport2);
-                        }
-                    }
-                }
-            }
-
-            level.setCurrentlyGenerating(null);
-        } catch (Exception exception2) {
-            CrashReport crashreport = CrashReport.forThrowable(exception2, "Biome decoration");
-            crashreport.addCategory("Generation").setDetail("CenterX", chunkpos.x).setDetail("CenterZ", chunkpos.z).setDetail("Decoration Seed", i);
-            throw new ReportedException(crashreport);
-        }
-    }
-
-    private static net.minecraft.world.level.levelgen.structure.BoundingBox getWritableArea(ChunkAccess chunk) {
-        ChunkPos chunkpos = chunk.getPos();
-        int minX = chunkpos.getMinBlockX();
-        int minZ = chunkpos.getMinBlockZ();
-        LevelHeightAccessor accessor = chunk.getHeightAccessorForGeneration();
-        int minY = accessor.getMinBuildHeight() + 1;
-        int maxY = accessor.getMaxBuildHeight() - 1;
-        return new net.minecraft.world.level.levelgen.structure.BoundingBox(minX, minY, minZ, minX + 15, maxY, minZ + 15);
     }
 
     @Override

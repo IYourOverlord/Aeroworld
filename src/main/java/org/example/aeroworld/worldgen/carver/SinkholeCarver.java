@@ -5,12 +5,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 
-import net.minecraft.core.Holder;
-import net.minecraft.tags.BiomeTags;
-import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import java.util.concurrent.ConcurrentHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
 /**
  * Генерирует карстовые воронки (sinkholes) в рельефе Layer 1.
@@ -36,20 +32,25 @@ public final class SinkholeCarver {
         int getHeight(int wx, int wz);
     }
 
-    // ── Кэш высот поверхности воронок ────────────────────────────────
-    private static final ConcurrentHashMap<Long, Integer> HEIGHT_CACHE =
-            new ConcurrentHashMap<>(256);
+    // Потокобезопасный thread-local кэш высоты центра воронки: нулевая конкуренция потоков
+    private static final ThreadLocal<Long2IntOpenHashMap> LOCAL_HEIGHT_CACHE =
+            ThreadLocal.withInitial(() -> {
+                Long2IntOpenHashMap map = new Long2IntOpenHashMap(128);
+                map.defaultReturnValue(Integer.MIN_VALUE);
+                return map;
+            });
 
     private static int getCachedHeight(int wx, int wz, HeightSampler sampler) {
         long key = ((long) wx << 32) | (wz & 0xFFFFFFFFL);
-        Integer cached = HEIGHT_CACHE.get(key);
-        if (cached != null) return cached;
+        Long2IntOpenHashMap map = LOCAL_HEIGHT_CACHE.get();
+        int cached = map.get(key);
+        if (cached != Integer.MIN_VALUE) return cached;
 
         int h = sampler.getHeight(wx, wz);
-        if (HEIGHT_CACHE.size() > 2048) {
-            HEIGHT_CACHE.clear();
+        if (map.size() > 512) {
+            map.clear();
         }
-        HEIGHT_CACHE.put(key, h);
+        map.put(key, h);
         return h;
     }
 
@@ -106,14 +107,6 @@ public final class SinkholeCarver {
 
     public static void carveChunk(ChunkAccess chunk, long worldSeed,
                                   HeightSampler heightSampler) {
-        carveChunk(chunk, worldSeed, heightSampler, null);
-    }
-
-    /**
-     * Пытается вырезать воронки в данном чанке.
-     */
-    public static void carveChunk(ChunkAccess chunk, long worldSeed,
-                                  HeightSampler heightSampler, BiomeManager biomeManager) {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
         int minBuildHeight = chunk.getMinBuildHeight();
@@ -150,18 +143,10 @@ public final class SinkholeCarver {
                         + (double)(closestZ - centerWZ) * (closestZ - centerWZ);
                 if (dist2 > (double) radius * radius) continue;
 
-                // Карстовые условия: исключаем океаны, реки и пляжи ДО вычисления высоты
-                if (biomeManager != null) {
-                    Holder<Biome> biome = biomeManager.getBiome(new BlockPos(centerWX, 64, centerWZ));
-                    if (biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_DEEP_OCEAN)
-                            || biome.is(BiomeTags.IS_RIVER) || biome.is(BiomeTags.IS_BEACH)) {
-                        continue;
-                    }
-                }
-
                 // Кэшированный опрос высоты поверхности — 1 расчет на воронку вместо повторов во всех чанках
                 int surfaceY = getCachedHeight(centerWX, centerWZ, heightSampler);
 
+                // Исключаем водоёмы (океаны, реки, болота) без блокировок BiomeManager
                 if (surfaceY < WATER_LEVEL + 3) continue;
 
                 int bottomY = Math.max(surfaceY - depth, minBuildHeight + BEDROCK_MARGIN);

@@ -58,7 +58,7 @@ public class AeroBiomeSource extends BiomeSource {
     private final AeroNoise deepDarkNoise;
 
     // Кеш для possibleBiomes, чтобы не отравлять Suppliers.memoize() пустым списком
-    private java.util.Set<Holder<Biome>> cachedBiomes = null;
+    private volatile java.util.Set<Holder<Biome>> cachedBiomes = null;
 
     // ── Конструктор ───────────────────────────────────────────────────────────
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed) {
@@ -103,17 +103,17 @@ public class AeroBiomeSource extends BiomeSource {
 
     @Override
     public java.util.Set<Holder<Biome>> possibleBiomes() {
-        if (this.cachedBiomes == null) {
-            java.util.Set<Holder<Biome>> biomes = collectPossibleBiomes().collect(java.util.stream.Collectors.toSet());
+        java.util.Set<Holder<Biome>> biomes = this.cachedBiomes;
+        if (biomes == null) {
+            biomes = collectPossibleBiomes().collect(java.util.stream.Collectors.toUnmodifiableSet());
             // Если вернулись только ванильные биомы из fallback, значит реестр ещё не готов.
             // НЕ кэшируем результат, чтобы при реальной генерации чанков (когда реестр готов)
             // список перестроился и включил aeroworld:*.
-            if (biomes.size() <= delegate.possibleBiomes().size()) {
-                return biomes;
+            if (biomes.size() > delegate.possibleBiomes().size()) {
+                this.cachedBiomes = biomes;
             }
-            this.cachedBiomes = biomes;
         }
-        return this.cachedBiomes;
+        return biomes;
     }
 
     @Override

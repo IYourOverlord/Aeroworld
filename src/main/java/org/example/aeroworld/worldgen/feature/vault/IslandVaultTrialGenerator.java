@@ -227,9 +227,6 @@ public final class IslandVaultTrialGenerator {
             }
             clearAboveBlock(region, pos);
             progress.placed.add(pos);
-            org.example.aeroworld.AeroWorld.LOGGER.info(
-                    "[AeroWorld][VaultTrial][L2] VAULT placed island=({},{}) tier={} pos={} chunk=({},{}) placedTotal={}",
-                    island.cx, island.cz, tier, pos, chunkX, chunkZ, progress.placed.size());
         }
 
         while (progress.trialSpawnersRemaining.get() > 0) {
@@ -242,9 +239,6 @@ public final class IslandVaultTrialGenerator {
             }
             clearAboveBlock(region, pos);
             progress.placed.add(pos);
-            org.example.aeroworld.AeroWorld.LOGGER.info(
-                    "[AeroWorld][VaultTrial][L2] TRIAL_SPAWNER placed island=({},{}) tier={} pos={} chunk=({},{}) placedTotal={}",
-                    island.cx, island.cz, tier, pos, chunkX, chunkZ, progress.placed.size());
         }
     }
 

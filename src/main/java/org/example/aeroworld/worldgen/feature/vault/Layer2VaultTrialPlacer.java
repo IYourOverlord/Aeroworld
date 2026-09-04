@@ -113,22 +113,9 @@ public final class Layer2VaultTrialPlacer {
             } else {
                 tier = pickTier(islandBlockX, islandBlockZ);
             }
-
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld][VaultTrial][L2] chunk=({},{}) island=({},{}) radius={} "
-                            + "isArchipelagoCentre={} isSatellite={} isArchipelagoIsland={} -> tier={} (vault={}, trial={})",
-                    chunkX, chunkZ, islandBlockX, islandBlockZ, island.radius,
-                    isArchipelagoCentre, isSatellite, isArchipelagoIsland,
-                    tier, tier.vaultCount(), tier.trialSpawnerCount());
-
             IslandVaultTrialCache.Progress progress = sharedVaultTrialCache.getOrCreate(
                     LowerIslandGenerator.LAYER_ID, islandBlockX, islandBlockZ, tier.vaultCount(), tier.trialSpawnerCount(),
-                    wasCreated -> AeroWorld.LOGGER.info(
-                            "[AeroWorld][VaultTrial][L2] progress for island=({},{}) {}",
-                            islandBlockX, islandBlockZ, wasCreated ? "CREATED" : "REUSED"));
-            AeroWorld.LOGGER.info(
-                    "[AeroWorld][VaultTrial][L2] island=({},{}) progress state: vaultsRemaining={} trialSpawnersRemaining={} placedSoFar={}",
-                    islandBlockX, islandBlockZ, progress.vaultsRemaining.get(), progress.trialSpawnersRemaining.get(), progress.placed.size());
+                    null);
             if (progress.isComplete()) continue;
 
             RandomSource rng = RandomSource.create(
