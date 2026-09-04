@@ -34,7 +34,7 @@ public final class Layer1OreFilter {
     private Layer1OreFilter() {}
 
     /**
-     * Фильтрует один чанк (центральный) по всей его высоте, удаляя любую руду.
+     * Фильтрует один чанк (центральный) по всей высоте рудообразования, удаляя любую руду.
      * Потокобезопасен — не читает и не пишет никакое разделяемое состояние.
      */
     public static void applyToChunk(ChunkAccess chunk) {
@@ -44,10 +44,16 @@ public final class Layer1OreFilter {
 
         int sectionsCount = chunk.getSectionsCount();
         for (int si = 0; si < sectionsCount; si++) {
+            int secBaseY = chunk.getSectionYFromSectionIndex(si) << 4;
+            // Ванильные руды генерируются только в Layer 1 (<= 320).
+            // Небесные острова (Y >= 400) не содержат руд — отсекаем сразу.
+            if (secBaseY > 320) break;
+
             LevelChunkSection section = chunk.getSection(si);
             if (section == null || section.hasOnlyAir()) continue;
 
-            int secBaseY = chunk.getSectionYFromSectionIndex(si) << 4;
+            // O(1) проверка палитры секции: если в палитре нет руд, секция пропускается целиком
+            if (!section.getStates().maybeHas(Layer1OreFilter::isOre)) continue;
 
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {

@@ -513,9 +513,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
 
         Map<net.minecraft.world.level.levelgen.structure.Structure, LongSet> allRefs = chunk.getAllReferences();
-        if (!allRefs.isEmpty()) {
-        }
-
         allRefs.forEach((structure, refs) -> {
             ResourceLocation structureId = registryAccess
                     .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
@@ -661,28 +658,16 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         initializeWithSeed(seed);
         vanillaGenerator.applyCarvers(region, seed, random, biomeManager,
                 structureManager, chunk, step);
-        // ИСПРАВЛЕНО (см. диагностику Voxy-бага): раньше восстановление островов
-        // откладывалось до applyBiomeDecoration через carverTouchedChunks, а
-        // applyBiomeDecoration вызывается ТОЛЬКО для чанков рядом с игроком
-        // (см. аналогичный комментарий у Layer2StructurePlacer в fillFromNoise).
-        // Любой чанк, догенерированный вдали от игрока (фоновая подгрузка для
-        // дальней прорисовки, Voxy/Distant Horizons и т.п.), доходил до FULL
-        // со повреждёнными carver'ами островами и НИКОГДА не восстанавливался —
-        // повреждение запекалось в чанк навсегда. Для толстых сфер Layer 3 это
-        // было почти незаметно, а тонкие мосты Layer 2 и щупальца Layer 4
-        // (радиус кончика 1.5 блока) carver рвал на куски или удалял целиком.
-        // Теперь восстановление выполняется сразу же, безусловно, для каждого
-        // чанка — независимо от близости игрока.
-        restoreIslandsInChunk(chunk);
-
-        // Карстовые воронки (sinkholes) — вырезаются ПОСЛЕ восстановления
-        // островов, чтобы не повредить летающие острова (Layer 2+).
-        // Действуют только на Layer 1 (Y < 300).
-        // heightSampler = layer1::topmostHeight — детерминированная функция,
-        // возвращающая одинаковую высоту для (wx,wz) независимо от чанка.
-        if (layer1 != null) {
+        // Карстовые воронки запускаем только на шаге AIR (один раз на чанк вместо двух)
+        if (step == GenerationStep.Carving.AIR && layer1 != null) {
             org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(
                     chunk, seed, layer1::topmostHeight);
+        }
+
+        // Восстановление островов — только один раз в финале карвинга (шаг LIQUID),
+        // используя быстрый SectionDirectChunkWriter без поблочного пересчёта heightmap
+        if (step == GenerationStep.Carving.LIQUID) {
+            restoreIslandsInChunk(chunk);
         }
     }
 
@@ -690,25 +675,25 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
 
-        // Пункт Q — те же guards что в fillFromNoise: applyCarvers тоже может
-        // получить ChunkAccess с ограниченным Y-диапазоном в некоторых фазах.
         final int chunkMinY = chunk.getMinBuildHeight();
         final int chunkMaxY = chunk.getMaxBuildHeight();
+
+        SectionDirectChunkWriter directWriter = new SectionDirectChunkWriter(chunk);
 
         if (lowerIslands != null
                 && chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y
                 && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
-            lowerIslands.fillChunk(chunk, chunkX, chunkZ);
+            lowerIslands.fillChunk(directWriter, chunkX, chunkZ);
         }
         if (highIslands != null
                 && chunkMinY <= HighIslandGenerator.LAYER_MAX_Y
                 && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
-            highIslands.fillChunk(chunk, chunkX, chunkZ);
+            highIslands.fillChunk(directWriter, chunkX, chunkZ);
         }
         if (upperIslands != null
                 && chunkMinY <= UpperIslandGenerator.LAYER_MAX_Y
                 && chunkMaxY >= UpperIslandGenerator.LAYER_MIN_Y) {
-            upperIslands.fillChunk(chunk, chunkX, chunkZ);
+            upperIslands.fillChunk(directWriter, chunkX, chunkZ);
         }
 
         // Освобождаем записи всех трёх слоёв за один вызов через общий кэш.

@@ -29,36 +29,11 @@ public class AeroBiomeSource extends BiomeSource {
                     src -> src.delegate         // сериализация:  AeroBiomeSource → MultiNoise
             );
 
-    // ── Масштаб шума ─────────────────────────────────────────────────────────
-    // Уменьшен в ~3x по сравнению с исходным: биомные зоны ~80–120 блоков
-    // (было ~250–300 блоков — крайние биомы почти не встречались вблизи спавна)
-    private static final double TEMP_SCALE = 0.0025;
-    private static final double HUM_SCALE  = 0.0030;
-
-    // ── Таблица биомов [temp 0..4][hum 0..2] ────────────────────────────────
-    private static final String[][] BIOME_TABLE = {
-            { "frozen_peaks",    "snowy_plains",    "snowy_taiga"            }, // frozen
-            { "windswept_hills", "taiga",           "old_growth_spruce_taiga"}, // cold
-            { "plains",          "forest",          "swamp"                  }, // normal
-            { "savanna",         "meadow",          "jungle"                 }, // warm
-            { "desert",          "badlands",        "bamboo_jungle"          }, // hot
-    };
-
-    private static final String[][] RARE_TABLE = {
-            { "ice_spikes",              "snowy_slopes",      "grove"               },
-            { "windswept_gravelly_hills","windswept_forest",  "old_growth_pine_taiga"},
-            { "sunflower_plains",        "birch_forest",      "dark_forest"         },
-            { "savanna_plateau",         "cherry_grove",      "sparse_jungle"       },
-            { "eroded_badlands",         "wooded_badlands",   "stony_peaks"         },
-    };
-
-    private static final double RARE_THRESHOLD = 0.65;
-
     /**
      * ПОЛНЫЙ список склонированных под aeroworld:* overworld-биомов (53 шт. —
      * все ванильные биомы, кроме незера/энда/void). Нужен для collectPossibleBiomes,
      * т.к. слои-острова (y > 12, через delegateWithSafety) могут вернуть любой
-     * из них — не только те 30, что фигурируют в BIOME_TABLE/RARE_TABLE.
+     * из них.
      */
     private static final String[] ALL_CLONED_BIOMES = {
             "badlands", "bamboo_jungle", "beach", "birch_forest", "cherry_grove",
@@ -77,16 +52,10 @@ public class AeroBiomeSource extends BiomeSource {
     // ── Состояние ─────────────────────────────────────────────────────────────
     private final MultiNoiseBiomeSource delegate;
     private final long seed;
-    // Ссылка на Layer1FlatGenerator — нужна ТОЛЬКО чтобы узнать, находится ли
-    // точка внутри кольцевой горной долины (см. isInsideRingValley), и в этом
-    // случае гарантированно поставить туда forest/cherry_grove вместо обычной
-    // климатической таблицы. Может быть null до первого initializeWithSeed().
     private final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
 
-    // Шумовые генераторы — инициализируются один раз по seed
-    private final AeroNoise tempNoise;
-    private final AeroNoise humNoise;
-    private final AeroNoise rareNoise;
+    // Шумовой генератор для deep_dark на глубине Layer 1
+    private final AeroNoise deepDarkNoise;
 
     // Кеш для possibleBiomes, чтобы не отравлять Suppliers.memoize() пустым списком
     private java.util.Set<Holder<Biome>> cachedBiomes = null;
@@ -98,12 +67,10 @@ public class AeroBiomeSource extends BiomeSource {
 
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed,
                            org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
-        this.delegate  = delegate;
-        this.seed      = seed;
-        this.layer1    = layer1;
-        this.tempNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
-        this.humNoise  = new AeroNoise(seed ^ 0x3E7F8A5BL);
-        this.rareNoise = new AeroNoise(seed ^ 0xC1D2E3F4L);
+        this.delegate      = delegate;
+        this.seed          = seed;
+        this.layer1        = layer1;
+        this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
     }
 
     /** Удобный конструктор без seed (для обратной совместимости в ChunkGenerator до initSeed). */
@@ -215,33 +182,13 @@ public class AeroBiomeSource extends BiomeSource {
         // ── Deep Dark: только на подземной глубине (Y от -64 до -8) ──────────
         int blockY = y * 4;
         if (blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
-            double dd = tempNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+            double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
             if (dd > DEEP_DARK_THRESHOLD) {
                 // Используем minecraft:deep_dark — ванильные surface rules
                 // проверяют ResourceKey minecraft:deep_dark, а не aeroworld:*.
                 Optional<Holder<Biome>> deepDark =
                         findBiome(ResourceLocation.withDefaultNamespace("deep_dark"));
                 if (deepDark.isPresent()) return deepDark.get();
-            }
-        }
-
-        // Кольцевые горные долины (см. Layer1FlatGenerator) гарантированно
-        // получают forest/cherry_grove — независимо от того, что выпало бы
-        // по обычной климатической таблице ниже. isInsideRingValley сейчас
-        // всегда false (см. Layer1FlatGenerator), но проверка оставлена как
-        // есть — это отдельная, не связанная с водой фича (см. ТЗ на
-        // переход водной маски на ванильную генерацию — ring-valley явно
-        // выведена из скоупа изменений).
-        if (layer1 != null) {
-            int bwx = (int) wx;
-            int bwz = (int) wz;
-            if (layer1.isInsideRingValley(bwx, bwz)) {
-                String forced = layer1.ringValleyBiome(bwx, bwz);
-                // Используем minecraft:* — ванильные surface rules требуют
-                // совпадения ResourceKey (minecraft:forest и т.д.).
-                Optional<Holder<Biome>> forcedBiome =
-                        findBiome(ResourceLocation.withDefaultNamespace(forced));
-                if (forcedBiome.isPresent()) return forcedBiome.get();
             }
         }
 
@@ -335,35 +282,5 @@ public class AeroBiomeSource extends BiomeSource {
         String p = loc.getPath();
         return p.contains("ocean") || p.equals("dripstone_caves")
                 || p.equals("lush_caves") || p.equals("deep_dark");
-    }
-
-    private static int clamp(int v, int min, int max) {
-        return Math.max(min, Math.min(max, v));
-    }
-
-    /**
-     * Делит нормально-распределённое значение FBM (диапазон -1..1, std≈0.38)
-     * на 5 равновероятных квантилей → индекс 0..4, каждый ~20% площади.
-     *
-     * Границы квантилей: -0.32 / -0.096 / +0.096 / +0.32
-     * (вычислены из ppf нормального распределения с std=0.38)
-     */
-    private static int quantileIndex5(double v) {
-        if (v < -0.32)  return 0; // frozen  (~20%)
-        if (v < -0.096) return 1; // cold    (~20%)
-        if (v <  0.096) return 2; // normal  (~20%)
-        if (v <  0.32)  return 3; // warm    (~20%)
-        return 4;                  // hot     (~20%) ← desert, badlands
-    }
-
-    /**
-     * Делит нормально-распределённое значение FBM на 3 равновероятных квантиля.
-     * Границы: -0.096 / +0.096  (std=0.38, 33%/33%/33%)
-     * Точнее: ppf(1/3) ≈ -0.153, ppf(2/3) ≈ +0.153
-     */
-    private static int quantileIndex3(double v) {
-        if (v < -0.153) return 0;
-        if (v <  0.153) return 1;
-        return 2;
     }
 }

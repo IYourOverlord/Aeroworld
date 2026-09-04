@@ -34,23 +34,6 @@ public class Layer1FlatGenerator {
     private volatile NoiseBasedChunkGenerator vanillaSource;
     private volatile RandomState vanillaRandomState;
 
-    /** Итог расчёта колонки: где дно (твёрдая порода) и есть ли сверху вода. */
-    public static final class ColumnProfile {
-        public final int groundY;
-        public final int waterY;
-        public final boolean isShoreEdge;
-
-        ColumnProfile(int groundY, int waterY) {
-            this(groundY, waterY, false);
-        }
-
-        ColumnProfile(int groundY, int waterY, boolean isShoreEdge) {
-            this.groundY     = groundY;
-            this.waterY      = waterY;
-            this.isShoreEdge = isShoreEdge;
-        }
-    }
-
     private static final LevelHeightAccessor VANILLA_COLUMN_HEIGHT = new LevelHeightAccessor() {
         @Override public int getMinBuildHeight() { return -64; }
         @Override public int getHeight()         { return 384; }
@@ -61,14 +44,6 @@ public class Layer1FlatGenerator {
         this.vanillaRandomState = randomState;
     }
 
-    public boolean isInsideRingValley(int wx, int wz) {
-        return false;
-    }
-
-    public String ringValleyBiome(int wx, int wz) {
-        return "forest";
-    }
-
     public int surfaceHeight(int wx, int wz) {
         if (vanillaSource == null || vanillaRandomState == null) return BASE_SURFACE_Y;
         return vanillaSource.getBaseHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, VANILLA_COLUMN_HEIGHT, vanillaRandomState);
@@ -77,10 +52,5 @@ public class Layer1FlatGenerator {
     public int topmostHeight(int wx, int wz) {
         if (vanillaSource == null || vanillaRandomState == null) return BASE_SURFACE_Y;
         return vanillaSource.getBaseHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG, VANILLA_COLUMN_HEIGHT, vanillaRandomState);
-    }
-
-    @FunctionalInterface
-    public interface BiomeResolver {
-        ResourceLocation get(int wx, int wz);
     }
 }

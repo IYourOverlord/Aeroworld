@@ -68,8 +68,7 @@ worldgen/
 ├── carver/
 │   └── SinkholeCarver.java     — карстовые воронки по всему рельефу Layer 1 (шанс 1/12 на чанк, R 15-30, H 15-35, вода ниже Y 62); выполняется после восстановления островов
 ├── feature/
-│   ├── Layer1OreFilter.java    — очищает чанк по всей высоте (-64..2096) от любых ванильных руд, заменяя на stone/deepslate
-│   ├── OreVeinHelper.java      — вспомогательный класс сферических рудных жил (сейчас не задействован в пайплайне)
+│   ├── Layer1OreFilter.java    — очищает секции Layer 1 (<= 320) с быстрой O(1) проверкой палитры от ванильных руд
 │   └── vault/                  — генерация Vault и Trial Spawner внутри тела островов (Layer 2/3/4)
 │       ├── IslandVaultTrialCache.java     — потокобезопасный общий кэш прогресса размещения Vault/Trial по островам
 │       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри островов

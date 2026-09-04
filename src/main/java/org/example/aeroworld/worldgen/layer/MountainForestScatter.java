@@ -111,6 +111,29 @@ public final class MountainForestScatter {
             ResourceLocation.withDefaultNamespace("cherry"),
     };
 
+    private static volatile List<Holder<ConfiguredFeature<?, ?>>> CACHED_FEATURES = null;
+
+    private static List<Holder<ConfiguredFeature<?, ?>>> getFeatures(RegistryAccess registryAccess) {
+        List<Holder<ConfiguredFeature<?, ?>>> cached = CACHED_FEATURES;
+        if (cached != null) return cached;
+        var configuredFeatureRegistry = registryAccess.registryOrThrow(Registries.CONFIGURED_FEATURE);
+        List<Holder<ConfiguredFeature<?, ?>>> list = new ArrayList<>();
+        for (ResourceLocation id : TREE_FEATURE_IDS) {
+            ResourceKey<ConfiguredFeature<?, ?>> key = ResourceKey.create(Registries.CONFIGURED_FEATURE, id);
+            configuredFeatureRegistry.getHolder(key).ifPresent(list::add);
+        }
+        CACHED_FEATURES = list;
+        return list;
+    }
+
+    private static int getLayer1SurfaceY(ChunkAccess chunk, Layer1FlatGenerator layer1, int lx, int lz, int wx, int wz) {
+        int height = chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, lx, lz);
+        if (height <= Layer1FlatGenerator.LAYER_MAX_Y) {
+            return height;
+        }
+        return layer1.surfaceHeight(wx, wz);
+    }
+
     private MountainForestScatter() {}
 
     /**
@@ -128,31 +151,22 @@ public final class MountainForestScatter {
         int slopeStartY = Layer1FlatGenerator.PUBLIC_BASE_SURFACE_Y + SLOPE_START_HEIGHT_ABOVE_BASE;
         int fullDensityY = Layer1FlatGenerator.PUBLIC_BASE_SURFACE_Y + SLOPE_FULL_DENSITY_HEIGHT_ABOVE_BASE;
 
-        // Быстрый отсев: проверяем высоту в центре и 4 углах чанка. Если
-        // ни одна точка не дотягивает до начала склона — выходим сразу,
-        // не трогая PlacedFeature/holder lookups (дорогие операции).
+        // Быстрый отсев O(1): проверяем высоту в центре и 4 углах чанка через heightmap
         int[][] probe = {
-                {baseX + 8, baseZ + 8},
-                {baseX,     baseZ},
-                {baseX + 15, baseZ},
-                {baseX,     baseZ + 15},
-                {baseX + 15, baseZ + 15},
+                {8,  8},
+                {0,  0},
+                {15, 0},
+                {0,  15},
+                {15, 15},
         };
         int maxProbeHeight = Integer.MIN_VALUE;
         for (int[] p : probe) {
-            maxProbeHeight = Math.max(maxProbeHeight, layer1.surfaceHeight(p[0], p[1]));
+            maxProbeHeight = Math.max(maxProbeHeight, getLayer1SurfaceY(chunk, layer1, p[0], p[1], baseX + p[0], baseZ + p[1]));
         }
         if (maxProbeHeight < slopeStartY) return;
 
-        RegistryAccess registryAccess = region.registryAccess();
-        var configuredFeatureRegistry = registryAccess.registryOrThrow(Registries.CONFIGURED_FEATURE);
-
-        List<Holder<ConfiguredFeature<?, ?>>> available = new ArrayList<>();
-        for (ResourceLocation id : TREE_FEATURE_IDS) {
-            ResourceKey<ConfiguredFeature<?, ?>> key = ResourceKey.create(Registries.CONFIGURED_FEATURE, id);
-            configuredFeatureRegistry.getHolder(key).ifPresent(available::add);
-        }
-        if (available.isEmpty()) return; // на случай отсутствия реестра (тестовые/кастомные datapacks)
+        List<Holder<ConfiguredFeature<?, ?>>> available = getFeatures(region.registryAccess());
+        if (available.isEmpty()) return;
 
         long chunkSeed = worldSeed
                 ^ ((long) cp.x * 341873128712L + (long) cp.z * 132897987541L)
@@ -176,11 +190,7 @@ public final class MountainForestScatter {
             int wx = baseX + lx;
             int wz = baseZ + lz;
 
-            int surfaceY = layer1.surfaceHeight(wx, wz);
-            // Нет верхней границы — дерево ставится на любой высоте склона,
-            // вплоть до самой вершины. Нижняя граница та же, что и для
-            // отсева чанка: конкретная точка внутри чанка могла оказаться
-            // ниже склона, даже если чанк в целом его задевает.
+            int surfaceY = getLayer1SurfaceY(chunk, layer1, lx, lz, wx, wz);
             if (surfaceY < slopeStartY) continue;
 
             Holder<ConfiguredFeature<?, ?>> chosen = available.get(random.nextInt(available.size()));

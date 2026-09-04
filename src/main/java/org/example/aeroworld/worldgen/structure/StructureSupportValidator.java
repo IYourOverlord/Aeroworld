@@ -70,6 +70,9 @@ public final class StructureSupportValidator {
     private final UpperIslandGenerator layer4;
     private final ChunkIslandCache     sharedChunkCache;
 
+    private final java.util.Map<StructureStart, ValidationResult> validatedCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public StructureSupportValidator(Layer1FlatGenerator  layer1,
                                      LowerIslandGenerator layer2,
                                      HighIslandGenerator  layer3,
@@ -107,10 +110,13 @@ public final class StructureSupportValidator {
     public ValidationResult validate(ResourceLocation structureId, StructureStart start,
                                      net.minecraft.world.level.WorldGenLevel realLevel,
                                      Layer1HeightSampler heightSampler) {
-        if (!start.isValid()) {
+        if (start == null || !start.isValid()) {
             return ValidationResult.denied(structureId, StructureCategory.DENY,
-                    start.getBoundingBox());
+                    start != null ? start.getBoundingBox() : BoundingBox.infinite());
         }
+
+        ValidationResult cached = validatedCache.get(start);
+        if (cached != null) return cached;
 
         BoundingBox bounds  = start.getBoundingBox();
         int baseY           = bounds.minY();
@@ -134,7 +140,7 @@ public final class StructureSupportValidator {
         // ── 1. Жёсткое отклонение ─────────────────────────────────────────────
         if (category == StructureCategory.DENY) {
             logRejection(structureId, bounds, "структура в deny-списке");
-            return ValidationResult.denied(structureId, category, bounds);
+            return cacheAndReturn(start, ValidationResult.denied(structureId, category, bounds));
         }
 
         // ── 2. Водные структуры — Layer 1 имеет полноценные океаны (WATER_LEVEL,
@@ -146,15 +152,15 @@ public final class StructureSupportValidator {
         if (category == StructureCategory.WATER) {
             if (actualLayer == 2 || actualLayer == 3 || actualLayer == 4) {
                 logRejection(structureId, bounds, "водная структура попала на небесный остров");
-                return ValidationResult.waterStructure(structureId, bounds);
+                return cacheAndReturn(start, ValidationResult.waterStructure(structureId, bounds));
             }
             // Подводные структуры (ocean_monument) стоят на дне, а bounds.minY()
             // может быть на несколько блоков выше самого дна (толща воды над
             // основанием монумента) — SUPPORT_SCAN_DEPTH=6 в hasSolidBelow этого
             // не всегда достаёт. Сканируем от maxY бокса вниз, глубина скана там
             // покрывает всю высоту структуры + запас.
-            return sampleSupport(structureId, StructureCategory.WATER, bounds, sampler,
-                    bounds.maxY(), SURFACE_SUPPORT_THRESHOLD);
+            return cacheAndReturn(start, sampleSupport(structureId, StructureCategory.WATER, bounds, sampler,
+                    bounds.maxY(), SURFACE_SUPPORT_THRESHOLD));
         }
 
         // ── 3. Пустота между слоями — структура гарантированно в воздухе ──────
@@ -165,7 +171,7 @@ public final class StructureSupportValidator {
         if (actualLayer < 0 && StructureCategoryResolver.isVoidGapY(baseY)) {
             logRejection(structureId, bounds,
                     String.format("Y=%d в пустоте между слоями (фактический слой не найден)", baseY));
-            return ValidationResult.voidGap(structureId, category, bounds);
+            return cacheAndReturn(start, ValidationResult.voidGap(structureId, category, bounds));
         }
 
         // ── 4. Специфичная логика по категории ────────────────────────────────
@@ -184,6 +190,14 @@ public final class StructureSupportValidator {
             }
         }
 
+        return cacheAndReturn(start, result);
+    }
+
+    private ValidationResult cacheAndReturn(StructureStart start, ValidationResult result) {
+        if (validatedCache.size() > 4096) {
+            validatedCache.clear();
+        }
+        validatedCache.put(start, result);
         return result;
     }
 
