@@ -1,6 +1,6 @@
 # AeroWorld — Project Index
 
-Мод для Minecraft 1.21.1 (NeoForge 21.1.227) — кастомное измерение с многослойной генерацией мира: поверхность + три слоя парящих островов. Зависит от мода `physical_structures` (структуры/сборки) и опционально от `create_aeronautics_toolgun` (формат `.excraft`).
+Мод для Minecraft 1.21.1 (NeoForge 21.1.228, mod_version 1.0.12) — кастомное измерение с многослойной генерацией мира: поверхность + три слоя парящих островов. Зависимости (compileOnly): `physical_structures` (структуры/сборка) и `DistantHorizonsApi`. Код поддержки `create_aeronautics_toolgun` и структуры `HAUL-01.excraft` полностью удалён.
 
 Пакет: `org.example.aeroworld`. Корень исходников: `src/main/java/org/example/aeroworld/`.
 
@@ -10,13 +10,13 @@
 
 | Слой | Y-диапазон | Форма | Генератор | Настройки |
 |---|---|---|---|---|
-| Layer 1 | -64 .. 300 | Полноценный ванильный рельеф (режим Amplified: горы, 3D-пещеры, аквиферы) | `NoiseBasedChunkGenerator` (встроен в `AeroWorldChunkGenerator`) | `world_preset/aeroworld.json` (vanilla settings = amplified) |
-| Layer 2 | 400 .. 500 | острова произвольной формы + мосты | `worldgen/layer/LowerIslandGenerator.java` | `config/Layer2Settings.java` |
-| Layer 3 | 1000 .. 1100 | шары/эллипсоиды | `worldgen/layer/HighIslandGenerator.java` | `config/Layer3Settings.java` |
-| Layer 4 | 1900 .. 2031 | "медузы" (купол + щупальца) | `worldgen/layer/UpperIslandGenerator.java` | `config/Layer4Settings.java` |
+| Layer 1 | -64 .. 300 | Полноценный ванильный рельеф Overworld (горы, 3D-пещеры, аквиферы, океаны) | `NoiseBasedChunkGenerator` (встроен в `AeroWorldChunkGenerator`) | `dimension/aeroworld.json`, `world_preset/aeroworld.json` (`settings: minecraft:overworld`) |
+| Layer 2 | 400 .. 500 | Острова произвольной формы + сталактиты + мосты | `worldgen/layer/LowerIslandGenerator.java` | `config/Layer2Settings.java` |
+| Layer 3 | 1000 .. 1100 | Шары и эллипсоиды | `worldgen/layer/HighIslandGenerator.java` | `config/Layer3Settings.java` |
+| Layer 4 | 1900 .. 2031 | "Медузы" (купол + 10 щупалец) | `worldgen/layer/UpperIslandGenerator.java` | `config/Layer4Settings.java` |
 
-Все четыре слоя координируются одним классом:
-**`worldgen/AeroWorldChunkGenerator.java`** — точка входа в генерацию чанков (`fillFromNoise`, `applyCarvers`, `applyBiomeDecoration`, `createStructures`). Наследуется напрямую от **`NoiseBasedChunkGenerator`**, чтобы обеспечить корректную инициализацию `RandomState` (плотность шумов, параметры биомов) для нижнего ванильного слоя (Layer 1). Начинать чтение кода генерации стоит именно отсюда.
+Все четыре слоя координируются классом:
+**`worldgen/AeroWorldChunkGenerator.java`** — точка входа в генерацию чанков (`fillFromNoise`, `applyCarvers`, `buildSurface`, `applyBiomeDecoration`, `createStructures`). Наследуется напрямую от **`NoiseBasedChunkGenerator`**, чтобы обеспечить корректную инициализацию `RandomState` (плотность шумов, параметры биомов) для нижнего ванильного слоя (Layer 1).
 
 ---
 
@@ -24,32 +24,32 @@
 
 ```
 org.example.aeroworld
-├── AeroWorld.java                 — главный класс мода (@Mod), регистрация всего
+├── AeroWorld.java                 — главный класс мода (@Mod), регистрация шины событий, конфигов, структур tank21
 ├── client/
-│   └── AeroWorldClientEvents.java     — @EventBusSubscriber(CLIENT), подписан на ScreenEvent.Init.Post; тело обработчика пустое (только комментарии-заготовки под будущую кастомизацию UI пресета мира)
+│   └── AeroWorldClientEvents.java — @EventBusSubscriber(CLIENT), заготовка под ScreenEvent.Init.Post
 ├── command/
-│   └── AeroWorldCommands.java     — /aeroworld forcePlacePending, findIsland2/3/4
+│   └── AeroWorldCommands.java     — /aeroworld forcePlacePending, findIsland4, findIsland3, findIsland2 [type] [tier]
 ├── config/
-│   ├── AeroWorldConfig.java       — ModConfigSpec (config/aeroworld-client.toml); SPEC сейчас пустой (BUILDER.build() без единого define) — заготовка под будущие опции
+│   ├── AeroWorldConfig.java       — ModConfigSpec (config/aeroworld-client.toml)
 │   ├── AeroWorldSettings.java     — root-record {layer2, layer3, layer4}, сериализуется в dimension JSON
 │   └── Layer2/3/4Settings.java    — параметры геометрии островов соответствующих слоёв
 ├── event/
-│   ├── AeroStructureListener.java     — слушает PhysicalStructurePlacedEvent (мод physical_structures), звук/эффекты при появлении структуры
-│   ├── ProximityTriggerHandler.java   — спавн структур когда игрок рядом (ключевой файл)
-│   ├── ShorelineWaveHandler.java      — визуальная симуляция наката волн на пляже
-│   └── SpawnerProximityHandler.java   — тиковый поиск блока structure_spawner (physical_structures) рядом с игроком в Layer 2 (Y 250-450)
+│   ├── AeroStructureListener.java     — слушает PhysicalStructurePlacedEvent (physical_structures), звук размещения
+│   ├── ProximityTriggerHandler.java   — спавн структур при приближении игрока (до 96 блоков XZ, экспоненциальный backoff, retry до 10 раз)
+│   ├── ShorelineWaveHandler.java      — симуляция наката прибрежных волн на пляжах Layer 1
+│   └── SpawnerProximityHandler.java   — поиск structure_spawner (physical_structures) рядом с игроком в Layer 2 (Y 250-450)
 ├── registry/
-│   ├── AeroDimensions.java        — регистрация ChunkGenerator codec
-│   ├── AeroRegistries.java        — точка регистрации всех DeferredRegister'ов мода
-│   ├── AeroResourceKeys.java      — ResourceKey констант для DimensionType/LevelStem/Level измерения aeroworld
-│   └── AeroWorldPreset.java       — пустышка-документация: WorldPreset регистрируется через datapack JSON, не через Java
+│   ├── AeroDimensions.java        — DeferredRegister CHUNK_GENERATOR: aero_generator (AeroWorldChunkGenerator.CODEC)
+│   ├── AeroRegistries.java        — точка регистрации CHUNK_GENERATORS и BIOME_SOURCES (aero_biome_source)
+│   ├── AeroResourceKeys.java      — ResourceKey для DimensionType, LevelStem и Level измерения aeroworld:aeroworld
+│   └── AeroWorldPreset.java       — класс-документация: WorldPreset регистрируется через datapack JSON
 ├── spawning/
-│   └── LayerSpawnRestriction.java — блокирует спавн мобов на Layer 4 (Y >= 2000)
+│   └── LayerSpawnRestriction.java — отменяет спавн мобов на Layer 4 (Y >= UpperIslandGenerator.LAYER_MIN_Y = 1900)
 └── structure/
-    ├── IslandStructureScheduler.java  — потокобезопасная очередь размещения структур
-    ├── PendingStructureData.java      — SavedData: персистентная очередь структур с backoff/retry (record Entry)
-    ├── StructurePlacementHelper.java  — проверка готовности чанков и свободного места
-    └── StructureSizeCache.java        — кэш размеров NBT-структур
+    ├── IslandStructureScheduler.java  — потокобезопасная очередь размещения структур (C2ME-безопасная дедупликация)
+    ├── PendingStructureData.java      — SavedData: персистентная очередь структур с экспоненциальным backoff (record Entry)
+    ├── StructurePlacementHelper.java  — чтение размера NBT, проверка статуса чанков FULL и свободного места
+    └── StructureSizeCache.java        — кэш размеров NBT-структур со сбросом при reload датапаков
 ```
 
 ### worldgen/
@@ -58,48 +58,48 @@ org.example.aeroworld
 worldgen/
 ├── AeroWorldChunkGenerator.java   — ★ главный генератор, расширяет NoiseBasedChunkGenerator, координирует все слои
 ├── biome/
-│   ├── AeroBiomeRegistryCache.java — кэш полного динамического реестра биомов (включая клоны aeroworld:*), нужен т.к. AeroBiomeSource.delegate видит только ванильные биомы своего multi-noise пресета
-│   └── AeroBiomeSource.java       — кастомный BiomeSource, подменяет биомы на aeroworld:* клоны
+│   ├── AeroBiomeRegistryCache.java — асинхронный кэш Registry<Biome> (CompletableFuture, заполняется в ServerAboutToStartEvent)
+│   └── AeroBiomeSource.java       — кастомный BiomeSource: Layer 1 возвращает ванильные minecraft:* биомы (SurfaceRules) + deep_dark на глубине; острова (Y > 300) получают aeroworld:* клоны без океанов/пещер
 ├── cache/
-│   ├── ChunkIslandCache.java   — общий кэш списков центров островов (все 3 слоя)
-│   ├── ChunkKey.java           — упаковка пары (x, z) в long без аллокаций (используется как ключ кэшей)
-│   ├── IslandCache.java        — потокобезопасный кэш геометрии островов (Y-bounds, radius, оси эллипсоида) по ChunkKey
+│   ├── ChunkIslandCache.java   — общий кэш списков центров островов (layerId + chunkX/Z) для всех 3 слоёв
+│   ├── ChunkKey.java           — упаковка пары (x, z) в long без аллокаций
+│   ├── IslandCache.java        — потокобезопасный кэш геометрии островов (Y-bounds, radius, оси эллипсоида, щупальца)
 │   └── IslandData.java         — иммутабельный value-object острова (bounds, radius, geometry)
 ├── carver/
-│   └── SinkholeCarver.java     — карстовые воронки под островами 2/3/4, работает напрямую с ChunkAccess после ванильного карвинга
+│   └── SinkholeCarver.java     — карстовые воронки по всему рельефу Layer 1 (шанс 1/12 на чанк, R 15-30, H 15-35, вода ниже Y 62); выполняется после восстановления островов
 ├── feature/
-│   ├── Layer1OreFilter.java    — активен: чистит ЛЮБУЮ руду по всей высоте чанка (ванильная генерация руды в датапаке не отключена, поэтому фильтр вырезает её пост-фактум)
-│   ├── OreVeinHelper.java      — общая логика размещения сферических рудных жил; ⚠ нигде не вызывается по всему репозиторию (мёртвый/незадействованный код)
-│   └── vault/                  — генерация Vault/Trial Spawner внутри тела острова (Layer 2/3/4)
-│       ├── IslandVaultTrialCache.java     — per-layer кэш прогресса размещения Vault/Trial Spawner по острову (ConcurrentHashMap/AtomicInteger)
-│       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри острова
-│       ├── Layer2VaultTrialPlacer.java    — точка входа генерации Vault/Trial для островов Layer 2
-│       ├── Layer3VaultTrialPlacer.java    — точка входа генерации Vault/Trial для эллипсоидов Layer 3
-│       ├── Layer4VaultTrialPlacer.java    — точка входа генерации Vault/Trial для "медуз" Layer 4
-│       ├── VaultTrialLootConfig.java      — набор ссылок на loot table (datapack JSON) + список мобов Trial Spawner для одного профиля генерации
-│       └── VaultTrialSpawnTier.java       — тир "богатства" спавна на острове (POOR/MEDIUM/RICH), количество Vault/Trial Spawner
+│   ├── Layer1OreFilter.java    — очищает чанк по всей высоте (-64..2096) от любых ванильных руд, заменяя на stone/deepslate
+│   ├── OreVeinHelper.java      — вспомогательный класс сферических рудных жил (сейчас не задействован в пайплайне)
+│   └── vault/                  — генерация Vault и Trial Spawner внутри тела островов (Layer 2/3/4)
+│       ├── IslandVaultTrialCache.java     — потокобезопасный общий кэш прогресса размещения Vault/Trial по островам
+│       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри островов
+│       ├── Layer2VaultTrialPlacer.java    — точка входа Vault/Trial для Layer 2 (POOR 50%, MEDIUM 35%, RICH 15%)
+│       ├── Layer3VaultTrialPlacer.java    — точка входа Vault/Trial для эллипсоидов Layer 3
+│       ├── Layer4VaultTrialPlacer.java    — точка входа Vault/Trial для куполов "медуз" Layer 4
+│       ├── VaultTrialLootConfig.java      — конфигурация ссылок на loot tables и списков мобов для Trial Spawner
+│       └── VaultTrialSpawnTier.java       — тиры богатства спавна (POOR / MEDIUM / RICH)
 ├── layer/
-│   ├── Layer1FlatGenerator.java     — [УСТАРЕЛО] Изначально кастомная генерация Layer 1, теперь код заполнения блоков не используется; делегируется ванильному генератору.
-│   ├── LowerIslandGenerator.java    — Layer 2: острова + деревья + мосты
-│   ├── HighIslandGenerator.java     — Layer 3: эллипсоиды
-│   ├── UpperIslandGenerator.java    — Layer 4: медузы/щупальца
-│   ├── Layer2StructurePlacer.java   — ставит tank21 в очередь
-│   └── MountainForestScatter.java   — отдельный проход декорации: крупные разнообразные деревья по всему склону гор Layer 1 (не через ванильную декорацию биома)
+│   ├── Layer1FlatGenerator.java     — хелпер границ Layer 1 (-64..300) и делегат сэмплинга высот (surfaceHeight/topmostHeight); генерация блоков удалена
+│   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты
+│   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды
+│   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (купол + 10 щупалец)
+│   ├── Layer2StructurePlacer.java   — постановка tank21 в очередь только на обычных островах с тиром RICH
+│   └── MountainForestScatter.java   — кастомный проход густых ванильных деревьев по склонам и вершинам гор Layer 1 (от Y ≈ 68)
 ├── noise/
-│   ├── AeroNoise.java          — лёгкая OpenSimplex2-подобная реализация шума без внешних библиотек
-│   ├── IslandPlacer.java       — детерминированная seed-based сетка размещения островов (грид по чанкам, минимальный интервал между островами)
-│   └── IslandShape.java        — SDF-хелперы формы островов с профилями (linear/convex/concave/stepped) и per-island edge noise
-├── structure/                 — валидация структур (деревни и т.п.) под кастомный рельеф
-│   ├── StructureCategory.java         — категория структуры (SURFACE/ISLAND/UNDERGROUND/WATER/SKY_FLOATING), определяет тип валидации
-│   ├── StructureCategoryResolver.java — определяет StructureCategory для конкретной ванильной структуры; использует Layer1FlatGenerator.LAYER_MAX_Y как границу Layer 1
-│   ├── StructureSupportValidator.java — ★ главный класс валидации (вызывается из createStructures); держит ссылку на Layer1FlatGenerator для констант границ слоя
-│   ├── SupportSample.java             — record(x, z): точка сетки, где проверка опоры провалилась (для диагностики)
-│   ├── TerrainColumnSampler.java      — сэмплирует столбец рельефа по всем слоям (Layer1FlatGenerator/Lower/High/Upper) для валидации
-│   └── ValidationResult.java          — результат валидации размещения (accepted + диагностика, список несовпадений)
+│   ├── AeroNoise.java          — Perlin/Simplex шум и FBM без сторонних библиотек
+│   ├── IslandPlacer.java       — детерминированная seed-based сетка размещения островов, архипелагов (центры + спутники) и мостов
+│   └── IslandShape.java        — SDF-профили островов (linear/convex/concave/stepped) и per-island edge noise
+├── structure/                 — валидация структур под кастомный многослойный рельеф
+│   ├── StructureCategory.java         — категории: SURFACE, ISLAND, UNDERGROUND, WATER, SKY_FLOATING, DENY
+│   ├── StructureCategoryResolver.java — классификация структур по ID и фактическому слою (resolveForActualLayer)
+│   ├── StructureSupportValidator.java — валидация структур; вызывается из createStructures и applyBiomeDecoration (failsafe для Distant Horizons); разрешает WATER на Layer 1 при наличии дна
+│   ├── SupportSample.java             — record(x, z): точка сетки сэмплов с проваленной опорой
+│   ├── TerrainColumnSampler.java      — сэмплирование опоры рельефа с глубиной сканирования 24 блока и определение фактического слоя
+│   └── ValidationResult.java          — результат валидации размещения (accepted + диагностика)
 └── util/
     ├── ChunkAccessWriter.java         — реализация ChunkWriter поверх ChunkAccess.setBlockState
-    ├── ChunkWriter.java                — интерфейс записи/чтения блоков по мировым координатам
-    └── SectionDirectChunkWriter.java  — пишет блоки напрямую в LevelChunkSection, минуя ChunkAccess.setBlockState и обновление heightmap
+    ├── ChunkWriter.java               — интерфейс записи/чтения блоков по мировым координатам
+    └── SectionDirectChunkWriter.java  — прямая запись в LevelChunkSection в обход setBlockState и обновления heightmap (C2ME safe)
 ```
 
 ---
@@ -108,64 +108,78 @@ worldgen/
 
 Порядок вызовов в пайплайне NeoForge/Minecraft:
 
-1. **`fillFromNoise`**
-   - Layer 1: делегируется родительскому классу `super.fillFromNoise()` (ванильная amplified генерация 3D-рельефа).
-   - Layer 2, 3, 4: `lowerIslands/highIslands/upperIslands.fillChunk()`.
-   - Размещение структур в очередь (HAUL-01, tank21).
+1. **`createBiomes`**
+   - Вызывает `init(randomState)`.
+   - Делегирует ванильному пайплайну через `super.createBiomes(...)`.
 
-2. **`applyCarvers`**
-   - Вызывает `super.applyCarvers()` (ванильные пещеры режут рельеф).
-   - **Сразу после этого** вызывает `restoreIslandsInChunk()` — перегенерирует острова, чтобы ванильные пещеры не порвали тонкие мосты/щупальца.
-   - Затем `SinkholeCarver.carveChunk()` — карстовые воронки под островами 2/3/4.
+2. **`createStructures`**
+   - Вызывает `super.createStructures(...)`.
+   - Ленивая инициализация `initializeWithSeed(structureState.getLevelSeed())`.
+   - Валидация структур через `StructureSupportValidator`: проверка `chunk.getAllStarts()`, затем `chunk.getAllReferences()`. Невалидные структуры заменяются на `StructureStart.INVALID_START`.
 
-3. **`buildSurface`**
-   - Layer 1: делегируется `super.buildSurface()` — корректные биомные правила поверхности (снег, песок, гравий).
+3. **`fillFromNoise`**
+   - Layer 1 (при пересечении Y -64..300): делегируется `vanillaGenerator.fillFromNoise()` (полноценный ванильный рельеф Overworld).
+   - Layer 2, 3, 4: асинхронный параллельный запуск (`CompletableFuture` в `Util.backgroundExecutor()`) методов `fillChunk()` через `SectionDirectChunkWriter`.
+   - На Layer 2: вызов `Layer2StructurePlacer.placeForChunk` — постановка `tank21` в очередь для островов с тиром RICH.
 
-4. **`applyBiomeDecoration`**
-   - Ванильная декорация поверхности + деревья Layer 2.
-   - `MountainForestScatter.scatterForChunk()` — дополнительный проход крупных деревьев по горам Layer 1.
-   - Размещение Vault/Trial Spawner на островах слоев 2, 3 и 4.
-   - **`Layer1OreFilter.applyToChunk()`** очищает чанк от любой сгенерированной руды (отключена во всем мире).
+4. **`applyCarvers`**
+   - `vanillaGenerator.applyCarvers()` — нарезка ванильных пещер и каньонов.
+   - `restoreIslandsInChunk(chunk)` — безусловное немедленное восстановление островов 2, 3 и 4 слоёв от повреждений карвером.
+   - `SinkholeCarver.carveChunk()` — вырезание карстовых воронок в рельефе Layer 1 (Y < 300).
 
-5. **`createStructures`**
-   - Проверка легальности ванильных структур через `StructureSupportValidator`.
+5. **`buildSurface`**
+   - Делегируется `vanillaGenerator.buildSurface()` — стандартные ванильные SurfaceRules (песок в пустынях, терракота в бэдлендсах, снег, гравий и т.д.).
+
+6. **`applyBiomeDecoration`**
+   - Failsafe-проверка структур через `StructureSupportValidator` (для фоновых потоков Distant Horizons BatchGenerator).
+   - `super.applyBiomeDecoration()` — ванильная декорация биомов.
+   - `lowerIslands.clearVanillaVegetationInCentralZone()` — очистка центральной зоны островов Layer 2 от ванильной растительности.
+   - `MountainForestScatter.scatterForChunk()` — плотная посадка ванильных деревьев по горным склонам и вершинам Layer 1.
+   - `lowerIslands.placeTreesInRegion()` — размещение листвы деревьев Layer 2 в регионе 3×3 чанка.
+   - Размещение Vault / Trial Spawner через `layer2VaultTrialPlacer`, `layer3VaultTrialPlacer`, `layer4VaultTrialPlacer`.
+   - `Layer1OreFilter.applyToChunk()` — удаление остаточных руд по всей высоте чанка (-64..2096).
 
 ---
 
 ## 4. Размещение кастомных структур (tank21)
 
-- **`tank21`** — NBT структура (Layer 2), регистрируется через `PhysicalStructures`.
-
-Поток: C2ME WorldGen Поток -> `IslandStructureScheduler` -> `PendingStructureData` (SavedData) -> Игрок подходит близко (`ProximityTriggerHandler`) -> `StructurePlacementHelper` -> `spawnStructureResult`.
-
-Дополнительно: `SpawnerProximityHandler` — тиковый поиск блока `physical_structures:structure_spawner` рядом с игроком в Layer 2 (Y 250-450, интервал 20 тиков, радиус поиска чанков 2). `AeroStructureListener` слушает `PhysicalStructurePlacedEvent` от `physical_structures` — звук/эффекты после того, как структура физически собрана (Sable).
-
-Для прегенерации без игроков: `/aeroworld forcePlacePending`.
+- **`tank21`** — NBT структура (Layer 2), регистрируется через API `physical_structures` с задержкой сборки Sable 20 тиков.
+- Очередь спавна: C2ME WorldGen поток (`Layer2StructurePlacer`) -> `IslandStructureScheduler` -> `PendingStructureData` (SavedData) -> игрок приближается на расстояние <= 96 блоков XZ (`ProximityTriggerHandler`) -> `StructurePlacementHelper` -> `PhysicalStructures.spawnStructureResult`.
+- Принудительный спавн для прегенерации (перед экспортом в Voxy / LOD): `/aeroworld forcePlacePending`.
+- Интерактивный триггер: `SpawnerProximityHandler` раз в 20 тиков ищет блок `physical_structures:structure_spawner` в радиусе 10 блоков от игрока на высотах Y 250..450.
 
 ---
 
-## 5. Известные особенности текущей архитектуры
+## 5. Особенности архитектуры и взаимодействия систем
 
-1. **Наследование генератора:** Класс `AeroWorldChunkGenerator` наследуется от `NoiseBasedChunkGenerator`, чтобы движок Minecraft (через `RandomState.create()`) корректно считывал настройки шумов (например, профиль `minecraft:amplified`).
-2. **Layer 1 полностью ванильный, но `Layer1FlatGenerator` не мёртв:** заливка блоков и покраска поверхности (`fillChunk`/`applyLayer1Surface`) больше не используются, но класс живёт как активный инстанс-поле в `AeroWorldChunkGenerator` (создаётся в конструкторе) и передаётся в `AeroBiomeSource`, `StructureSupportValidator`, `TerrainColumnSampler` — источник констант `LAYER_MIN_Y`/`LAYER_MAX_Y`/`PUBLIC_BASE_SURFACE_Y` и метаданных рельефа (surfaceHeight/topmostHeight), которые эти классы больше нигде не пересчитывают сами.
-3. **Руда:** `OreVeinHelper` написан, но не вызывается нигде в кодовой базе — генерация руды слоёв фактически отключена отсутствием вызова, а не флагом/закомментированным кодом. `Layer1OreFilter` дополнительно вырезает всё, что могла добавить ванильная декорация Layer 1.
-4. **Vault / Trial Spawner:** Находятся внутри островов (Layer 2/3/4). Логика спавна использует ванильные лут-таблицы в ресурсах датапака, а размещение происходит напрямую в `applyBiomeDecoration` через ручную сборку NBT `BlockEntity` (`IslandVaultTrialGenerator` + per-layer `Layer{2,3,4}VaultTrialPlacer`, прогресс кэшируется в `IslandVaultTrialCache`).
-5. **Прямая запись в чанк:** Для параллельной (C2ME) генерации без гонок по heightmap используется `SectionDirectChunkWriter`, обходящий побочные эффекты `ChunkAccess.setBlockState`.
+1. **Генератор чанков:** Наследуется от `NoiseBasedChunkGenerator`, проксируя вызовы Layer 1 в инкапсулированный `vanillaGenerator`.
+2. **C2ME и многопоточность:**
+   - Поля генераторов слоёв и пласеров помечены `volatile`.
+   - Генерация геометрии островов в `fillFromNoise` распараллелена через `SectionDirectChunkWriter`.
+   - Общие кэши `ChunkIslandCache` и `IslandVaultTrialCache` пересоздаются при инициализации seed.
+3. **Биомная система:**
+   - В Layer 1 `AeroBiomeSource` возвращает оригинальные `minecraft:*` биомы, что обеспечивает работу ванильных SurfaceRules. Подземная зона Y ∈ [-64, -8] содержит участки `minecraft:deep_dark` для спавна Ancient City.
+   - Для островных слоёв (Y > 300) биомы подменяются на `aeroworld:*` клоны, а океанические и пещерные биомы замещаются на `aeroworld:plains`.
+   - Реестр биомов асинхронно кэшируется в `AeroBiomeRegistryCache`.
+4. **Удаление руд (двухуровневое):**
+   - Уровень датапака: `data/aeroworld/neoforge/biome_modifier/remove_ores.json` (`neoforge:remove_features`) вырезает руды из тега `#aeroworld:aero_biomes`.
+   - Уровень генерации: `Layer1OreFilter` пост-фактум сканирует все секции чанка и заменяет любые блоки руды на камень/глубинный сланец.
+5. **Валидация структур:**
+   - Категории определяются через `StructureCategoryResolver.resolveForActualLayer` на основе данных `TerrainColumnSampler`, а не только по высоте Y.
+   - Водные структуры (`WATER`) разрешены на Layer 1 при условии твёрдого основания на дне океана, но запрещены на парящих островах.
+   - Двойная проверка: при создании структур (`createStructures`) и перед биомной декорацией (`applyBiomeDecoration`).
+6. **Команды поиска островов:**
+   - `/aeroworld findIsland2 [normal|archipelago_centre|satellite] [POOR|MEDIUM|RICH]` — поиск островов Layer 2 по сетке с фильтрацией по типу и тиру.
+   - `/aeroworld findIsland3` — независимый поиск эллипсоидов Layer 3.
+   - `/aeroworld findIsland4` — поиск медуз Layer 4.
 
 ---
 
 ## 6. Ресурсы датапака
 
-- **`aeroworld.json` (world_preset):** Главный пресет мира. Внутри `vanilla_generator` установлен параметр `"settings": "minecraft:amplified"`.
-- **Биомы:** `worldgen/biome/*.json` содержат клоны ванильных биомов без руды.
-- **Лут таблицы:** `loot_table/gameplay/layerN/` содержит дроп для Vaults и Trial Spawners.
-
----
-
-## 7. С чего начать при доработке
-
-- **Настройка высоты / формы слоев:** `LayerNSettings.java` (параметры) + соответствующий `*IslandGenerator.java` (геометрия — `worldgen/noise/IslandShape.java`, `IslandPlacer.java`).
-- **Генерация поверхности Layer 1:** Зависит теперь полностью от ванильного Amplified шума. Ищите изменения в датапаках плотности или биомах.
-- **Дроп на островах:** Только через редактирование `.json` лут таблиц в `resources/data/aeroworld/loot_table/...`, либо через `VaultTrialLootConfig` для привязки таблиц к профилю слоя.
-- **Проблемы с ванильными структурами:** `StructureSupportValidator.java` и `StructureCategoryResolver.java` (если подводная или надземная структура генерируется не там).
-- **Конфиг клиента:** `AeroWorldConfig.java` — `config/aeroworld-client.toml`, применяется без перезапуска игры.
+- **`dimension/aeroworld.json`:** Определение измерения, генератор `aeroworld:aero_generator`, vanilla settings `minecraft:overworld`, настройки геометрии слоёв `aero_settings`.
+- **`world_preset/aeroworld.json`:** Замена overworld на измерение `aeroworld:aeroworld` с `minecraft:overworld` настройками шума.
+- **`dimension_type/aeroworld.json`:** `min_y: -64`, `height: 2096`, `logical_height: 2096`.
+- **`neoforge/biome_modifier/remove_ores.json`:** Удаление ванильных рудных фичей из биомов `#aeroworld:aero_biomes`.
+- **`loot_table/gameplay/layer{2,3,4}/`:** Лут-таблицы обычных и зловещих Vaults и Trial Spawners.
+- **`presets/*.json`:** Пресеты конфигурации островов (`default`, `dense_archipelago`, `grand_isolation`, `skyblock_classic`, `vast_wilderness`).
