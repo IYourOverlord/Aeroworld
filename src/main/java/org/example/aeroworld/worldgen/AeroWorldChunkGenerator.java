@@ -656,48 +656,24 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                              BiomeManager biomeManager, StructureManager structureManager,
                              ChunkAccess chunk, GenerationStep.Carving step) {
         initializeWithSeed(seed);
+
+        // Защита островов (Y >= 320) от ванильного карвинга пещер и каньонов:
+        // устанавливаем CarvingMask.Mask, возвращающий true для Y >= 320.
+        // Метод WorldCarver.carveEllipsoid проверяет carvingMask.get(x, y, z):
+        // если get() возвращает true, блок считается уже вырезанным и пропускается без записи.
+        if (chunk instanceof net.minecraft.world.level.chunk.ProtoChunk protoChunk) {
+            net.minecraft.world.level.chunk.CarvingMask mask = protoChunk.getOrCreateCarvingMask(step);
+            mask.setAdditionalMask((cx, cy, cz) -> cy >= 320);
+        }
+
         vanillaGenerator.applyCarvers(region, seed, random, biomeManager,
                 structureManager, chunk, step);
-        // Карстовые воронки запускаем только на шаге AIR (один раз на чанк вместо двух)
+
+        // Карстовые воронки запускаем только на шаге AIR в пределах Layer 1 (Y < 300)
         if (step == GenerationStep.Carving.AIR && layer1 != null) {
             org.example.aeroworld.worldgen.carver.SinkholeCarver.carveChunk(
                     chunk, seed, layer1::topmostHeight);
         }
-
-        // Восстановление островов — только один раз в финале карвинга (шаг LIQUID),
-        // используя быстрый SectionDirectChunkWriter без поблочного пересчёта heightmap
-        if (step == GenerationStep.Carving.LIQUID) {
-            restoreIslandsInChunk(chunk);
-        }
-    }
-
-    private void restoreIslandsInChunk(ChunkAccess chunk) {
-        int chunkX = chunk.getPos().x;
-        int chunkZ = chunk.getPos().z;
-
-        final int chunkMinY = chunk.getMinBuildHeight();
-        final int chunkMaxY = chunk.getMaxBuildHeight();
-
-        SectionDirectChunkWriter directWriter = new SectionDirectChunkWriter(chunk);
-
-        if (lowerIslands != null
-                && chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
-            lowerIslands.fillChunk(directWriter, chunkX, chunkZ);
-        }
-        if (highIslands != null
-                && chunkMinY <= HighIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
-            highIslands.fillChunk(directWriter, chunkX, chunkZ);
-        }
-        if (upperIslands != null
-                && chunkMinY <= UpperIslandGenerator.LAYER_MAX_Y
-                && chunkMaxY >= UpperIslandGenerator.LAYER_MIN_Y) {
-            upperIslands.fillChunk(directWriter, chunkX, chunkZ);
-        }
-
-        // Освобождаем записи всех трёх слоёв за один вызов через общий кэш.
-        sharedChunkIslandCache.releaseAll(chunkX, chunkZ, 3);
     }
 
     @Override
@@ -820,11 +796,6 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // ванильная биомная декорация об этой зоне не знает.
         if (lowerIslands != null) lowerIslands.clearVanillaVegetationInCentralZone(region, chunk);
 
-        // Крупные, кучные, разноплановые деревья на вершинах гор Layer 1 —
-        // ванильные горные биомы почти безлесные, это намеренная кастомная
-        // декорация поверх обычной. См. javadoc MountainForestScatter.
-        MountainForestScatter.scatterForChunk(wgr, this, chunk, layer1, worldSeed);
-
         // Листья деревьев (±2 блока по XZ) — пишем через WorldGenLevel (регион 3×3 чанка).
         // В fillChunk через ChunkAccess запись за границы чанка некорректна.
         if (lowerIslands != null) lowerIslands.placeTreesInRegion(region, chunk);
@@ -863,6 +834,10 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // как от кастомных генераторов (отключены выше), так и от ванильной
         // руды, которую могла разместить super.applyBiomeDecoration().
         Layer1OreFilter.applyToChunk(chunk);
+
+        // Освобождаем записи всех трёх слоёв чанка из кэша центров островов
+        // после завершения всех стадий генерации и декорации чанка.
+        sharedChunkIslandCache.releaseAll(chunkX, chunkZ, 3);
     }
 
     @Override

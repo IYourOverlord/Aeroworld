@@ -82,8 +82,7 @@ worldgen/
 │   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты
 │   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды
 │   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (купол + 10 щупалец)
-│   ├── Layer2StructurePlacer.java   — постановка tank21 в очередь только на обычных островах с тиром RICH
-│   └── MountainForestScatter.java   — кастомный проход густых ванильных деревьев по склонам и вершинам гор Layer 1 (от Y ≈ 68)
+│   └── Layer2StructurePlacer.java   — постановка tank21 в очередь только на обычных островах с тиром RICH
 ├── noise/
 │   ├── AeroNoise.java          — Perlin/Simplex шум и FBM без сторонних библиотек
 │   ├── IslandPlacer.java       — детерминированная seed-based сетка размещения островов, архипелагов (центры + спутники) и мостов
@@ -122,9 +121,10 @@ worldgen/
    - На Layer 2: вызов `Layer2StructurePlacer.placeForChunk` — постановка `tank21` в очередь для островов с тиром RICH.
 
 4. **`applyCarvers`**
-   - `vanillaGenerator.applyCarvers()` — нарезка ванильных пещер и каньонов.
-   - `restoreIslandsInChunk(chunk)` — безусловное немедленное восстановление островов 2, 3 и 4 слоёв от повреждений карвером.
-   - `SinkholeCarver.carveChunk()` — вырезание карстовых воронок в рельефе Layer 1 (Y < 300).
+   - Установка маски защиты островов (`CarvingMask.setAdditionalMask((cx, cy, cz) -> cy >= 320)`), предотвращающая карвинг ванильными пещерами и каньонами блоков выше Y=320.
+   - `vanillaGenerator.applyCarvers()` — нарезка ванильных пещер и каньонов (строго ниже Y=320).
+   - `SinkholeCarver.carveChunk()` — вырезание карстовых воронок в рельефе Layer 1 (Y < 300, шаг AIR).
+   - `restoreIslandsInChunk` полностью удалён — двойная генерация блоков островов устранена.
 
 5. **`buildSurface`**
    - Делегируется `vanillaGenerator.buildSurface()` — стандартные ванильные SurfaceRules (песок в пустынях, терракота в бэдлендсах, снег, гравий и т.д.).
@@ -133,10 +133,10 @@ worldgen/
    - Failsafe-проверка структур через `StructureSupportValidator` (для фоновых потоков Distant Horizons BatchGenerator).
    - `super.applyBiomeDecoration()` — ванильная декорация биомов.
    - `lowerIslands.clearVanillaVegetationInCentralZone()` — очистка центральной зоны островов Layer 2 от ванильной растительности.
-   - `MountainForestScatter.scatterForChunk()` — плотная посадка ванильных деревьев по горным склонам и вершинам Layer 1.
    - `lowerIslands.placeTreesInRegion()` — размещение листвы деревьев Layer 2 в регионе 3×3 чанка.
    - Размещение Vault / Trial Spawner через `layer2VaultTrialPlacer`, `layer3VaultTrialPlacer`, `layer4VaultTrialPlacer`.
    - `Layer1OreFilter.applyToChunk()` — удаление остаточных руд по всей высоте чанка (-64..2096).
+   - `sharedChunkIslandCache.releaseAll(chunkX, chunkZ, 3)` — освобождение кэша центров островов для чанка.
 
 ---
 
