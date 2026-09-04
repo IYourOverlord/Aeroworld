@@ -26,11 +26,11 @@
 org.example.aeroworld
 ├── AeroWorld.java                 — главный класс мода (@Mod), регистрация всего
 ├── client/
-│   └── AeroWorldClientEvents.java     — клиентский обработчик событий (заготовка под UI мирового пресета)
+│   └── AeroWorldClientEvents.java     — @EventBusSubscriber(CLIENT), подписан на ScreenEvent.Init.Post; тело обработчика пустое (только комментарии-заготовки под будущую кастомизацию UI пресета мира)
 ├── command/
 │   └── AeroWorldCommands.java     — /aeroworld forcePlacePending, findIsland2/3/4
 ├── config/
-│   ├── AeroWorldConfig.java       — ModConfigSpec (config/aeroworld-client.toml), регистрация в конструкторе мода
+│   ├── AeroWorldConfig.java       — ModConfigSpec (config/aeroworld-client.toml); SPEC сейчас пустой (BUILDER.build() без единого define) — заготовка под будущие опции
 │   ├── AeroWorldSettings.java     — root-record {layer2, layer3, layer4}, сериализуется в dimension JSON
 │   └── Layer2/3/4Settings.java    — параметры геометрии островов соответствующих слоёв
 ├── event/
@@ -69,7 +69,7 @@ worldgen/
 │   └── SinkholeCarver.java     — карстовые воронки под островами 2/3/4, работает напрямую с ChunkAccess после ванильного карвинга
 ├── feature/
 │   ├── Layer1OreFilter.java    — активен: чистит ЛЮБУЮ руду по всей высоте чанка (ванильная генерация руды в датапаке не отключена, поэтому фильтр вырезает её пост-фактум)
-│   ├── OreVeinHelper.java      — общая логика размещения сферических рудных жил (используется генераторами руды слоёв, если/когда они включены)
+│   ├── OreVeinHelper.java      — общая логика размещения сферических рудных жил; ⚠ нигде не вызывается по всему репозиторию (мёртвый/незадействованный код)
 │   └── vault/                  — генерация Vault/Trial Spawner внутри тела острова (Layer 2/3/4)
 │       ├── IslandVaultTrialCache.java     — per-layer кэш прогресса размещения Vault/Trial Spawner по острову (ConcurrentHashMap/AtomicInteger)
 │       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри острова
@@ -91,8 +91,8 @@ worldgen/
 │   └── IslandShape.java        — SDF-хелперы формы островов с профилями (linear/convex/concave/stepped) и per-island edge noise
 ├── structure/                 — валидация структур (деревни и т.п.) под кастомный рельеф
 │   ├── StructureCategory.java         — категория структуры (SURFACE/ISLAND/UNDERGROUND/WATER/SKY_FLOATING), определяет тип валидации
-│   ├── StructureCategoryResolver.java — определяет StructureCategory для конкретной ванильной структуры
-│   ├── StructureSupportValidator.java — ★ главный класс валидации (вызывается из createStructures)
+│   ├── StructureCategoryResolver.java — определяет StructureCategory для конкретной ванильной структуры; использует Layer1FlatGenerator.LAYER_MAX_Y как границу Layer 1
+│   ├── StructureSupportValidator.java — ★ главный класс валидации (вызывается из createStructures); держит ссылку на Layer1FlatGenerator для констант границ слоя
 │   ├── SupportSample.java             — record(x, z): точка сетки, где проверка опоры провалилась (для диагностики)
 │   ├── TerrainColumnSampler.java      — сэмплирует столбец рельефа по всем слоям (Layer1FlatGenerator/Lower/High/Upper) для валидации
 │   └── ValidationResult.java          — результат валидации размещения (accepted + диагностика, список несовпадений)
@@ -147,8 +147,8 @@ worldgen/
 ## 5. Известные особенности текущей архитектуры
 
 1. **Наследование генератора:** Класс `AeroWorldChunkGenerator` наследуется от `NoiseBasedChunkGenerator`, чтобы движок Minecraft (через `RandomState.create()`) корректно считывал настройки шумов (например, профиль `minecraft:amplified`).
-2. **Layer 1 полностью ванильный:** Старый самописный класс `Layer1FlatGenerator` больше не используется для заливки блоков и покраски поверхности (его методы `fillChunk` и `applyLayer1Surface` обойдены); используется только как источник данных для `TerrainColumnSampler`.
-3. **Руда отключена постфактум:** Генератор руды слоёв (`OreVeinHelper`) сейчас не вызывается из пайплайна, а `Layer1OreFilter` активно вырезает всё, что могла добавить ванильная декорация — включая ваниль Layer 1.
+2. **Layer 1 полностью ванильный, но `Layer1FlatGenerator` не мёртв:** заливка блоков и покраска поверхности (`fillChunk`/`applyLayer1Surface`) больше не используются, но класс живёт как активный инстанс-поле в `AeroWorldChunkGenerator` (создаётся в конструкторе) и передаётся в `AeroBiomeSource`, `StructureSupportValidator`, `TerrainColumnSampler` — источник констант `LAYER_MIN_Y`/`LAYER_MAX_Y`/`PUBLIC_BASE_SURFACE_Y` и метаданных рельефа (surfaceHeight/topmostHeight), которые эти классы больше нигде не пересчитывают сами.
+3. **Руда:** `OreVeinHelper` написан, но не вызывается нигде в кодовой базе — генерация руды слоёв фактически отключена отсутствием вызова, а не флагом/закомментированным кодом. `Layer1OreFilter` дополнительно вырезает всё, что могла добавить ванильная декорация Layer 1.
 4. **Vault / Trial Spawner:** Находятся внутри островов (Layer 2/3/4). Логика спавна использует ванильные лут-таблицы в ресурсах датапака, а размещение происходит напрямую в `applyBiomeDecoration` через ручную сборку NBT `BlockEntity` (`IslandVaultTrialGenerator` + per-layer `Layer{2,3,4}VaultTrialPlacer`, прогресс кэшируется в `IslandVaultTrialCache`).
 5. **Прямая запись в чанк:** Для параллельной (C2ME) генерации без гонок по heightmap используется `SectionDirectChunkWriter`, обходящий побочные эффекты `ChunkAccess.setBlockState`.
 
