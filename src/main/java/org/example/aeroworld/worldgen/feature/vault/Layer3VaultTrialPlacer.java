@@ -47,7 +47,7 @@ public final class Layer3VaultTrialPlacer {
     private final IslandVaultTrialCache sharedVaultTrialCache;
 
     public Layer3VaultTrialPlacer(long worldSeed, ChunkIslandCache sharedChunkCache,
-                                   IslandVaultTrialCache sharedVaultTrialCache) {
+                                  IslandVaultTrialCache sharedVaultTrialCache) {
         this.worldSeed = worldSeed;
         this.sharedChunkCache = sharedChunkCache;
         this.sharedVaultTrialCache = sharedVaultTrialCache;
@@ -61,7 +61,7 @@ public final class Layer3VaultTrialPlacer {
      * между вызовами для разных чанков одного острова (см. {@link IslandVaultTrialCache}).</p>
      */
     public void placeForChunk(WorldGenLevel region, ChunkAccess chunk,
-                               HighIslandGenerator generator) {
+                              HighIslandGenerator generator) {
 
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
@@ -82,7 +82,7 @@ public final class Layer3VaultTrialPlacer {
             VaultTrialSpawnTier tier = pickTier(islandBlockX, islandBlockZ);
 
             IslandVaultTrialCache.Progress progress = sharedVaultTrialCache.getOrCreate(
-                    islandBlockX, islandBlockZ, tier.vaultCount(), tier.trialSpawnerCount());
+                    HighIslandGenerator.LAYER_ID, islandBlockX, islandBlockZ, tier.vaultCount(), tier.trialSpawnerCount());
             if (progress.isComplete()) continue;
 
             RandomSource rng = RandomSource.create(
