@@ -166,27 +166,10 @@ public class UpperIslandGenerator {
 
         if (centres.isEmpty()) return;
 
-        // Ранний фильтр по AABB: отбрасываем острова, которые физически не могут
-        // задеть текущий чанк даже с учётом щупалец и искажений.
-        double maxInfluence = maxRadius + tentacleBend * 2.0 + CAP_NOISE_DEF;
-        int maxMargin = (int) Math.ceil(maxInfluence);
-
-        LongArrayList filteredCentres = new LongArrayList();
+        // centres уже предварительно отфильтрованы по AABB в IslandPlacer
+        IslandData[] islandData = new IslandData[centres.size()];
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
-            int cx = ChunkKey.x(packed);
-            int cz = ChunkKey.z(packed);
-            if (cx + maxMargin < baseX || cx - maxMargin > baseX + 15) continue;
-            if (cz + maxMargin < baseZ || cz - maxMargin > baseZ + 15) continue;
-            filteredCentres.add(packed);
-        }
-
-        if (filteredCentres.isEmpty()) return;
-
-        // Предвычисляем все IslandData до цикла по блокам
-        IslandData[] islandData = new IslandData[filteredCentres.size()];
-        for (int i = 0; i < filteredCentres.size(); i++) {
-            long packed = filteredCentres.getLong(i);
             islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
@@ -204,29 +187,36 @@ public class UpperIslandGenerator {
             int capBaseY     = d.bottomY + d.height() / 3;
             int tentacleFloor = Math.max(LAYER_MIN_Y - tentacleMaxLen, -64);
 
-            for (int lx = 0; lx < 16; lx++) {
-                for (int lz = 0; lz < 16; lz++) {
+            // ── Шапка купола: цикл только по пересечению купола с чанком ──────
+            double capMargin = d.radius + CAP_NOISE_DEF;
+            int minLx = Math.max(0, (int) Math.floor(d.cx - capMargin) - baseX);
+            int maxLx = Math.min(15, (int) Math.ceil(d.cx + capMargin) - baseX);
+            int minLz = Math.max(0, (int) Math.floor(d.cz - capMargin) - baseZ);
+            int maxLz = Math.min(15, (int) Math.ceil(d.cz + capMargin) - baseZ);
+
+            if (minLx <= maxLx && minLz <= maxLz) {
+                double capMaxDistSq = d.radius * d.radius * 1.5625; // 1.25^2 с запасом на выпуклость
+                for (int lx = minLx; lx <= maxLx; lx++) {
                     int wx = baseX + lx;
-                    int wz = baseZ + lz;
+                    for (int lz = minLz; lz <= maxLz; lz++) {
+                        int wz = baseZ + lz;
 
-                    // Precompute XZ noise once per column — shared by all Y-levels.
-                    CapXZCache      capXZ  = precomputeCapXZ(wx, wz);
-                    TentacleXZCache tentXZ = precomputeTentacleXZ(wx, wz);
-
-                    // ── Шапка ─────────────────────────────────────────────────
-                    for (int wy = capBaseY; wy <= d.topY; wy++) {
-                        if (!isCapSolid(wx, wy, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) continue;
-                        chunk.setBlockState(wx, wy, wz, BS_STONE);
-                    }
-
-                    // ── Щупальца — данные уже в IslandData, повторных вычислений нет ──
-                    for (int wy = tentacleFloor; wy < capBaseY; wy++) {
-                        if (!isTentacleSolid(wx, wy, wz, capBaseY, tentacleFloor,
-                                d.tentacleData, tentXZ)) continue;
-                        chunk.setBlockState(wx, wy, wz, BS_STONE);
+                        CapXZCache capXZ = precomputeCapXZ(wx, wz);
+                        double capDx = (wx - d.cx) + capXZ.nx;
+                        double capDz = (wz - d.cz) + capXZ.nz;
+                        double colDistSq = capDx * capDx + capDz * capDz;
+                        if (colDistSq <= capMaxDistSq) {
+                            for (int wy = capBaseY; wy <= d.topY; wy++) {
+                                if (!isCapSolid(wy, capBaseY, d.topY, d.radius, colDistSq)) continue;
+                                chunk.setBlockState(wx, wy, wz, BS_STONE);
+                            }
+                        }
                     }
                 }
             }
+
+            // ── Щупальца: прямая трассировка сплайнов щупалец в пределы чанка ──
+            fillTentaclesDirect(chunk, baseX, baseZ, capBaseY, tentacleFloor, d.tentacleData);
         }
     }
 
@@ -253,11 +243,7 @@ public class UpperIslandGenerator {
         return new CapXZCache(nx, nz);
     }
 
-    private boolean isCapSolid(int wx, int wy, int wz,
-                               int cx, int cz,
-                               int capBaseY, int topY,
-                               double radius,
-                               CapXZCache capXZ) {
+    private boolean isCapSolid(int wy, int capBaseY, int topY, double radius, double colDistSq) {
         if (wy < capBaseY || wy > topY) return false;
 
         double t      = (double)(wy - capBaseY) / Math.max(1, topY - capBaseY);
@@ -266,9 +252,7 @@ public class UpperIslandGenerator {
         double bulge  = t < 0.25 ? (1.0 + (0.25 - t) * 0.6) : 1.0; // выпуклость
         double capRSq = radius * radius * base * bulge * bulge; // capR² без sqrt
 
-        double dx = (wx - cx) + capXZ.nx;
-        double dz = (wz - cz) + capXZ.nz;
-        return dx * dx + dz * dz <= capRSq; // no sqrt anywhere
+        return colDistSq <= capRSq; // no sqrt anywhere
     }
 
     // ── Щупальца
@@ -329,50 +313,67 @@ public class UpperIslandGenerator {
         return result;
     }
 
-    private boolean isTentacleSolid(int wx, int wy, int wz,
-                                    int capBaseY, int botY,
-                                    double[][] tentacles,
-                                    TentacleXZCache tentXZ) {
-        if (wy >= capBaseY || wy < botY) return false;
+    private void fillTentaclesDirect(ChunkWriter chunk, int baseX, int baseZ,
+                                     int capBaseY, int botY, double[][] tentacles) {
+        int chunkMaxX = baseX + 15;
+        int chunkMaxZ = baseZ + 15;
+
         for (double[] t : tentacles) {
-            double rootX         = t[0], rootZ         = t[1];
-            double dirX          = t[2], dirZ          = t[3];
-            double length        = t[4], baseR         = t[5];
-            int    spiralType    = (int) t[6];
-            double spiralStrength= t[7];
+            double rootX          = t[0], rootZ          = t[1];
+            double dirX           = t[2], dirZ           = t[3];
+            double length         = t[4], baseR          = t[5];
+            int    spiralType     = (int) t[6];
+            double spiralStrength = t[7];
 
-            double s = (capBaseY - wy) / length;
-            if (s < 0 || s > 1.0) continue;
+            int startY = capBaseY - 1;
+            int endY   = Math.max(botY, (int) Math.floor(capBaseY - length));
 
+            for (int wy = startY; wy >= endY; wy--) {
+                double s = (capBaseY - wy) / length;
+                if (s < 0 || s > 1.0) continue;
 
-            double centerX = rootX + dirX * tentacleBend * s;
-            double centerZ = rootZ + dirZ * tentacleBend * s;
+                double centerX = rootX + dirX * tentacleBend * s;
+                double centerZ = rootZ + dirZ * tentacleBend * s;
 
+                if (spiralType != SPIRAL_STRAIGHT) {
+                    double spiralAngle = GOLDEN_ANGLE * s * spiralStrength * 4.0;
+                    if (spiralType == SPIRAL_IN) spiralAngle = -spiralAngle;
+                    double perpX = -dirZ;
+                    double perpZ =  dirX;
+                    centerX += perpX * Math.sin(spiralAngle) * tentacleBend * s;
+                    centerZ += perpZ * Math.sin(spiralAngle) * tentacleBend * s;
+                }
 
-            if (spiralType != SPIRAL_STRAIGHT) {
-                double spiralAngle = GOLDEN_ANGLE * s * spiralStrength * 4.0;
+                double tentR = baseR + (TENTACLE_TIP_R - baseR) * s;
+                double tentRSq = tentR * tentR;
 
-                if (spiralType == SPIRAL_IN) spiralAngle = -spiralAngle;
-                // SPIRAL_OUT: положительный угол — закрутка наружу
+                int minBx = (int) Math.floor(centerX - tentR);
+                int maxBx = (int) Math.ceil(centerX + tentR);
+                int minBz = (int) Math.floor(centerZ - tentR);
+                int maxBz = (int) Math.ceil(centerZ + tentR);
 
-                // Перпендикуляр к dirX/dirZ для поперечного смещения
-                double perpX = -dirZ;
-                double perpZ =  dirX;
-                double spiralDx = perpX * Math.sin(spiralAngle) * tentacleBend * s;
-                double spiralDz = perpZ * Math.sin(spiralAngle) * tentacleBend * s;
-                centerX += spiralDx;
-                centerZ += spiralDz;
+                // Отсекаем круг, если он вне текущего чанка
+                if (maxBx < baseX || minBx > chunkMaxX || maxBz < baseZ || minBz > chunkMaxZ) {
+                    continue;
+                }
+
+                int fromX = Math.max(baseX, minBx);
+                int toX   = Math.min(chunkMaxX, maxBx);
+                int fromZ = Math.max(baseZ, minBz);
+                int toZ   = Math.min(chunkMaxZ, maxBz);
+
+                for (int bx = fromX; bx <= toX; bx++) {
+                    double dx = bx - centerX;
+                    double dxSq = dx * dx;
+                    for (int bz = fromZ; bz <= toZ; bz++) {
+                        double dz = bz - centerZ;
+                        if (dxSq + dz * dz <= tentRSq) {
+                            chunk.setBlockState(bx, wy, bz, BS_STONE);
+                        }
+                    }
+                }
             }
-
-            double tentR    = baseR + (TENTACLE_TIP_R - baseR) * s;
-            double noiseAmp = tentR * 0.4;
-
-            double dx = (wx - centerX) + tentXZ.unitNx * noiseAmp;
-            double dz = (wz - centerZ) + tentXZ.unitNz * noiseAmp;
-
-            if (dx * dx + dz * dz <= tentR * tentR) return true;
         }
-        return false;
     }
 
     private static void logHole(int chunkX, int chunkZ,
@@ -383,15 +384,12 @@ public class UpperIslandGenerator {
 
     public int getCapTopY(int wx, int wz, IslandData d) {
         int capBaseY = d.bottomY + d.height() / 3;
-
-        // Быстрый XZ-reject: на самой topY isCapSolid ВСЕГДА false (t=1 →
-        // base=1-t²=0 → capRSq=0 при любом radius, единственное решение
-        // dx²+dz²≤0 — вырожденный случай почти нулевой вероятности из-за
-        // шумового сдвига capXZ.nx/nz). Поэтому reject-проверка идёт по
-        // capBaseY — там купол имеет полный радиус (base=1 при t=0), и
-        // отсутствие solid там надёжно означает "колонка вне купола вообще".
         CapXZCache capXZ = precomputeCapXZ(wx, wz);
-        if (!isCapSolid(wx, capBaseY, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) {
+        double capDx = (wx - d.cx) + capXZ.nx;
+        double capDz = (wz - d.cz) + capXZ.nz;
+        double colDistSq = capDx * capDx + capDz * capDz;
+
+        if (!isCapSolid(capBaseY, capBaseY, d.topY, d.radius, colDistSq)) {
             return d.bottomY - 1;
         }
 
@@ -399,18 +397,20 @@ public class UpperIslandGenerator {
         int lo = capBaseY, hi = d.topY;
         while (lo < hi) {
             int mid = (lo + hi + 1) >>> 1;
-            if (isCapSolid(wx, mid, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) lo = mid;
+            if (isCapSolid(mid, capBaseY, d.topY, d.radius, colDistSq)) lo = mid;
             else hi = mid - 1;
         }
         return lo; // lo уже гарантированно solid (нижняя граница поиска), верхний Y+1 по построению бинарного поиска не solid
     }
 
-
     public int getCapBottomY(int wx, int wz, IslandData d) {
         int capBaseY = d.bottomY + d.height() / 3;
         CapXZCache capXZ = precomputeCapXZ(wx, wz);
+        double capDx = (wx - d.cx) + capXZ.nx;
+        double capDz = (wz - d.cz) + capXZ.nz;
+        double colDistSq = capDx * capDx + capDz * capDz;
 
-        if (!isCapSolid(wx, capBaseY, wz, d.cx, d.cz, capBaseY, d.topY, d.radius, capXZ)) {
+        if (!isCapSolid(capBaseY, capBaseY, d.topY, d.radius, colDistSq)) {
             return d.topY + 1;
         }
 

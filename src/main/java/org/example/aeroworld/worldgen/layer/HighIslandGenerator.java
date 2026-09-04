@@ -160,52 +160,43 @@ public class HighIslandGenerator {
 
         if (centres.isEmpty()) return;
 
-        // Ранний фильтр по AABB: отбрасываем острова, которые физически не могут
-        // задеть текущий чанк. В Layer 3 эллипсоиды могут растягиваться до radius * 1.5.
-        double maxInfluence = maxRadius * 1.5 + noiseDeform;
-        int maxMargin = (int) Math.ceil(maxInfluence);
-
-        LongArrayList filteredCentres = new LongArrayList();
+        // centres уже предварительно отфильтрованы по AABB в IslandPlacer
+        IslandData[] islandData = new IslandData[centres.size()];
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
-            int cx = ChunkKey.x(packed);
-            int cz = ChunkKey.z(packed);
-            if (cx + maxMargin < baseX || cx - maxMargin > baseX + 15) continue;
-            if (cz + maxMargin < baseZ || cz - maxMargin > baseZ + 15) continue;
-            filteredCentres.add(packed);
-        }
-
-        if (filteredCentres.isEmpty()) return;
-
-        // Предвычисляем все IslandData до цикла по блокам
-        IslandData[] islandData = new IslandData[filteredCentres.size()];
-        for (int i = 0; i < filteredCentres.size(); i++) {
-            long packed = filteredCentres.getLong(i);
             islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (IslandData d : islandData) {
+            double ax = d.ellipsoidAxes[0];
+            double ay = d.ellipsoidAxes[1];
+            double az = d.ellipsoidAxes[2];
+
             // AABB ранний выход
-            double margin = noiseDeform + d.radius;
-            if (d.cx + margin < baseX || d.cx - margin > baseX + 15) continue;
-            if (d.cz + margin < baseZ || d.cz - margin > baseZ + 15) continue;
+            double marginX = ax + noiseDeform;
+            double marginZ = az + noiseDeform;
+            if (d.cx + marginX < baseX || d.cx - marginX > baseX + 15) continue;
+            if (d.cz + marginZ < baseZ || d.cz - marginZ > baseZ + 15) continue;
+
+            int minLx = Math.max(0, (int) Math.floor(d.cx - marginX) - baseX);
+            int maxLx = Math.min(15, (int) Math.ceil(d.cx + marginX) - baseX);
+            int minLz = Math.max(0, (int) Math.floor(d.cz - marginZ) - baseZ);
+            int maxLz = Math.min(15, (int) Math.ceil(d.cz + marginZ) - baseZ);
+            if (minLx > maxLx || minLz > maxLz) continue;
 
             // ── Пункт J: заменяем деления на умножение на обратные величины ──
             // 6 делений на каждый из ~25 600 блоков острова → 3 умножения,
             // предвычисленных один раз. Деление на JVM в ~3–5× дороже умножения.
-            double ax = d.ellipsoidAxes[0];
-            double ay = d.ellipsoidAxes[1];
-            double az = d.ellipsoidAxes[2];
             double invAx = 1.0 / ax;
             double invAy = 1.0 / ay;
             double invAz = 1.0 / az;
             int    cy    = d.centerY();
 
-            for (int lx = 0; lx < 16; lx++) {
-                for (int lz = 0; lz < 16; lz++) {
-                    int wx = baseX + lx;
+            for (int lx = minLx; lx <= maxLx; lx++) {
+                int wx = baseX + lx;
+                for (int lz = minLz; lz <= maxLz; lz++) {
                     int wz = baseZ + lz;
 
                     // ── Шум края зависит только от (wx, wz), не от wy ────────
@@ -226,10 +217,13 @@ public class HighIslandGenerator {
                     // ни один Y в этой колонке не будет внутри эллипсоида
                     if (xzSq > 1.0) continue;
 
-                    for (int wy = d.bottomY; wy <= d.topY; wy++) {
-                        double dyInv = (wy - cy) * invAy;
-                        if (xzSq + dyInv * dyInv > 1.0) continue;
+                    // Аналитическое вычисление точного диапазона Y:
+                    // xzSq + ((wy - cy) / ay)^2 <= 1.0  <=>  |wy - cy| <= ay * sqrt(1.0 - xzSq)
+                    double maxDy = ay * Math.sqrt(1.0 - xzSq);
+                    int minY = Math.max(d.bottomY, (int) Math.ceil(cy - maxDy));
+                    int maxY = Math.min(d.topY, (int) Math.floor(cy + maxDy));
 
+                    for (int wy = minY; wy <= maxY; wy++) {
                         chunk.setBlockState(wx, wy, wz, BS_STONE);
                     }
                 }

@@ -254,29 +254,10 @@ public class LowerIslandGenerator {
 
         if (centres.isEmpty()) return;
 
-        // Ранний фильтр по AABB: отбрасываем острова, которые физически не могут
-        // задеть текущий чанк даже с учётом мостов и искажений.
-        // maxRadius + NOISE_DEFORM (собственный радиус) + bridgeMaxRange (длина моста)
-        double maxInfluence = maxRadius + NOISE_DEFORM + bridgeMaxRange;
-        int maxMargin = (int) Math.ceil(maxInfluence);
-
-        LongArrayList filteredCentres = new LongArrayList();
+        // centres уже предварительно отфильтрованы по AABB в IslandPlacer
+        IslandData[] islandData = new IslandData[centres.size()];
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
-            int cx = ChunkKey.x(packed);
-            int cz = ChunkKey.z(packed);
-            if (cx + maxMargin < baseX || cx - maxMargin > baseX + 15) continue;
-            if (cz + maxMargin < baseZ || cz - maxMargin > baseZ + 15) continue;
-            filteredCentres.add(packed);
-        }
-
-        if (filteredCentres.isEmpty()) return;
-
-        // Предвычисляем данные всех островов ДО вложенного цикла по блокам.
-        // Это гарантирует, что внутри цикла обращения к islandCache — только хиты.
-        IslandData[] islandData = new IslandData[filteredCentres.size()];
-        for (int i = 0; i < filteredCentres.size(); i++) {
-            long packed = filteredCentres.getLong(i);
             islandData[i] = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
         }
 
@@ -433,10 +414,30 @@ public class LowerIslandGenerator {
             long packed = centres.getLong(i);
             IslandData d = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
 
-            for (int lx = 0; lx < 16; lx++) {
-                for (int lz = 0; lz < 16; lz++) {
-                    int wx = baseX + lx;
+            double centralRadius = TREE_EDGE_BAND_START * d.radius;
+            if (d.cx + centralRadius < baseX || d.cx - centralRadius > baseX + 15
+                    || d.cz + centralRadius < baseZ || d.cz - centralRadius > baseZ + 15) {
+                continue;
+            }
+
+            int minLx = Math.max(0, (int) Math.floor(d.cx - centralRadius) - baseX);
+            int maxLx = Math.min(15, (int) Math.ceil(d.cx + centralRadius) - baseX);
+            int minLz = Math.max(0, (int) Math.floor(d.cz - centralRadius) - baseZ);
+            int maxLz = Math.min(15, (int) Math.ceil(d.cz + centralRadius) - baseZ);
+            if (minLx > maxLx || minLz > maxLz) continue;
+
+            double centralRadiusSq = centralRadius * centralRadius;
+
+            for (int lx = minLx; lx <= maxLx; lx++) {
+                int wx = baseX + lx;
+                double dx = wx - d.cx;
+                double dxSq = dx * dx;
+                if (dxSq >= centralRadiusSq) continue;
+
+                for (int lz = minLz; lz <= maxLz; lz++) {
                     int wz = baseZ + lz;
+                    double dz = wz - d.cz;
+                    if (dxSq + dz * dz >= centralRadiusSq) continue;
 
                     IslandShape.XZCache xz = shape.precomputeXZ(
                             wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
@@ -564,10 +565,38 @@ public class LowerIslandGenerator {
             long packed = centres.getLong(i);
             IslandData d = getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
 
-            for (int lx = 0; lx < 16; lx++) {
-                for (int lz = 0; lz < 16; lz++) {
-                    int wx = baseX + lx;
+            double margin = NOISE_DEFORM + d.radius + 2.0; // листва ±2 блока
+            if (d.cx + margin < baseX || d.cx - margin > baseX + 15
+                    || d.cz + margin < baseZ || d.cz - margin > baseZ + 15) {
+                continue;
+            }
+
+            int minLx = Math.max(0, (int) Math.floor(d.cx - margin) - baseX);
+            int maxLx = Math.min(15, (int) Math.ceil(d.cx + margin) - baseX);
+            int minLz = Math.max(0, (int) Math.floor(d.cz - margin) - baseZ);
+            int maxLz = Math.min(15, (int) Math.ceil(d.cz + margin) - baseZ);
+            if (minLx > maxLx || minLz > maxLz) continue;
+
+            double maxMarginSq = margin * margin;
+
+            for (int lx = minLx; lx <= maxLx; lx++) {
+                int wx = baseX + lx;
+                double dx = wx - d.cx;
+                double dxSq = dx * dx;
+                if (dxSq >= maxMarginSq) continue;
+
+                for (int lz = minLz; lz <= maxLz; lz++) {
                     int wz = baseZ + lz;
+                    double dz = wz - d.cz;
+                    double distSq = dxSq + dz * dz;
+                    if (distSq >= maxMarginSq) continue;
+
+                    // Деревья только у края острова (см. TREE_EDGE_BAND_START).
+                    if (!isInTreeEdgeBand(distSq, d.radius)) continue;
+
+                    // Быстрый отсев: шум деревьев проверяем ДО дорогой геометрии и вертикального скана
+                    double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
+                    if (tn < 0.55) continue;
 
                     // precomputeXZ — та же функция что в fillChunk, без sqrt.
                     // Горячий путь: передаём profile + noiseIntensity из IslandData.
@@ -577,9 +606,6 @@ public class LowerIslandGenerator {
                             d.shapeNoiseIntensity, d.shapeProfile);
                     // Быстрый XZ-reject: если точка вне острова — пропускаем.
                     if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) continue;
-
-                    // Деревья только у края острова (см. TREE_EDGE_BAND_START).
-                    if (!isInTreeEdgeBand(xz.distSq, d.radius)) continue;
 
                     // Пересчитываем surfaceY (детерминированная математика, нет side-эффектов)
                     int surfaceY = -1;
@@ -591,9 +617,6 @@ public class LowerIslandGenerator {
                         }
                     }
                     if (surfaceY < 0) continue;
-
-                    double tn = treeNoise.noise2D(wx * 0.18, wz * 0.18);
-                    if (tn < 0.55) continue;
 
                     double typeSample = treeNoise.noise2D(wx * 0.07 + 500, wz * 0.07 + 500);
                     boolean isBirch = typeSample > 0.3;

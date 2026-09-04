@@ -66,12 +66,12 @@ worldgen/
 │   ├── IslandCache.java        — потокобезопасный кэш геометрии островов (Y-bounds, radius, оси эллипсоида, щупальца)
 │   └── IslandData.java         — иммутабельный value-object острова (bounds, radius, geometry)
 ├── carver/
-│   └── SinkholeCarver.java     — карстовые воронки по всему рельефу Layer 1 (шанс 1/12 на чанк, R 15-30, H 15-35, вода ниже Y 62); выполняется после восстановления островов
+│   └── SinkholeCarver.java     — карстовые воронки Layer 1 (шанс 1/12 на чанк, фильтр карстовых биомов без океанов/рек/пляжей, кэш высот поверхности, прямая запись в LevelChunkSection)
 ├── feature/
-│   ├── Layer1OreFilter.java    — очищает секции Layer 1 (<= 320) с быстрой O(1) проверкой палитры от ванильных руд
+│   ├── Layer1OreFilter.java    — O(1) failsafe проверка палитры; шаг UNDERGROUND_ORES полностью отключён в applyBiomeDecoration
 │   └── vault/                  — генерация Vault и Trial Spawner внутри тела островов (Layer 2/3/4)
 │       ├── IslandVaultTrialCache.java     — потокобезопасный общий кэш прогресса размещения Vault/Trial по островам
-│       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри островов
+│       ├── IslandVaultTrialGenerator.java — общая логика размещения Vault/Trial Spawner (NBT BlockEntity) внутри островам
 │       ├── Layer2VaultTrialPlacer.java    — точка входа Vault/Trial для Layer 2 (POOR 50%, MEDIUM 35%, RICH 15%)
 │       ├── Layer3VaultTrialPlacer.java    — точка входа Vault/Trial для эллипсоидов Layer 3
 │       ├── Layer4VaultTrialPlacer.java    — точка входа Vault/Trial для куполов "медуз" Layer 4
@@ -79,13 +79,13 @@ worldgen/
 │       └── VaultTrialSpawnTier.java       — тиры богатства спавна (POOR / MEDIUM / RICH)
 ├── layer/
 │   ├── Layer1FlatGenerator.java     — хелпер границ Layer 1 (-64..300) и делегат сэмплинга высот (surfaceHeight/topmostHeight); генерация блоков удалена
-│   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты (кэширование пар BridgePair на остров, AABB-фильтр чанка, fillBridges вынесен из цикла по островам)
-│   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды
-│   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (купол + 10 щупалец)
+│   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты (кэширование пар BridgePair на остров, AABB-фильтр чанка, fillBridges вынесен из цикла по островам; центральная зона и деревья с суженными циклами и ранним отсевом)
+│   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды (аналитический расчет диапазона Y по формуле эллипсоида, без поблочного сканирования; суженные XZ-циклы)
+│   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (прямая растровая трассировка сплайнов щупалец в AABB чанка, суженный цикл купола без лишних шумов)
 │   └── Layer2StructurePlacer.java   — постановка tank21 в очередь только на обычных островах с тиром RICH
 ├── noise/
 │   ├── AeroNoise.java          — Perlin/Simplex шум и FBM без сторонних библиотек
-│   ├── IslandPlacer.java       — детерминированная seed-based сетка размещения островов, архипелагов (центры + спутники) и мостов
+│   ├── IslandPlacer.java       — детерминированная сетка размещения островов с пространственным AABB-отсевом (clamp ячеек сетки и центров/спутников по maxInfluence)
 │   └── IslandShape.java        — SDF-профили островов (linear/convex/concave/stepped) и per-island edge noise
 ├── structure/                 — валидация структур под кастомный многослойный рельеф
 │   ├── StructureCategory.java         — категории: SURFACE, ISLAND, UNDERGROUND, WATER, SKY_FLOATING, DENY
@@ -117,7 +117,7 @@ worldgen/
 
 3. **`fillFromNoise`**
    - Layer 1 (при пересечении Y -64..300): делегируется `vanillaGenerator.fillFromNoise()` (полноценный ванильный рельеф Overworld).
-   - Layer 2, 3, 4: асинхронный параллельный запуск (`CompletableFuture` в `Util.backgroundExecutor()`) методов `fillChunk()` через `SectionDirectChunkWriter`.
+   - Layer 2, 3, 4: прямое последовательное заполнение `fillChunk()` в рабочем потоке чанка через `SectionDirectChunkWriter` без оверхеда `CompletableFuture` и пула потоков.
    - На Layer 2: вызов `Layer2StructurePlacer.placeForChunk` — постановка `tank21` в очередь для островов с тиром RICH.
 
 4. **`applyCarvers`**
@@ -130,12 +130,11 @@ worldgen/
    - Делегируется `vanillaGenerator.buildSurface()` — стандартные ванильные SurfaceRules (песок в пустынях, терракота в бэдлендсах, снег, гравий и т.д.).
 
 6. **`applyBiomeDecoration`**
-   - Failsafe-проверка структур через `StructureSupportValidator` (для фоновых потоков Distant Horizons BatchGenerator).
-   - `super.applyBiomeDecoration()` — ванильная декорация биомов.
-   - `lowerIslands.clearVanillaVegetationInCentralZone()` — очистка центральной зоны островов Layer 2 от ванильной растительности.
-   - `lowerIslands.placeTreesInRegion()` — размещение листвы деревьев Layer 2 в регионе 3×3 чанка.
+   - `super.applyBiomeDecoration()` — ванильная декорация биомов (дублирующая валидация структур удалена, структуры проверяются на этапе `createStructures`).
+   - `lowerIslands.clearVanillaVegetationInCentralZone()` — очистка центральной зоны островов Layer 2 от ванильной растительности (с быстрым AABB-отсевом островов).
+   - `lowerIslands.placeTreesInRegion()` — размещение листвы деревьев Layer 2 в регионе 3×3 чанка (с быстрым AABB-отсевом островов).
    - Размещение Vault / Trial Spawner через `layer2VaultTrialPlacer`, `layer3VaultTrialPlacer`, `layer4VaultTrialPlacer`.
-   - `Layer1OreFilter.applyToChunk()` — удаление остаточных руд по всей высоте чанка (-64..2096).
+   - `Layer1OreFilter.applyToChunk()` — удаление остаточных руд с прямой записью в палитру LevelChunkSection без накладных расходов ChunkAccess (-64..320).
    - Автоматическое LRU-управление кэшем центров островов (`ChunkIslandCache`, емкость 4096 слотов) без преждевременного ручного сброса, предотвращающее повторный расчет при последующих вызовах `getBaseHeight` / `getBaseColumn` / спавна мобов.
 
 ---

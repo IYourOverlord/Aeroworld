@@ -51,6 +51,7 @@ public class IslandPlacer {
      */
     private static final double SATELLITE_DIST_MIN = 40.0;
     private static final double SATELLITE_DIST_MAX = 70.0;
+    public static final double MAX_SATELLITE_RADIUS = 15.5;
 
     private final long worldSeed;
     private final int  gridSizeChunks;   // minimum spacing in chunks between island centres
@@ -104,7 +105,12 @@ public class IslandPlacer {
         this.spawnChance         = spawnChance;
         this.archipelagosEnabled = archipelagosEnabled;
         this.maxRadiusEstimate   = maxRadiusEstimate;
+        this.defaultMaxInfluence = maxRadiusEstimate > 0.0
+                ? (archipelagosEnabled ? maxRadiusEstimate + 98.0 : maxRadiusEstimate * 2.0 + 34.0)
+                : Double.MAX_VALUE;
     }
+
+    private final double defaultMaxInfluence;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -125,20 +131,85 @@ public class IslandPlacer {
      * @param searchRadius extra cell radius to check for large islands (usually 1–2)
      */
     public LongArrayList getIslandCentresForChunk(int chunkX, int chunkZ, int searchRadius) {
+        return getIslandCentresForChunk(chunkX, chunkZ, searchRadius, defaultMaxInfluence);
+    }
+
+    /**
+     * Возвращает центры островов, чей AABB реально пересекает текущий чанк с учётом maxInfluence.
+     */
+    public LongArrayList getIslandCentresForChunk(int chunkX, int chunkZ, int searchRadius, double maxInfluence) {
         LongArrayList result = new LongArrayList();
 
         int cellX = Math.floorDiv(chunkX, gridSizeChunks);
         int cellZ = Math.floorDiv(chunkZ, gridSizeChunks);
 
-        for (int dcx = -searchRadius; dcx <= searchRadius; dcx++) {
-            for (int dcz = -searchRadius; dcz <= searchRadius; dcz++) {
-                long centre = getCentreForCell(cellX + dcx, cellZ + dcz);
+        if (maxInfluence >= Double.MAX_VALUE - 1.0) {
+            for (int dcx = -searchRadius; dcx <= searchRadius; dcx++) {
+                for (int dcz = -searchRadius; dcz <= searchRadius; dcz++) {
+                    long centre = getCentreForCell(cellX + dcx, cellZ + dcz);
+                    if (centre == NO_ISLAND) continue;
+                    result.add(centre);
+
+                    if (isArchipelagoCentre(centre)) {
+                        long[] satellites = getSatellitesForCentre(centre);
+                        for (long sat : satellites) result.add(sat);
+                    }
+                }
+            }
+            return result;
+        }
+
+        int baseX = chunkX << 4;
+        int baseZ = chunkZ << 4;
+
+        double effectiveInfluence = archipelagosEnabled ? maxInfluence + SATELLITE_DIST_MAX : maxInfluence;
+        int cellSizeBlocks = gridSizeChunks * 16;
+
+        int minCellX = Math.floorDiv((int) Math.floor(baseX - effectiveInfluence), cellSizeBlocks);
+        int maxCellX = Math.floorDiv((int) Math.ceil(baseX + 15 + effectiveInfluence), cellSizeBlocks);
+        int minCellZ = Math.floorDiv((int) Math.floor(baseZ - effectiveInfluence), cellSizeBlocks);
+        int maxCellZ = Math.floorDiv((int) Math.ceil(baseZ + 15 + effectiveInfluence), cellSizeBlocks);
+
+        int startCellX = Math.max(cellX - searchRadius, minCellX);
+        int endCellX   = Math.min(cellX + searchRadius, maxCellX);
+        int startCellZ = Math.max(cellZ - searchRadius, minCellZ);
+        int endCellZ   = Math.min(cellZ + searchRadius, maxCellZ);
+
+        int minBoundX = (int) Math.floor(baseX - maxInfluence);
+        int maxBoundX = (int) Math.ceil(baseX + 15 + maxInfluence);
+        int minBoundZ = (int) Math.floor(baseZ - maxInfluence);
+        int maxBoundZ = (int) Math.ceil(baseZ + 15 + maxInfluence);
+
+        double satMargin = MAX_SATELLITE_RADIUS + 18.0 + 80.0;
+        int satMinBoundX = (int) Math.floor(baseX - satMargin);
+        int satMaxBoundX = (int) Math.ceil(baseX + 15 + satMargin);
+        int satMinBoundZ = (int) Math.floor(baseZ - satMargin);
+        int satMaxBoundZ = (int) Math.ceil(baseZ + 15 + satMargin);
+
+        for (int cxIdx = startCellX; cxIdx <= endCellX; cxIdx++) {
+            for (int czIdx = startCellZ; czIdx <= endCellZ; czIdx++) {
+                long centre = getCentreForCell(cxIdx, czIdx);
                 if (centre == NO_ISLAND) continue;
-                result.add(centre);
+
+                int cx = ChunkKey.x(centre);
+                int cz = ChunkKey.z(centre);
 
                 if (isArchipelagoCentre(centre)) {
+                    if (cx >= minBoundX && cx <= maxBoundX && cz >= minBoundZ && cz <= maxBoundZ) {
+                        result.add(centre);
+                    }
                     long[] satellites = getSatellitesForCentre(centre);
-                    for (long sat : satellites) result.add(sat);
+                    for (long sat : satellites) {
+                        int sx = ChunkKey.x(sat);
+                        int sz = ChunkKey.z(sat);
+                        if (sx >= satMinBoundX && sx <= satMaxBoundX && sz >= satMinBoundZ && sz <= satMaxBoundZ) {
+                            result.add(sat);
+                        }
+                    }
+                } else {
+                    if (cx >= minBoundX && cx <= maxBoundX && cz >= minBoundZ && cz <= maxBoundZ) {
+                        result.add(centre);
+                    }
                 }
             }
         }

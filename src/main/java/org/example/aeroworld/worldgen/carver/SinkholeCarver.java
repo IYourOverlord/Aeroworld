@@ -5,6 +5,13 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 
+import net.minecraft.core.Holder;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeManager;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Генерирует карстовые воронки (sinkholes) в рельефе Layer 1.
  *
@@ -27,6 +34,23 @@ public final class SinkholeCarver {
     @FunctionalInterface
     public interface HeightSampler {
         int getHeight(int wx, int wz);
+    }
+
+    // ── Кэш высот поверхности воронок ────────────────────────────────
+    private static final ConcurrentHashMap<Long, Integer> HEIGHT_CACHE =
+            new ConcurrentHashMap<>(256);
+
+    private static int getCachedHeight(int wx, int wz, HeightSampler sampler) {
+        long key = ((long) wx << 32) | (wz & 0xFFFFFFFFL);
+        Integer cached = HEIGHT_CACHE.get(key);
+        if (cached != null) return cached;
+
+        int h = sampler.getHeight(wx, wz);
+        if (HEIGHT_CACHE.size() > 2048) {
+            HEIGHT_CACHE.clear();
+        }
+        HEIGHT_CACHE.put(key, h);
+        return h;
     }
 
     // ── Параметры воронок ─────────────────────────────────────────────
@@ -80,20 +104,16 @@ public final class SinkholeCarver {
         return mixSeed(worldSeed, chunkX, chunkZ);
     }
 
-    /**
-     * Пытается вырезать воронки в данном чанке.
-     *
-     * <p>Использует {@code heightSampler} для получения высоты поверхности
-     * в произвольной мировой координате — гарантирует одинаковый
-     * surfaceY для центра воронки независимо от того, какой чанк
-     * сейчас обрабатывается.</p>
-     *
-     * @param chunk         чанк, в котором идёт карвинг
-     * @param worldSeed     seed мира
-     * @param heightSampler детерминированная функция высоты (не зависит от чанка)
-     */
     public static void carveChunk(ChunkAccess chunk, long worldSeed,
                                   HeightSampler heightSampler) {
+        carveChunk(chunk, worldSeed, heightSampler, null);
+    }
+
+    /**
+     * Пытается вырезать воронки в данном чанке.
+     */
+    public static void carveChunk(ChunkAccess chunk, long worldSeed,
+                                  HeightSampler heightSampler, BiomeManager biomeManager) {
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
         int minBuildHeight = chunk.getMinBuildHeight();
@@ -130,13 +150,17 @@ public final class SinkholeCarver {
                         + (double)(closestZ - centerWZ) * (closestZ - centerWZ);
                 if (dist2 > (double) radius * radius) continue;
 
-                // Высота поверхности в ЦЕНТРЕ воронки — через детерминированный
-                // heightSampler, а НЕ через chunk.getHeight(). Это ключевое
-                // отличие: chunk.getHeight() зависит от того, какой чанк
-                // обрабатывается, и даёт разные surfaceY на границе →
-                // «torn chunks». heightSampler (layer1.topmostHeight) даёт
-                // одинаковый результат для любой (wx,wz) независимо от чанка.
-                int surfaceY = heightSampler.getHeight(centerWX, centerWZ);
+                // Карстовые условия: исключаем океаны, реки и пляжи ДО вычисления высоты
+                if (biomeManager != null) {
+                    Holder<Biome> biome = biomeManager.getBiome(new BlockPos(centerWX, 64, centerWZ));
+                    if (biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_DEEP_OCEAN)
+                            || biome.is(BiomeTags.IS_RIVER) || biome.is(BiomeTags.IS_BEACH)) {
+                        continue;
+                    }
+                }
+
+                // Кэшированный опрос высоты поверхности — 1 расчет на воронку вместо повторов во всех чанках
+                int surfaceY = getCachedHeight(centerWX, centerWZ, heightSampler);
 
                 if (surfaceY < WATER_LEVEL + 3) continue;
 
@@ -155,8 +179,6 @@ public final class SinkholeCarver {
         int minWX = chunk.getPos().x << 4;
         int minWZ = chunk.getPos().z << 4;
 
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-
         int startX = Math.max(minWX, cx - radius);
         int endX   = Math.min(minWX + 15, cx + radius);
         int startZ = Math.max(minWZ, cz - radius);
@@ -165,25 +187,30 @@ public final class SinkholeCarver {
         double r2 = (double) radius * radius;
 
         for (int wx = startX; wx <= endX; wx++) {
+            int localX = wx & 15;
+            double ddx = wx - cx;
+            double ddxSq = ddx * ddx;
+
             for (int wz = startZ; wz <= endZ; wz++) {
-                double ddx = wx - cx;
+                int localZ = wz & 15;
                 double ddz = wz - cz;
-                double d2 = ddx * ddx + ddz * ddz;
+                double d2 = ddxSq + ddz * ddz;
                 if (d2 > r2) continue;
 
                 double t = d2 / r2; // 0 в центре, 1 на краю
                 int carveBottom = (int) Math.round(bottomY + (surfaceY - bottomY) * t);
 
                 for (int y = surfaceY; y >= carveBottom; y--) {
-                    pos.set(wx, y, wz);
-                    BlockState current = chunk.getBlockState(pos);
+                    int secIdx = chunk.getSectionIndex(y);
+                    LevelChunkSection section = chunk.getSection(secIdx);
+                    if (section == null) continue;
+
+                    int localY = y & 15;
+                    BlockState current = section.getBlockState(localX, localY, localZ);
                     if (!isCarveTarget(current)) continue;
 
-                    if (y <= WATER_LEVEL && carveBottom <= WATER_LEVEL) {
-                        chunk.setBlockState(pos, WATER, false);
-                    } else {
-                        chunk.setBlockState(pos, AIR, false);
-                    }
+                    BlockState replacement = (y <= WATER_LEVEL && carveBottom <= WATER_LEVEL) ? WATER : AIR;
+                    section.setBlockState(localX, localY, localZ, replacement, false);
                 }
             }
         }

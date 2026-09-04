@@ -55,15 +55,15 @@ public final class Layer1OreFilter {
             // O(1) проверка палитры секции: если в палитре нет руд, секция пропускается целиком
             if (!section.getStates().maybeHas(Layer1OreFilter::isOre)) continue;
 
+            BlockState replacement = stoneReplacement(secBaseY);
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
-                    for (int y = secBaseY; y < secBaseY + 16; y++) {
-                        pos.set(baseX + x, y, baseZ + z);
-                        BlockState state = chunk.getBlockState(pos);
+                    for (int y = 0; y < 16; y++) {
+                        BlockState state = section.getBlockState(x, y, z);
                         if (state.isAir()) continue;
 
                         if (isOre(state)) {
-                            chunk.setBlockState(pos, stoneReplacement(y), false);
+                            section.setBlockState(x, y, z, replacement);
                         }
                     }
                 }
