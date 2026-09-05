@@ -53,9 +53,6 @@ public final class ChunkIslandCache {
     private final ConcurrentHashMap<Long, LongArrayList> map =
             new ConcurrentHashMap<>(MAX_SIZE * 2, 0.75f, 16);
 
-    private final java.util.concurrent.ConcurrentLinkedDeque<Long> lruOrder =
-            new java.util.concurrent.ConcurrentLinkedDeque<>();
-
     // ── Строим составной ключ ──────────────────────────────────────────────────
 
     /**
@@ -94,19 +91,21 @@ public final class ChunkIslandCache {
         LongArrayList existing = map.get(key);
         if (existing != null) return existing;
 
-        LongArrayList computed = map.computeIfAbsent(key, k -> {
-            LongArrayList list = factory.apply(k);
-            lruOrder.addLast(k);
-            return list;
-        });
+        LongArrayList computed = map.computeIfAbsent(key, k -> factory.apply(k));
 
-        // Потокобезопасное LRU-вытеснение устаревших записей при переполнении кэша
-        while (map.size() > MAX_SIZE) {
-            Long oldestKey = lruOrder.pollFirst();
-            if (oldestKey != null) {
-                map.remove(oldestKey);
-            } else {
-                break;
+        // Lock-free вытеснение (выкидываем часть элементов для предотвращения бесконечного роста)
+        if (map.size() > MAX_SIZE) {
+            // Удаляем элементы через итератор.
+            // Использование итератора создает объект, но мы делаем это редко (батчами).
+            // Чтобы не создавать итератор часто, вычищаем сразу много элементов.
+            int toRemove = MAX_SIZE / 4; 
+            var it = map.keySet().iterator();
+            while (it.hasNext() && toRemove > 0) {
+                long evict = it.next();
+                if (evict != key) {
+                    it.remove();
+                    toRemove--;
+                }
             }
         }
 
@@ -131,7 +130,6 @@ public final class ChunkIslandCache {
 
     public void invalidate() {
         map.clear();
-        lruOrder.clear();
     }
 
     public int size() {

@@ -54,11 +54,19 @@ public final class IslandCache {
         IslandData existing = map.get(key);
         if (existing != null) return existing;
 
-        IslandData computed = map.computeIfAbsent(key, k -> factory.apply(k));
+        IslandData computed = map.computeIfAbsent(key, factory::apply);
 
         if (map.size() > maxSize) {
-            Long evict = map.keys().nextElement();
-            if (evict != null && evict != key) map.remove(evict);
+            // Очищаем сразу четверть элементов, чтобы редко вызывать итератор
+            int toRemove = maxSize / 4;
+            var it = map.keySet().iterator();
+            while (it.hasNext() && toRemove > 0) {
+                long evict = it.next();
+                if (evict != key) {
+                    it.remove();
+                    toRemove--;
+                }
+            }
         }
         return computed;
     }

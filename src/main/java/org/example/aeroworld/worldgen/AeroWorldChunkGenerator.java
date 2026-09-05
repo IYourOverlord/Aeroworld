@@ -407,16 +407,13 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level,
                                      RandomState random) {
-        // См. комментарий в getBaseHeight — тот же риск вызова до fillFromNoise.
         init(random);
 
-        // Берём наибольший диапазон из переданного level и FULL_HEIGHT —
-        // гарантирует корректное отображение всех слоёв AeroWorld.
-        int minY   = Math.min(level.getMinBuildHeight(), FULL_HEIGHT.getMinBuildHeight());
-        int maxY   = Math.max(level.getMinBuildHeight() + level.getHeight() - 1,
-                FULL_HEIGHT.getMinBuildHeight() + FULL_HEIGHT.getHeight() - 1);
-        int height = maxY - minY + 1;
-        int levelMax = maxY; // верхняя граница — для guard'ов на острова
+        // Используем фактические границы запрашиваемого level, чтобы не выделять
+        // массив на 2164 элемента, когда запрашивается меньший диапазон.
+        int minY   = level.getMinBuildHeight();
+        int height = level.getHeight();
+        int levelMax = minY + height - 1;
 
         BlockState[] states = new BlockState[height];
 
@@ -424,12 +421,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         NoiseColumn vanillaColumn = super.getBaseColumn(x, z, level, random);
         for (int i = 0; i < height; i++) {
             int y = minY + i;
-            if (y >= level.getMinBuildHeight() && y < level.getMinBuildHeight() + level.getHeight()) {
-                BlockState state = vanillaColumn.getBlock(y);
-                states[i] = (state == null) ? BS_AIR_SENTINEL : state;
-            } else {
-                states[i] = BS_AIR_SENTINEL;
-            }
+            BlockState state = vanillaColumn.getBlock(y);
+            states[i] = (state == null) ? BS_AIR_SENTINEL : state;
         }
 
         // ── Острова Layer 2–4: только если level покрывает их диапазон ───

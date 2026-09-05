@@ -326,10 +326,14 @@ public final class TerrainColumnSampler {
             case 4: return hasLayer4SolidInRange(wx, wz, minY, fromY);
             case 1:
             default:
-                for (int y = fromY; y >= minY; y--) {
-                    if (isSolidAt(wx, y, wz, 1)) return true;
+                if (realLevel != null && isChunkGenerated(wx, wz)) {
+                    for (int y = fromY; y >= minY; y--) {
+                        if (isSolidAt(wx, y, wz, 1)) return true;
+                    }
+                    return false;
                 }
-                return false;
+                int oceanFloorY = heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
+                return oceanFloorY >= minY && fromY >= Layer1FlatGenerator.LAYER_MIN_Y && oceanFloorY >= Layer1FlatGenerator.LAYER_MIN_Y;
         }
     }
 

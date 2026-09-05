@@ -280,75 +280,91 @@ public class LowerIslandGenerator {
             }
         }
 
-        // Precalculate AABB bounds to skip terrain generation for islands outside the chunk
-        boolean[] inBounds = new boolean[islandData.length];
-        for (int i = 0; i < islandData.length; i++) {
-            IslandData d = islandData[i];
-            double margin = NOISE_DEFORM + d.radius;
-            inBounds[i] = !(d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
-                    d.cz + margin < baseZ || d.cz - margin > baseZ + 15);
-        }
-
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        for (int lx = 0; lx < 16; lx++) {
-            for (int lz = 0; lz < 16; lz++) {
+        for (IslandData d : islandData) {
+            double margin = NOISE_DEFORM + d.radius;
+            if (d.cx + margin < baseX || d.cx - margin > baseX + 15 ||
+                    d.cz + margin < baseZ || d.cz - margin > baseZ + 15) {
+                continue;
+            }
+
+            int minLx = Math.max(0, (int) Math.floor(d.cx - margin) - baseX);
+            int maxLx = Math.min(15, (int) Math.ceil(d.cx + margin) - baseX);
+            int minLz = Math.max(0, (int) Math.floor(d.cz - margin) - baseZ);
+            int maxLz = Math.min(15, (int) Math.ceil(d.cz + margin) - baseZ);
+            if (minLx > maxLx || minLz > maxLz) continue;
+
+            double maxMarginSq = margin * margin;
+
+            for (int lx = minLx; lx <= maxLx; lx++) {
                 int wx = baseX + lx;
-                int wz = baseZ + lz;
+                double dx = wx - d.cx;
+                double dxSq = dx * dx;
+                if (dxSq >= maxMarginSq) continue;
 
-                for (int i = 0; i < islandData.length; i++) {
-                    IslandData d = islandData[i];
+                for (int lz = minLz; lz <= maxLz; lz++) {
+                    int wz = baseZ + lz;
+                    double dz = wz - d.cz;
+                    if (dxSq + dz * dz >= maxMarginSq) continue;
 
-                    if (inBounds[i]) {
-                        // Precompute XZ-deformation once per column per island (outside Y-loop).
-                        // Eliminates 9 noise calls × (topY - bottomY) per column.
-                        // Горячий путь: передаём profile + noiseIntensity из IslandData.
-                        // computeNoiseIntensity() и computeProfile() не вызываются.
-                        IslandShape.XZCache xz = shape.precomputeXZ(
-                                wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
-                                d.shapeNoiseIntensity, d.shapeProfile);
+                    // Precompute XZ-deformation once per column per island (outside Y-loop).
+                    // Eliminates 9 noise calls × (topY - bottomY) per column.
+                    IslandShape.XZCache xz = shape.precomputeXZ(
+                            wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
+                            d.shapeNoiseIntensity, d.shapeProfile);
 
-                        // Terrain blocks — top-down pass so we know surface/subsurface without
-                        // re-calling isSolid. prevSolid=false means current block is exposed at top
-                        // → surface; depthFromSurface tracks subsurface depth (1–3 = DIRT).
-                        boolean prevSolid = false; // solid state of the block one step ABOVE
-                        int depthFromSurface = 0;
-                        int surfaceY = -1;
-                        int bottomSurfaceY = -1; // самый нижний solid-блок острова (низ), для сталактитов
-                        for (int wy = d.topY; wy >= d.bottomY; wy--) {
-                            boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
-                            if (solid) {
-                                BlockState block;
-                                if (!prevSolid) {
-                                    // Top exposed face → surface
-                                    block = BS_GRASS_BLOCK;
-                                    depthFromSurface = 0;
-                                    surfaceY = wy;
-                                } else {
-                                    depthFromSurface++;
-                                    block = depthFromSurface <= 3
-                                            ? BS_DIRT
-                                            : BS_STONE;
-                                }
-                                chunk.setBlockState(wx, wy, wz, block);
-                                bottomSurfaceY = wy;
-                            }
-                            prevSolid = solid;
-                        }
-
-                        // Стволы пишем здесь (1 блок в ширину — не вылезают за чанк).
-                        // Листья (±2 блока) пишутся в placeTreesInRegion через WorldGenLevel.
-                        if (isInTreeEdgeBand(xz.distSq, d.radius)) {
-                            placeTrunk(chunk, wx, wz, surfaceY, pos);
-                        }
-
-                        // Сталактиты на нижней грани острова (1-3 блока вниз).
-                        placeStalactite(chunk, wx, wz, bottomSurfaceY);
+                    // Ранний отсев: если даже на максимальном радиусе в topY точка не входит в конус
+                    if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) {
+                        continue;
                     }
-                }
 
-                // Bridges: executed ONCE per column across chunk-intersecting bridges
-                if (!chunkBridges.isEmpty()) {
+                    // Terrain blocks — top-down pass so we know surface/subsurface without
+                    // re-calling isSolid. prevSolid=false means current block is exposed at top
+                    // → surface; depthFromSurface tracks subsurface depth (1–3 = DIRT).
+                    boolean prevSolid = false; // solid state of the block one step ABOVE
+                    int depthFromSurface = 0;
+                    int surfaceY = -1;
+                    int bottomSurfaceY = -1; // самый нижний solid-блок острова (низ), для сталактитов
+                    for (int wy = d.topY; wy >= d.bottomY; wy--) {
+                        boolean solid = shape.isSolid(wy, d.bottomY, d.topY, xz);
+                        if (solid) {
+                            BlockState block;
+                            if (!prevSolid) {
+                                // Top exposed face → surface
+                                block = BS_GRASS_BLOCK;
+                                depthFromSurface = 0;
+                                surfaceY = wy;
+                            } else {
+                                depthFromSurface++;
+                                block = depthFromSurface <= 3
+                                        ? BS_DIRT
+                                        : BS_STONE;
+                            }
+                            chunk.setBlockState(wx, wy, wz, block);
+                            bottomSurfaceY = wy;
+                        }
+                        prevSolid = solid;
+                    }
+
+                    // Стволы пишем здесь (1 блок в ширину — не вылезают за чанк).
+                    // Листья (±2 блока) пишутся в placeTreesInRegion через WorldGenLevel.
+                    if (isInTreeEdgeBand(xz.distSq, d.radius)) {
+                        placeTrunk(chunk, wx, wz, surfaceY, pos);
+                    }
+
+                    // Сталактиты на нижней грани острова (1-3 блока вниз).
+                    placeStalactite(chunk, wx, wz, bottomSurfaceY);
+                }
+            }
+        }
+
+        // Bridges: executed ONCE per column across chunk-intersecting bridges
+        if (!chunkBridges.isEmpty()) {
+            for (int lx = 0; lx < 16; lx++) {
+                int wx = baseX + lx;
+                for (int lz = 0; lz < 16; lz++) {
+                    int wz = baseZ + lz;
                     fillBridges(chunk, wx, wz, chunkBridges);
                 }
             }
@@ -647,7 +663,7 @@ public class LowerIslandGenerator {
 
     private List<BridgePair> getBridgesForIsland(IslandData src) {
         long key = ChunkKey.of(src.cx, src.cz);
-        return islandBridgeCache.computeIfAbsent(key, k -> {
+        List<BridgePair> result = islandBridgeCache.computeIfAbsent(key, k -> {
             List<BridgePair> pairs = new ArrayList<>();
             // Поиск соседних центров островов в радиусе searchRadius
             int cellX = Math.floorDiv(src.cx, gridChunks * 16);
@@ -679,6 +695,19 @@ public class LowerIslandGenerator {
             }
             return pairs.isEmpty() ? List.of() : pairs;
         });
+
+        if (islandBridgeCache.size() > 2048) {
+            int toRemove = 512;
+            var it = islandBridgeCache.keySet().iterator();
+            while (it.hasNext() && toRemove > 0) {
+                long evict = it.next();
+                if (evict != key) {
+                    it.remove();
+                    toRemove--;
+                }
+            }
+        }
+        return result;
     }
 
     private void addCandidateBridge(IslandData src, long otherPacked, List<BridgePair> pairs) {

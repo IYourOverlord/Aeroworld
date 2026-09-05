@@ -61,19 +61,31 @@ public final class AeroBiomeRegistryCache {
 
     private AeroBiomeRegistryCache() {}
 
+    private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, Optional<Holder<Biome>>> HOLDER_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
+
     public static void onServerAboutToStart(ServerAboutToStartEvent event) {
         REGISTRY_FUTURE.complete(event.getServer().registryAccess().registryOrThrow(Registries.BIOME));
     }
 
     public static void onServerStopped(ServerStoppedEvent event) {
         REGISTRY_FUTURE = new CompletableFuture<>();
+        HOLDER_CACHE.clear();
     }
 
     /** Ищет биом по id в полном реестре. Ждёт прогрева реестра (см. класс-javadoc). */
     public static Optional<Holder<Biome>> get(ResourceLocation id) {
+        Optional<Holder<Biome>> cached = HOLDER_CACHE.get(id);
+        if (cached != null) return cached;
+
         Registry<Biome> reg = awaitRegistry();
         if (reg == null) return Optional.empty();
-        return reg.getHolder(ResourceKey.create(Registries.BIOME, id)).map(h -> (Holder<Biome>) h);
+
+        Optional<Holder<Biome>> holder = reg.getHolder(ResourceKey.create(Registries.BIOME, id)).map(h -> (Holder<Biome>) h);
+        if (holder.isPresent()) {
+            HOLDER_CACHE.put(id, holder);
+        }
+        return holder;
     }
 
     private static Registry<Biome> awaitRegistry() {

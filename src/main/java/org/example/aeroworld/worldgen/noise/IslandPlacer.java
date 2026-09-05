@@ -379,31 +379,47 @@ public class IslandPlacer {
      * детерминированным) угловым распределением и расстоянием в диапазоне
      * [{@link #SATELLITE_DIST_MIN}, {@link #SATELLITE_DIST_MAX}].</p>
      */
+    private final java.util.concurrent.ConcurrentHashMap<Long, long[]> satelliteCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     public long[] getSatellitesForCentre(long packedCentre) {
-        int centreX = ChunkKey.x(packedCentre);
-        int centreZ = ChunkKey.z(packedCentre);
+        long[] result = satelliteCache.computeIfAbsent(packedCentre, k -> {
+            int centreX = ChunkKey.x(k);
+            int centreZ = ChunkKey.z(k);
 
-        long baseHash = archipelagoHash(centreX, centreZ) ^ 0x5A7E177EL;
-        int count = SATELLITE_MIN + (int) ((baseHash >>> 40) % (SATELLITE_MAX - SATELLITE_MIN + 1));
+            long baseHash = archipelagoHash(centreX, centreZ) ^ 0x5A7E177EL;
+            int count = SATELLITE_MIN + (int) ((baseHash >>> 40) % (SATELLITE_MAX - SATELLITE_MIN + 1));
 
-        long[] result = new long[count];
-        double angleStep = (Math.PI * 2.0) / count;
+            long[] sats = new long[count];
+            double angleStep = (Math.PI * 2.0) / count;
 
-        for (int i = 0; i < count; i++) {
-            long h = satelliteHash(centreX, centreZ, i);
+            for (int i = 0; i < count; i++) {
+                long h = satelliteHash(centreX, centreZ, i);
 
-            // Угол: базовое равномерное распределение + джиттер, чтобы спутники
-            // не стояли идеально ровным кольцом.
-            double jitter = (((h >>> 8) & 0xFFFFL) / (double) 0xFFFFL - 0.5) * angleStep * 0.6;
-            double angle = angleStep * i + jitter;
+                // Угол: базовое равномерное распределение + джиттер, чтобы спутники
+                // не стояли идеально ровным кольцом.
+                double jitter = (((h >>> 8) & 0xFFFFL) / (double) 0xFFFFL - 0.5) * angleStep * 0.6;
+                double angle = angleStep * i + jitter;
 
-            double distRoll = ((h >>> 24) & 0xFFFFFFL) / (double) 0xFFFFFFL;
-            double dist = SATELLITE_DIST_MIN + distRoll * (SATELLITE_DIST_MAX - SATELLITE_DIST_MIN);
+                double distRoll = ((h >>> 24) & 0xFFFFFFL) / (double) 0xFFFFFFL;
+                double dist = SATELLITE_DIST_MIN + distRoll * (SATELLITE_DIST_MAX - SATELLITE_DIST_MIN);
 
-            int satX = centreX + (int) Math.round(Math.cos(angle) * dist);
-            int satZ = centreZ + (int) Math.round(Math.sin(angle) * dist);
+                int satX = centreX + (int) Math.round(Math.cos(angle) * dist);
+                int satZ = centreZ + (int) Math.round(Math.sin(angle) * dist);
 
-            result[i] = ChunkKey.of(satX, satZ);
+                sats[i] = ChunkKey.of(satX, satZ);
+            }
+            return sats;
+        });
+
+        if (satelliteCache.size() > 1024) {
+            int toRemove = 256;
+            var it = satelliteCache.keySet().iterator();
+            while (it.hasNext() && toRemove > 0) {
+                if (it.next() != packedCentre) {
+                    it.remove();
+                    toRemove--;
+                }
+            }
         }
         return result;
     }
