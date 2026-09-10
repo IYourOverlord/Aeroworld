@@ -145,8 +145,8 @@ public class AeroBiomeSource extends BiomeSource {
 
     private String resolveLayer1Biome(double cont, double eros, double temp, double humid) {
         // 1. Океан
-        if (cont < -0.15) {
-            boolean deep = cont < -0.4;
+        if (cont < -0.05) {
+            boolean deep = cont < -0.20;
             if (temp < -0.3) {
                 return deep ? "deep_frozen_ocean" : "frozen_ocean";
             } else if (temp < 0.0) {

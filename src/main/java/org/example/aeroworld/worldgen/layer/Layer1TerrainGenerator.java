@@ -17,7 +17,7 @@ import java.util.function.BiFunction;
  */
 public class Layer1TerrainGenerator {
 
-    public static final int SEA_LEVEL = 63;
+    public static final int SEA_LEVEL = 0;
     public static final int MIN_Y = -64;
     public static final int MAX_Y = 300;
     public static final int BEDROCK_LAYERS = 5;
@@ -36,22 +36,99 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState();
     private static final BlockState BS_PODZOL = Blocks.PODZOL.defaultBlockState();
 
+    private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
+    private static final BlockState BS_KELP_PLANT = Blocks.KELP_PLANT.defaultBlockState();
+    private static final BlockState BS_KELP = Blocks.KELP.defaultBlockState();
+
+    private static final BlockState[] BS_CORAL_BLOCKS = {
+            Blocks.TUBE_CORAL_BLOCK.defaultBlockState(),
+            Blocks.BRAIN_CORAL_BLOCK.defaultBlockState(),
+            Blocks.BUBBLE_CORAL_BLOCK.defaultBlockState(),
+            Blocks.FIRE_CORAL_BLOCK.defaultBlockState(),
+            Blocks.HORN_CORAL_BLOCK.defaultBlockState()
+    };
+
+    private static final BlockState[] BS_CORALS = {
+            Blocks.TUBE_CORAL.defaultBlockState(),
+            Blocks.BRAIN_CORAL.defaultBlockState(),
+            Blocks.BUBBLE_CORAL.defaultBlockState(),
+            Blocks.FIRE_CORAL.defaultBlockState(),
+            Blocks.HORN_CORAL.defaultBlockState()
+    };
+
+    private static final BlockState[] BS_CORAL_FANS = {
+            Blocks.TUBE_CORAL_FAN.defaultBlockState(),
+            Blocks.BRAIN_CORAL_FAN.defaultBlockState(),
+            Blocks.BUBBLE_CORAL_FAN.defaultBlockState(),
+            Blocks.FIRE_CORAL_FAN.defaultBlockState(),
+            Blocks.HORN_CORAL_FAN.defaultBlockState()
+    };
+
+    public static final int CAVE_BOTTOM_Y = -60;
+    public static final int CAVE_TOP_Y = -25;
+    private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -42.5
+    private static final double CAVE_HALF_HEIGHT = (CAVE_TOP_Y - CAVE_BOTTOM_Y) / 2.0; // 17.5
+
     private final long seed;
     private final AeroNoise continentNoise;
     private final AeroNoise erosionNoise;
     private final AeroNoise heightNoise;
     private final AeroNoise detailNoise;
+    private final AeroNoise pillarNoise;
+    private final AeroNoise caveCeilingNoise;
+    private final AeroNoise oceanVegNoise;
+    private final AeroNoise coralNoise;
 
     public Layer1TerrainGenerator(long seed) {
         this.seed = seed;
-        this.continentNoise = new AeroNoise(seed ^ 0x1A2B3C4DL);
-        this.erosionNoise   = new AeroNoise(seed ^ 0x5E6F7A8BL);
-        this.heightNoise    = new AeroNoise(seed ^ 0x9C0D1E2FL);
-        this.detailNoise    = new AeroNoise(seed ^ 0x33445566L);
+        this.continentNoise   = new AeroNoise(seed ^ 0x1A2B3C4DL);
+        this.erosionNoise     = new AeroNoise(seed ^ 0x5E6F7A8BL);
+        this.heightNoise      = new AeroNoise(seed ^ 0x9C0D1E2FL);
+        this.detailNoise      = new AeroNoise(seed ^ 0x33445566L);
+        this.pillarNoise      = new AeroNoise(seed ^ 0x778899AAL);
+        this.caveCeilingNoise = new AeroNoise(seed ^ 0xBBCCDDEEL);
+        this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
+        this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
     }
 
     public long getSeed() {
         return seed;
+    }
+
+    /**
+     * Проверяет, является ли точка (wx, y, wz) частью гигантского столба (сталактита + сталагмита).
+     * Столб сужается от потолка (-25) и пола (-60) к своему центру (-42.5).
+     */
+    public boolean isPillar(int wx, int y, int wz) {
+        if (y < CAVE_BOTTOM_Y || y > CAVE_TOP_Y) return false;
+
+        // Расстояние от центральной горизонтальной плоскости пещеры [0..1]
+        double distFromMid = Math.abs(y - CAVE_MID_Y) / CAVE_HALF_HEIGHT; // 0 в центре (-42.5), 1 у потолка/пола
+        // Порог шума: в центре нужен более сильный шум (столб уже), у краев шире
+        // Порог: от ~0.55 у пола/потолка до ~0.78 в центре
+        double threshold = 0.52 + (1.0 - distFromMid) * 0.28;
+
+        double n = pillarNoise.fbm2D(wx * 0.04, wz * 0.04, 3, 2.0, 0.5);
+        return n > threshold;
+    }
+
+    /**
+     * Проверяет, находится ли точка внутри полости гигантской пещеры (не под водой и не столб).
+     */
+    public boolean isCaveAir(int wx, int y, int wz, int surfaceY) {
+        // Пещера генерируется только на суше (surfaceY >= SEA_LEVEL)
+        if (surfaceY < SEA_LEVEL) return false;
+
+        // Границы пещеры с легкой неровностью сводов
+        double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
+        int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+        int bottom = CAVE_BOTTOM_Y;
+
+        if (y >= bottom && y <= top) {
+            // Если это не столб — это пустота пещеры
+            return !isPillar(wx, y, wz);
+        }
+        return false;
     }
 
     /**
@@ -72,40 +149,45 @@ public class Layer1TerrainGenerator {
 
     /**
      * Вычисляет высоту поверхности (твёрдого грунта) в координатах (wx, wz).
+     * Стандартная суша: в диапазоне Y от 2 до 18..20.
+     * Океаны: от -50 до -1.
+     * Горы (низкая эрозия): могут подниматься выше Y=20 (до 60..120+).
      */
     public int getHeight(int wx, int wz) {
         double cont = getContinentality(wx, wz);
         double eros = getErosion(wx, wz);
         double fbm  = heightNoise.fbm2D(wx * 0.003, wz * 0.003, 5, 2.0, 0.5);
-        double detail = detailNoise.noise2D(wx * 0.02, wz * 0.02) * 3.0;
+        double detail = detailNoise.noise2D(wx * 0.02, wz * 0.02) * 1.5;
 
         double baseHeight;
-        if (cont < -0.35) {
-            // Глубокий океан
-            double t = (cont - (-1.0)) / 0.65; // 0..1
-            baseHeight = 25.0 + t * 25.0; // 25..50
-        } else if (cont < -0.15) {
-            // Мелкий океан / склон шельфа
-            double t = (cont - (-0.35)) / 0.20; // 0..1
-            baseHeight = 50.0 + t * 11.0; // 50..61
+        if (cont < -0.20) {
+            // Глубокий океан (быстрое падение до -50)
+            double t = Math.min(1.0, (cont - (-0.20)) / (-0.30)); // 0 у -0.20, 1 при <= -0.50
+            baseHeight = -35.0 - t * 15.0; // от -35 до -50
+        } else if (cont < -0.05) {
+            // Крутой склон шельфа: быстрый спуск от -2 до -35
+            double t = (cont - (-0.05)) / (-0.15); // 0 при -0.05, 1 при -0.20
+            double curved = t * t; // квадратичное ускорение спуска
+            baseHeight = -2.0 - curved * 33.0; // от -2 до -35
         } else if (cont < 0.0) {
-            // Побережье / пляжи
-            double t = (cont - (-0.15)) / 0.15; // 0..1
-            baseHeight = 61.0 + t * 5.0; // 61..66
+            // Узкая прибрежная линия / пляж (0..3)
+            double t = (cont - (-0.05)) / 0.05; // 0..1
+            baseHeight = 0.0 + t * 3.0;
         } else {
-            // Внутренняя суша
+            // Стандартная суша (3..14)
             double t = Math.min(1.0, cont / 0.7);
-            baseHeight = 66.0 + t * 20.0; // 66..86
+            baseHeight = 3.0 + t * 11.0;
 
-            // Влияние эрозии на суше: низкая эрозия -> горы
+            // Холмы и горы от эрозии
             if (eros < 0.0) {
                 double mountainFactor = -eros; // 0..1
+                // Горы могут превышать предел Y=20, поднимаясь до 60..120+
                 baseHeight += mountainFactor * 80.0 * (0.5 + 0.5 * fbm);
             }
         }
 
-        // Детализация рельефа
-        double h = baseHeight + (fbm * 12.0) + detail;
+        // Детализация рельефа: для обычной суши небольшая вариация (±3)
+        double h = baseHeight + (fbm * 4.0) + detail;
 
         int finalH = (int) Math.round(h);
         if (finalH < MIN_Y + BEDROCK_LAYERS + 1) finalH = MIN_Y + BEDROCK_LAYERS + 1;
@@ -148,6 +230,12 @@ public class Layer1TerrainGenerator {
 
                 // Каменная толща: deepslate ниже Y=0, stone выше Y=0
                 for (int y = MIN_Y + BEDROCK_LAYERS; y <= surfaceY; y++) {
+                    // Проверяем полость гигантской пещеры:
+                    // если это суша и точка попадает в пещеру (и не является столбом), то блок не ставим (оставляем воздух)
+                    if (isCaveAir(wx, y, wz, surfaceY)) {
+                        continue;
+                    }
+
                     if (y < -8) {
                         writer.setBlockState(wx, y, wz, BS_DEEPSLATE);
                     } else if (y <= 0) {
@@ -212,8 +300,8 @@ public class Layer1TerrainGenerator {
                 } else if (biomePath.contains("stony")) {
                     topBlock = BS_STONE;
                     underBlock = BS_STONE;
-                } else if (biomePath.contains("snowy") || biomePath.contains("frozen") || surfaceY >= 140) {
-                    if (surfaceY >= 150) {
+                } else if (biomePath.contains("snowy") || biomePath.contains("frozen") || surfaceY >= 50) {
+                    if (surfaceY >= 60) {
                         topBlock = BS_SNOW_BLOCK;
                         underBlock = BS_STONE;
                     } else {
@@ -237,7 +325,62 @@ public class Layer1TerrainGenerator {
                         chunk.setBlockState(pos, underBlock, false);
                     }
                 }
+
+                // Подводная растительность и коралловые рифы
+                if (underWater && surfaceY < SEA_LEVEL - 1) {
+                    placeUnderwaterFeatures(chunk, wx, surfaceY, wz, biomePath);
+                }
             }
+        }
+    }
+
+    private void placeUnderwaterFeatures(ChunkAccess chunk, int wx, int surfaceY, int wz, String biomePath) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int waterDepth = SEA_LEVEL - surfaceY;
+
+        // 1. Коралловые рифы (в теплых океанах, warm_ocean или lukwarm_ocean, на глубине от 4 до 35 блоков)
+        boolean isWarmOcean = biomePath.contains("warm");
+        if (isWarmOcean && waterDepth >= 4) {
+            double cNoise = coralNoise.fbm2D(wx * 0.05, wz * 0.05, 3, 2.0, 0.5);
+            if (cNoise > 0.40) {
+                int coralTypeIdx = Math.abs((int) (coralNoise.noise2D(wx * 0.2, wz * 0.2) * 10)) % BS_CORAL_BLOCKS.length;
+                int reefHeight = 1 + (int) ((cNoise - 0.40) * 10.0);
+                reefHeight = Math.min(reefHeight, waterDepth - 2);
+
+                for (int h = 1; h <= reefHeight; h++) {
+                    pos.set(wx, surfaceY + h, wz);
+                    chunk.setBlockState(pos, BS_CORAL_BLOCKS[coralTypeIdx], false);
+                }
+
+                int topY = surfaceY + reefHeight + 1;
+                if (topY < SEA_LEVEL) {
+                    pos.set(wx, topY, wz);
+                    BlockState decor = (cNoise > 0.55) ? BS_CORALS[coralTypeIdx] : BS_CORAL_FANS[coralTypeIdx];
+                    chunk.setBlockState(pos, decor, false);
+                }
+                return;
+            }
+        }
+
+        // 2. Ламинарии (Kelp) — растут высокими стеблями на глубинах от 6 блоков
+        double veg = oceanVegNoise.fbm2D(wx * 0.03, wz * 0.03, 3, 2.0, 0.5);
+        if (veg > 0.35 && waterDepth >= 6 && !biomePath.contains("frozen")) {
+            int kelpHeight = 3 + (int) (detailNoise.noise2D(wx * 0.1, wz * 0.1) * 8.0);
+            kelpHeight = Math.max(2, Math.min(kelpHeight, waterDepth - 2));
+
+            for (int k = 1; k < kelpHeight; k++) {
+                pos.set(wx, surfaceY + k, wz);
+                chunk.setBlockState(pos, BS_KELP_PLANT, false);
+            }
+            pos.set(wx, surfaceY + kelpHeight, wz);
+            chunk.setBlockState(pos, BS_KELP, false);
+            return;
+        }
+
+        // 3. Морская трава / водоросли (Seagrass) — на умеренных и мелких глубинах
+        if (veg > 0.10 && surfaceY + 1 < SEA_LEVEL) {
+            pos.set(wx, surfaceY + 1, wz);
+            chunk.setBlockState(pos, BS_SEAGRASS, false);
         }
     }
 }

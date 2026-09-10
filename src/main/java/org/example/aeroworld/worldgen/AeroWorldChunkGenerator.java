@@ -32,6 +32,7 @@ import org.example.aeroworld.worldgen.layer.*;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
 import org.example.aeroworld.worldgen.structure.ValidationResult;
+import org.example.aeroworld.worldgen.structure.AncientCityIslandSupportPlacer;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
 
@@ -232,6 +233,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
             int seaLevel = Layer1TerrainGenerator.SEA_LEVEL;
 
             for (int y = minY; y <= surfaceY && y <= levelMax; y++) {
+                if (layer1Terrain.isCaveAir(x, y, z, surfaceY)) {
+                    continue;
+                }
                 int idx = y - minY;
                 if (idx >= 0 && idx < states.length) {
                     states[idx] = BS_STONE;
@@ -464,6 +468,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         if (upperIslands != null && layer4VaultTrialPlacer != null) {
             layer4VaultTrialPlacer.placeForChunk(region, chunk, upperIslands);
         }
+
+        // Островная каменная ступенчатая опора под Ancient City в пещере
+        AncientCityIslandSupportPlacer.placeSupportForChunk(region, chunk);
     }
 
     @Override

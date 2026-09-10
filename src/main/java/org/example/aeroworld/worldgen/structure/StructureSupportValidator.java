@@ -261,6 +261,11 @@ public final class StructureSupportValidator {
         // Для подземных структур сканируем от середины по высоте
         int scanY = (bounds.minY() + bounds.maxY()) / 2;
 
+        // Ancient City получает собственную ступенчатую островную платформу-опору в пещере
+        if (id.getPath().contains("ancient_city")) {
+            return ValidationResult.accepted(id, StructureCategory.UNDERGROUND, bounds, 1, 1, 1.0, UNDERGROUND_THRESHOLD);
+        }
+
         // Используем Layer 1 — подземные структуры только там
         // Проверка: scanY должен быть внутри слоя 1
         if (scanY > Layer1FlatGenerator.LAYER_MAX_Y) {
