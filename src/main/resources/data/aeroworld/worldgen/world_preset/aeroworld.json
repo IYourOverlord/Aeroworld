@@ -8,14 +8,7 @@
           "type": "aeroworld:aero_biome_source",
           "preset": "minecraft:overworld"
         },
-        "vanilla_generator": {
-          "type": "minecraft:noise",
-          "biome_source": {
-            "type": "minecraft:multi_noise",
-            "preset": "minecraft:overworld"
-          },
-          "settings": "minecraft:overworld"
-        }
+        "settings": "minecraft:overworld"
       }
     },
     "minecraft:the_nether": {

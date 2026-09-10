@@ -6,14 +6,7 @@
       "type": "aeroworld:aero_biome_source",
       "preset": "minecraft:overworld"
     },
-    "vanilla_generator": {
-      "type": "minecraft:noise",
-      "biome_source": {
-        "type": "minecraft:multi_noise",
-        "preset": "minecraft:overworld"
-      },
-      "settings": "minecraft:overworld"
-    },
+    "settings": "minecraft:overworld",
     "aero_settings": {
       "layer2": {
         "spawn_chance": 0.20,

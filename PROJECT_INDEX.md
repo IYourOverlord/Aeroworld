@@ -10,13 +10,13 @@
 
 | Слой | Y-диапазон | Форма | Генератор | Настройки |
 |---|---|---|---|---|
-| Layer 1 | -64 .. 300 | Полноценный ванильный рельеф Overworld (горы, 3D-пещеры, аквиферы, океаны) | `NoiseBasedChunkGenerator` (встроен в `AeroWorldChunkGenerator`) | `dimension/aeroworld.json`, `world_preset/aeroworld.json` (`settings: minecraft:overworld`) |
+| Layer 1 | -64 .. 300 | Кастомный рельеф на шуме (континентальность, эрозия, горы, шельф, океаны до Y=63) | `worldgen/layer/Layer1TerrainGenerator.java` | `dimension/aeroworld.json`, `world_preset/aeroworld.json` (`settings: minecraft:overworld`) |
 | Layer 2 | 400 .. 500 | Острова произвольной формы + сталактиты + мосты | `worldgen/layer/LowerIslandGenerator.java` | `config/Layer2Settings.java` |
 | Layer 3 | 1000 .. 1100 | Шары и эллипсоиды | `worldgen/layer/HighIslandGenerator.java` | `config/Layer3Settings.java` |
 | Layer 4 | 1900 .. 2031 | "Медузы" (купол + 10 щупалец) | `worldgen/layer/UpperIslandGenerator.java` | `config/Layer4Settings.java` |
 
 Все четыре слоя координируются классом:
-**`worldgen/AeroWorldChunkGenerator.java`** — точка входа в генерацию чанков (`fillFromNoise`, `applyCarvers`, `buildSurface`, `applyBiomeDecoration`, `createStructures`). Наследуется напрямую от **`NoiseBasedChunkGenerator`**, чтобы обеспечить корректную инициализацию `RandomState` (плотность шумов, параметры биомов) для нижнего ванильного слоя (Layer 1).
+**`worldgen/AeroWorldChunkGenerator.java`** — точка входа в генерацию чанков (`fillFromNoise`, `applyCarvers`, `buildSurface`, `applyBiomeDecoration`, `createStructures`). Наследуется напрямую от **`NoiseBasedChunkGenerator`** для совместимости со структурами и Distant Horizons, но полностью реализует собственный пайплайн рельефа Layer 1 через `Layer1TerrainGenerator`.
 
 ---
 
@@ -59,7 +59,7 @@ worldgen/
 ├── AeroWorldChunkGenerator.java   — ★ главный генератор, расширяет NoiseBasedChunkGenerator, координирует все слои
 ├── biome/
 │   ├── AeroBiomeRegistryCache.java — асинхронный кэш Registry<Biome> (CompletableFuture, заполняется в ServerAboutToStartEvent)
-│   └── AeroBiomeSource.java       — кастомный BiomeSource: Layer 1 возвращает ванильные minecraft:* биомы (SurfaceRules) + deep_dark на глубине; острова (Y > 300) получают aeroworld:* клоны без океанов/пещер
+│   └── AeroBiomeSource.java       — кастомный BiomeSource: noise-based генерация биомов для Layer 1 (континентальность, температура, влажность, эрозия) с маппингом на aeroworld:* биомы + deep_dark; острова (Y > 300) получают aeroworld:* клоны
 ├── cache/
 │   ├── ChunkIslandCache.java   — общий кэш списков центров островов (layerId + chunkX/Z) для всех 3 слоёв
 │   ├── ChunkKey.java           — упаковка пары (x, z) в long без аллокаций
@@ -78,7 +78,8 @@ worldgen/
 │       ├── VaultTrialLootConfig.java      — конфигурация ссылок на loot tables и списков мобов для Trial Spawner
 │       └── VaultTrialSpawnTier.java       — тиры богатства спавна (POOR / MEDIUM / RICH)
 ├── layer/
-│   ├── Layer1FlatGenerator.java     — хелпер границ Layer 1 (-64..300) и делегат сэмплинга высот (surfaceHeight/topmostHeight); генерация блоков удалена
+│   ├── Layer1TerrainGenerator.java  — кастомный шум рельефа Layer 1 (континентальность, эрозия, высоты, дно океана, наложение поверхностных блоков по биомам)
+│   ├── Layer1FlatGenerator.java     — делегат-обёртка над Layer1TerrainGenerator для обратной совместимости валидатора структур и хендлеров
 │   ├── LowerIslandGenerator.java    — Layer 2 (Y 400..500): острова + деревья по краям (0.6..1.0 радиуса) + сталактиты снизу + мосты (кэширование пар BridgePair на остров, AABB-фильтр чанка, fillBridges вынесен из цикла по островам; центральная зона и деревья с суженными циклами и ранним отсевом)
 │   ├── HighIslandGenerator.java     — Layer 3 (Y 1000..1100): шары и эллипсоиды (аналитический расчет диапазона Y по формуле эллипсоида, без поблочного сканирования; суженные XZ-циклы)
 │   ├── UpperIslandGenerator.java    — Layer 4 (Y 1900..2031): медузы (прямая растровая трассировка сплайнов щупалец в AABB чанка, суженный цикл купола без лишних шумов)

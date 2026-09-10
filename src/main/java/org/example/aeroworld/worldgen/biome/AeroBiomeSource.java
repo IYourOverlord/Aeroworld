@@ -4,37 +4,25 @@ import com.mojang.serialization.MapCodec;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.*;
+import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 
 import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
- * AeroBiomeSource — независимый биомный источник для AeroWorld.
- *
- * FIX биомов: seed передаётся явно через withSeed() из AeroWorldChunkGenerator,
- * а не вытаскивается из Climate.Sampler (который всегда нули для кастомного генератора).
- *
- * FIX краша: CODEC использует xmap поверх MultiNoiseBiomeSource.CODEC — это сохраняет
- * совместимость с существующим JSON (поле "preset": "minecraft:overworld").
- * Seed не сериализуется в JSON; он передаётся программно через withSeed().
+ * AeroBiomeSource — биомный источник для AeroWorld с кастомным noise-based распределением для Layer 1
+ * и aeroworld:* биомами для островов.
  */
 public class AeroBiomeSource extends BiomeSource {
 
-    // ── CODEC: оборачиваем MultiNoiseBiomeSource — совместимо с существующим JSON ──
     // JSON-формат: { "type": "aeroworld:aero_biome_source", "preset": "minecraft:overworld" }
     public static final MapCodec<AeroBiomeSource> CODEC =
             MultiNoiseBiomeSource.CODEC.xmap(
-                    AeroBiomeSource::new,       // десериализация: MultiNoise → AeroBiomeSource
-                    src -> src.delegate         // сериализация:  AeroBiomeSource → MultiNoise
+                    AeroBiomeSource::new,
+                    src -> src.delegate
             );
 
-    /**
-     * ПОЛНЫЙ список склонированных под aeroworld:* overworld-биомов (53 шт. —
-     * все ванильные биомы, кроме незера/энда/void). Нужен для collectPossibleBiomes,
-     * т.к. слои-острова (y > 12, через delegateWithSafety) могут вернуть любой
-     * из них.
-     */
     private static final String[] ALL_CLONED_BIOMES = {
             "badlands", "bamboo_jungle", "beach", "birch_forest", "cherry_grove",
             "cold_ocean", "dark_forest", "deep_cold_ocean", "deep_dark", "deep_frozen_ocean",
@@ -49,18 +37,16 @@ public class AeroBiomeSource extends BiomeSource {
             "windswept_hills", "windswept_savanna", "wooded_badlands"
     };
 
-    // ── Состояние ─────────────────────────────────────────────────────────────
     private final MultiNoiseBiomeSource delegate;
     private final long seed;
     private final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
 
-    // Шумовой генератор для deep_dark на глубине Layer 1
+    private final AeroNoise tempNoise;
+    private final AeroNoise humidityNoise;
     private final AeroNoise deepDarkNoise;
 
-    // Кеш для possibleBiomes, чтобы не отравлять Suppliers.memoize() пустым списком
     private volatile java.util.Set<Holder<Biome>> cachedBiomes = null;
 
-    // ── Конструктор ───────────────────────────────────────────────────────────
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed) {
         this(delegate, seed, null);
     }
@@ -70,45 +56,35 @@ public class AeroBiomeSource extends BiomeSource {
         this.delegate      = delegate;
         this.seed          = seed;
         this.layer1        = layer1;
+        this.tempNoise     = new AeroNoise(seed ^ 0x11223344L);
+        this.humidityNoise = new AeroNoise(seed ^ 0x55667788L);
         this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
     }
 
-    /** Удобный конструктор без seed (для обратной совместимости в ChunkGenerator до initSeed). */
     public AeroBiomeSource(MultiNoiseBiomeSource delegate) {
         this(delegate, 0xAE40F9C3L);
     }
 
-    /**
-     * Создаёт новый экземпляр с правильным seed.
-     * Вызывается из AeroWorldChunkGenerator.initializeWithSeed().
-     */
     public AeroBiomeSource withSeed(long newSeed) {
         if (newSeed == this.seed) return this;
         return new AeroBiomeSource(delegate, newSeed, this.layer1);
     }
 
-    /**
-     * Привязывает Layer1FlatGenerator этого мира — после этого кольцевые
-     * горные долины гарантированно получают forest/cherry_grove.
-     * Вызывается из AeroWorldChunkGenerator.initializeWithSeed() сразу после
-     * создания layer1.
-     */
     public AeroBiomeSource withRingChecker(org.example.aeroworld.worldgen.layer.Layer1FlatGenerator newLayer1) {
         if (newLayer1 == this.layer1) return this;
         return new AeroBiomeSource(delegate, this.seed, newLayer1);
     }
 
     @Override
-    protected MapCodec<? extends BiomeSource> codec() { return CODEC; }
+    protected MapCodec<? extends BiomeSource> codec() {
+        return CODEC;
+    }
 
     @Override
     public java.util.Set<Holder<Biome>> possibleBiomes() {
         java.util.Set<Holder<Biome>> biomes = this.cachedBiomes;
         if (biomes == null) {
             biomes = collectPossibleBiomes().collect(java.util.stream.Collectors.toUnmodifiableSet());
-            // Если вернулись только ванильные биомы из fallback, значит реестр ещё не готов.
-            // НЕ кэшируем результат, чтобы при реальной генерации чанков (когда реестр готов)
-            // список перестроился и включил aeroworld:*.
             if (biomes.size() > delegate.possibleBiomes().size()) {
                 this.cachedBiomes = biomes;
             }
@@ -123,161 +99,149 @@ public class AeroBiomeSource extends BiomeSource {
                 .filter(Optional::isPresent)
                 .map(Optional::get);
 
-        // Ванильные minecraft:* биомы ОБЯЗАТЕЛЬНЫ — Layer 1 теперь возвращает
-        // их напрямую (не подменяя на aeroworld:*), чтобы ванильные SurfaceRules
-        // корректно применяли поверхностные блоки (песок для пустыни, терракота
-        // для бедлендса и т.д.). aeroworld:* клоны нужны только островам (Layer 2/3/4).
         Stream<Holder<Biome>> vanillaFallback = delegate.possibleBiomes().stream();
 
         return Stream.concat(aeroClones, vanillaFallback);
     }
 
-    // ── Deep Dark (подземный биом, нужен для ancient_city) ───────────────────
-    // y здесь — noise-координата в четвертях блока (y*4 ≈ блок). Ancient City
-    // в ваниле всегда генерируется на Y=-51 (реже -64..-8), внутри deep_dark.
-    // Раньше deep_dark был жёстко исключён (см. isExcluded) и НИКОГДА не
-    // выбирался ни в одной точке мира — из-за этого ancient_city физически
-    // не мог заспавниться (structure привязана к биому напрямую, не через
-    // has_structure-тег). Теперь выделяем под deep_dark отдельный диапазон
-    // глубин Layer 1 и редкий 2D-шум — независимо от температуры/влажности,
-    // как и в ваниле (deep_dark не зависит от климата).
     private static final int DEEP_DARK_MAX_Y_BLOCK = -8;
-    private static final int DEEP_DARK_MIN_Y_BLOCK = Layer1FlatGeneratorMinYHolder.MIN_Y;
+    private static final int DEEP_DARK_MIN_Y_BLOCK = Layer1TerrainGenerator.MIN_Y;
     private static final double DEEP_DARK_NOISE_SCALE = 0.006;
-    private static final double DEEP_DARK_THRESHOLD   = 0.30; // ~15% покрытия глубин
+    private static final double DEEP_DARK_THRESHOLD   = 0.30;
 
-    private static final class Layer1FlatGeneratorMinYHolder {
-        static final int MIN_Y = org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MIN_Y;
-    }
-
-    // Верхняя граница Layer 1 в noise-координатах (четверти блока):
-    // LAYER_MAX_Y(300) / 4 = 75. Раньше порог был 12 (блок 48) — это ниже
-    // уровня моря (WATER_LEVEL=44) почти вплотную, и вся толща воды выше
-    // Y=48 (поверхность океана, где живут рыбы/kelp/seagrass, и bounding
-    // box Ocean Monument, который поднимается заметно выше дна) уходила в
-    // delegateWithSafety → ванильный Climate.Sampler для кастомного
-    // генератора (см. FIX-комментарий класса — sampler всегда возвращает
-    // нули), из-за чего верх водного столба резолвился в случайный НЕ-ocean
-    // биом. Итог: seagrass/kelp/coral/рыбы не размещались (biome features
-    // не совпадали с фактической водой), а Ocean Monument не проходил
-    // биомную проверку Mojang (весь объём структуры должен лежать в
-    // биомах из тега has_structure/ocean_monument). Порог поднят до полного
-    // диапазона Layer 1, включая горы — единственный источник истины для Y
-    // здесь тот же, что и у рельефа (Layer1FlatGenerator.LAYER_MAX_Y).
-    private static final int LAYER1_MAX_NOISE_Y =
-            org.example.aeroworld.worldgen.layer.Layer1FlatGenerator.LAYER_MAX_Y / 4;
+    private static final int LAYER1_MAX_NOISE_Y = Layer1TerrainGenerator.MAX_Y / 4;
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
-        // Островные слои (выше Layer 1) — делегируем ванили. Острова летают
-        // в воздухе, там неоткуда взяться океану/пещерным биомам — исключаем.
+        // Островные слои (выше Layer 1)
         if (y > LAYER1_MAX_NOISE_Y) {
             return delegateWithSafety(x, 20, z, sampler, true);
         }
 
-        // Слой 1: 2D-шум по seed мира (больше не зависим от sampler)
         double wx = x * 4.0;
         double wz = z * 4.0;
 
-        // ── Deep Dark: только на подземной глубине (Y от -64 до -8) ──────────
+        // Deep Dark на глубине (-64..-8)
         int blockY = y * 4;
         if (blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
             double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
             if (dd > DEEP_DARK_THRESHOLD) {
-                // Используем minecraft:deep_dark — ванильные surface rules
-                // проверяют ResourceKey minecraft:deep_dark, а не aeroworld:*.
-                Optional<Holder<Biome>> deepDark =
-                        findBiome(ResourceLocation.withDefaultNamespace("deep_dark"));
+                Optional<Holder<Biome>> deepDark = findAeroBiome("deep_dark");
                 if (deepDark.isPresent()) return deepDark.get();
             }
         }
 
-        // ── Вода/пляж/океан/река/озеро для Layer 1 ────────────────────────
-        // РАНЬШЕ здесь стояла отдельная, независимая от physical-рельефа
-        // ветка (isOceanColumn/isRiverColumn/isLakeColumn/isBeachColumn/
-        // isStrandedShallowColumn читали СВОЙ собственный кастомный шум
-        // Layer1FlatGenerator) — параллельная система, которая регулярно
-        // расходилась с тем, что реально стоит физически (см.
-        // NEXT_SESSION_PROMPT.md: то биом резолвился в лес прямо в воде, то
-        // ocean-биом покрывал только часть физической воды).
-        //
-        // ТЕПЕРЬ (после перехода Layer1FlatGenerator.columnProfile на
-        // ванильный NoiseBasedChunkGenerator — см. Layer1FlatGenerator, блок
-        // "Ванильный рельеф/вода") И физическая вода, И биом для одной и той
-        // же колонки (wx,wz) читаются из ОДНОГО и того же ванильного
-        // источника: расхождение структурно невозможно. delegateWithSafety
-        // — тот же вызов, что уже используется для островных слоёв выше
-        // LAYER1_MAX_NOISE_Y (см. ветку `if (y > LAYER1_MAX_NOISE_Y)` в
-        // начале метода) — ванильный Climate.Sampler здесь уже реальный
-        // (не заглушка с нулями, вопреки старому FIX-комментарию класса —
-        // см. RandomState в AeroWorldChunkGenerator.buildBiomeResolver,
-        // тот же sampler питает и физический рельеф через
-        // Layer1FlatGenerator.setVanillaSource), поэтому ocean/river/beach/
-        // ...биом, который он вернёт, будет ТОЧНО тем же местом, где
-        // physически стоит вода/песок.
-        // excludeForIslands=false: Layer 1 — нижний слой, обязан вести себя
-        // как настоящий Overworld, включая ocean/deep_ocean/dripstone_caves/
-        // lush_caves/deep_dark биомы (см. ask: "разрешить ocean/dripstone/lush
-        // /deep_dark для Layer 1, исключение оставить только для островов").
-        return delegateWithSafety(x, y, z, sampler, false);
+        // Layer 1 кастомный шум
+        Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
+        double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
+        double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
+
+        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+
+        String biomeName = resolveLayer1Biome(cont, eros, temp, humid);
+        return findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    private String resolveLayer1Biome(double cont, double eros, double temp, double humid) {
+        // 1. Океан
+        if (cont < -0.15) {
+            boolean deep = cont < -0.4;
+            if (temp < -0.3) {
+                return deep ? "deep_frozen_ocean" : "frozen_ocean";
+            } else if (temp < 0.0) {
+                return deep ? "deep_cold_ocean" : "cold_ocean";
+            } else if (temp < 0.35) {
+                return deep ? "deep_ocean" : "ocean";
+            } else if (temp < 0.6) {
+                return deep ? "deep_lukewarm_ocean" : "lukewarm_ocean";
+            } else {
+                return "warm_ocean";
+            }
+        }
+
+        // 2. Побережье / пляж
+        if (cont < 0.0) {
+            if (eros < -0.2) return "stony_shore";
+            if (temp < -0.2) return "snowy_beach";
+            return "beach";
+        }
+
+        // 3. Суша: горы и пики
+        if (eros < -0.35) {
+            if (temp < -0.3) return "frozen_peaks";
+            if (temp < 0.1)  return "jagged_peaks";
+            if (temp < 0.5)  return "stony_peaks";
+            return "windswept_hills";
+        }
+
+        // 4. Холодно
+        if (temp < -0.3) {
+            if (humid > 0.1) return "snowy_taiga";
+            if (humid < -0.2 && eros < -0.1) return "ice_spikes";
+            return "snowy_plains";
+        }
+
+        // 5. Умеренно-холодно
+        if (temp < 0.0) {
+            if (humid > 0.2) return "old_growth_pine_taiga";
+            if (humid > -0.1) return "taiga";
+            return "windswept_forest";
+        }
+
+        // 6. Умеренно
+        if (temp < 0.4) {
+            if (humid > 0.35) return "dark_forest";
+            if (humid > 0.15) return "forest";
+            if (humid > -0.1) return "birch_forest";
+            if (humid > -0.3) return "meadow";
+            return "plains";
+        }
+
+        // 7. Жарко
+        if (humid > 0.4) {
+            return "bamboo_jungle";
+        } else if (humid > 0.2) {
+            return "jungle";
+        } else if (humid > 0.0) {
+            return "swamp";
+        } else if (humid > -0.25) {
+            return "savanna";
+        } else if (humid > -0.5) {
+            return "desert";
+        } else {
+            return "badlands";
+        }
+    }
 
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,
                                               boolean excludeForIslands) {
-        // Реальный ванильный делегат используется как климатический семплер —
-        // чтобы понять, какой биом «подошёл бы» по температуре/влажности/
-        // континентальности в этой точке.
         Holder<Biome> vanilla = delegate.getNoiseBiome(x, y, z, sampler);
-
-        // ── Layer 1 (excludeForIslands == false): возвращаем ванильный биом ──
-        // Ванильные SurfaceRules (из NoiseGeneratorSettings) привязаны к
-        // ResourceKey minecraft:desert / minecraft:badlands / ... — если в
-        // чанке стоит aeroworld:desert, ни одно биом-специфичное правило
-        // поверхности не сработает (ID не совпадает), и вся поверхность
-        // получит дефолтный fallback (grass_block+dirt) вместо песка/
-        // терракоты/подзола. Руды на Layer 1 удаляются постфактум через
-        // Layer1OreFilter — подмена биома для этой цели не нужна.
         if (!excludeForIslands) {
             return vanilla;
         }
 
-        // ── Острова (Layer 2/3/4): подменяем на aeroworld:* клон без руд ─────
         ResourceLocation vanillaId = vanilla.unwrapKey()
                 .map(k -> k.location())
                 .orElse(ResourceLocation.withDefaultNamespace("plains"));
 
         if (isExcludedForIslands(vanillaId)) {
-            return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains")).orElse(vanilla);
+            return findAeroBiome("plains").orElse(vanilla);
         }
 
-        return findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", vanillaId.getPath()))
-                .orElseGet(() -> findBiome(ResourceLocation.fromNamespaceAndPath("aeroworld", "plains"))
-                        .orElse(vanilla));
+        return findAeroBiome(vanillaId.getPath()).orElseGet(() -> findAeroBiome("plains").orElse(vanilla));
     }
 
-    private Optional<Holder<Biome>> findBiome(ResourceLocation id) {
-        // Сначала — полный реестр биомов (единственное место, где видны
-        // наши клоны aeroworld:*, т.к. их нет в possibleBiomes() пресета).
+    private Optional<Holder<Biome>> findAeroBiome(String path) {
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("aeroworld", path);
         Optional<Holder<Biome>> cached = AeroBiomeRegistryCache.get(id);
         if (cached.isPresent()) return cached;
 
-        // Фолбэк — набор биомов ванильного multi-noise делегата
-        // (нужен для minecraft:* биомов островных слоёв, y > 12).
         return delegate.possibleBiomes().stream()
                 .filter(h -> h.unwrapKey().map(k -> k.location().equals(id)).orElse(false))
                 .findFirst();
     }
 
-    /**
-     * Биомы, недопустимые на летающих островных слоях (y > LAYER1_MAX_NOISE_Y):
-     * там неоткуда взяться океану/капельным и мшистым пещерам/deep dark —
-     * острова просто в воздухе, без подземной толщи и без моря. Layer 1
-     * (нижний слой, физический overworld-рельеф) эти биомы, наоборот,
-     * обязан получать нормально — см. вызов delegateWithSafety(...,
-     * excludeForIslands=false) в getNoiseBiome.
-     */
     private static boolean isExcludedForIslands(ResourceLocation loc) {
         String p = loc.getPath();
         return p.contains("ocean") || p.equals("dripstone_caves")
