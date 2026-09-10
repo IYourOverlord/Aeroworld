@@ -77,7 +77,6 @@ public class Layer1TerrainGenerator {
     private final AeroNoise erosionNoise;
     private final AeroNoise heightNoise;
     private final AeroNoise detailNoise;
-    private final AeroNoise pillarNoise;
     private final AeroNoise caveCeilingNoise;
     private final AeroNoise caveFloorNoise;
     private final AeroNoise caveLushNoise;
@@ -90,7 +89,6 @@ public class Layer1TerrainGenerator {
         this.erosionNoise     = new AeroNoise(seed ^ 0x5E6F7A8BL);
         this.heightNoise      = new AeroNoise(seed ^ 0x9C0D1E2FL);
         this.detailNoise      = new AeroNoise(seed ^ 0x33445566L);
-        this.pillarNoise      = new AeroNoise(seed ^ 0x778899AAL);
         this.caveCeilingNoise = new AeroNoise(seed ^ 0xBBCCDDEEL);
         this.caveFloorNoise   = new AeroNoise(seed ^ 0x13579BDFL);
         this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
@@ -103,24 +101,7 @@ public class Layer1TerrainGenerator {
     }
 
     /**
-     * Проверяет, является ли точка (wx, y, wz) частью гигантского столба (сталактита + сталагмита).
-     * Столб сужается от потолка (-25) и пола (-60) к своему центру (-42.5).
-     */
-    public boolean isPillar(int wx, int y, int wz) {
-        if (y < CAVE_BOTTOM_Y || y > CAVE_TOP_Y) return false;
-
-        // Расстояние от центральной горизонтальной плоскости пещеры [0..1]
-        double distFromMid = Math.abs(y - CAVE_MID_Y) / CAVE_HALF_HEIGHT; // 0 в центре (-42.5), 1 у потолка/пола
-        // Порог шума: в центре нужен более сильный шум (столб уже), у краев шире
-        // Порог: от ~0.55 у пола/потолка до ~0.78 в центре
-        double threshold = 0.52 + (1.0 - distFromMid) * 0.28;
-
-        double n = pillarNoise.fbm2D(wx * 0.04, wz * 0.04, 3, 2.0, 0.5);
-        return n > threshold;
-    }
-
-    /**
-     * Проверяет, находится ли точка внутри полости гигантской пещеры (не под водой и не столб).
+     * Проверяет, находится ли точка внутри полости гигантской пещеры (не под водой).
      */
     public boolean isCaveAir(int wx, int y, int wz, int surfaceY) {
         // Пещера генерируется только на суше (surfaceY >= SEA_LEVEL)
@@ -137,11 +118,7 @@ public class Layer1TerrainGenerator {
         // Не даём полу подняться выше середины пещеры, сохраняя проходимость объёма
         bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
 
-        if (y >= bottom && y <= top) {
-            // Если это не столб — это пустота пещеры
-            return !isPillar(wx, y, wz);
-        }
-        return false;
+        return y >= bottom && y <= top;
     }
 
     /**
@@ -331,9 +308,7 @@ public class Layer1TerrainGenerator {
     }
 
     /**
-     * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола,
-     * если над ним пустота пещеры (не столб). Учитывает, что столб может локально
-     * перекрывать расчётный уровень bottom — в этом случае реальный пол выше (верх столба).
+     * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола.
      */
     private void decorateCaveFloor(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
         int startX = chunkX << 4;
@@ -355,19 +330,12 @@ public class Layer1TerrainGenerator {
                 int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
                 bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
 
-                // Находим реальную первую воздушную клетку пещеры снизу вверх: столб может
-                // локально перекрывать расчётный bottom, тогда фактический пол — верх столба.
-                int airY = bottom;
-                while (airY <= CAVE_TOP_Y && isPillar(wx, airY, wz)) {
-                    airY++;
-                }
-                if (airY > CAVE_TOP_Y) continue; // столб полностью перекрыл колонну
-                if (!isCaveAir(wx, airY, wz, surfaceY)) continue;
-                if (airY - 1 < MIN_Y + BEDROCK_LAYERS) continue;
+                if (!isCaveAir(wx, bottom, wz, surfaceY)) continue;
+                if (bottom - 1 < MIN_Y + BEDROCK_LAYERS) continue;
 
                 double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 900.0, wz * 0.11 + 900.0);
                 if (lichenRoll > -0.2) {
-                    writer.setBlockState(wx, airY, wz, glowLichenUp);
+                    writer.setBlockState(wx, bottom, wz, glowLichenUp);
                 }
             }
         }
