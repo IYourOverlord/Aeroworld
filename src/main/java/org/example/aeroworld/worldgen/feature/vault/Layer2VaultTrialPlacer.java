@@ -84,10 +84,13 @@ public final class Layer2VaultTrialPlacer {
             int islandBlockZ = ChunkKey.z(packed);
 
             IslandPlacer placer = generator.getPlacer();
-            boolean isArchipelagoCentre = placer.isArchipelagoCentre(packed);
-            boolean isSatellite = !isArchipelagoCentre
-                    && placer.findArchipelagoCentreFor(islandBlockX, islandBlockZ, generator.getSearchRadius())
+            // Сначала точная проверка спутника — иначе isArchipelagoCentre
+            // может дать false-positive (~25%) на координатах спутника,
+            // заставив его получить MEDIUM тир и увеличенный радиус.
+            boolean isSatellite = placer.findArchipelagoCentreFor(
+                    islandBlockX, islandBlockZ, generator.getSearchRadius())
                     != IslandPlacer.NO_ISLAND;
+            boolean isArchipelagoCentre = !isSatellite && placer.isArchipelagoCentre(packed);
             boolean isArchipelagoIsland = isArchipelagoCentre || isSatellite;
 
             if (isSatellite && !rollSatelliteSpawn(islandBlockX, islandBlockZ)) continue;

@@ -175,11 +175,15 @@ public class LowerIslandGenerator {
         // центра — иначе спутники крупных архипелагов получались вдвое больше
         // спутников мелких архипелагов).
         long selfPacked = ChunkKey.of(cx, cz);
-        boolean isArchipelagoCentre = placer.isArchipelagoCentre(selfPacked);
-        long archipelagoCentre = isArchipelagoCentre
-                ? selfPacked
-                : placer.findArchipelagoCentreFor(cx, cz, searchRadius);
-        boolean isArchipelagoIsland = isArchipelagoCentre || archipelagoCentre != IslandPlacer.NO_ISLAND;
+        // Сначала проверяем, является ли остров спутником другого архипелага —
+        // findArchipelagoCentreFor точно перебирает списки спутников, поэтому
+        // false-positive невозможен. Только если НЕ спутник — проверяем
+        // isArchipelagoCentre (хэш-проверка, ~25% false-positive на произвольных
+        // координатах, но для координат, реально лежащих на сетке, это корректно).
+        long archipelagoCentre = placer.findArchipelagoCentreFor(cx, cz, searchRadius);
+        boolean isSatellite = archipelagoCentre != IslandPlacer.NO_ISLAND;
+        boolean isArchipelagoCentre = !isSatellite && placer.isArchipelagoCentre(selfPacked);
+        boolean isArchipelagoIsland = isArchipelagoCentre || isSatellite;
 
         // Базовые параметры (высота/радиус) для ОБЫЧНОГО острова или ЦЕНТРА
         // архипелага всегда считаются от координат самого острова.
