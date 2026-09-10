@@ -269,6 +269,7 @@ public class Layer1TerrainGenerator {
         }
 
         decorateCaveCeiling(writer, chunkX, chunkZ);
+        decorateCaveFloor(writer, chunkX, chunkZ);
     }
 
     /**
@@ -324,6 +325,42 @@ public class Layer1TerrainGenerator {
                         boolean isLast = i == vineLen - 1;
                         writer.setBlockState(wx, vy, wz, isLast ? vineBerries : vineNoBerry);
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола,
+     * если над ним пустота пещеры (не столб).
+     */
+    private void decorateCaveFloor(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+
+        BlockState glowLichenUp = Blocks.GLOW_LICHEN.defaultBlockState()
+                .setValue(MultifaceBlock.getFaceProperty(Direction.UP), true);
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+
+                int surfaceY = getHeight(wx, wz);
+                if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
+
+                double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
+                double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
+                int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
+                bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+
+                // Точка bottom — воздух пещеры прямо над твёрдым полом (bottom-1).
+                if (!isCaveAir(wx, bottom, wz, surfaceY)) continue;
+                if (bottom - 1 < MIN_Y + BEDROCK_LAYERS) continue;
+
+                double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 900.0, wz * 0.11 + 900.0);
+                if (lichenRoll > -0.2) {
+                    writer.setBlockState(wx, bottom, wz, glowLichenUp);
                 }
             }
         }
