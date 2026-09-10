@@ -1,10 +1,13 @@
 package org.example.aeroworld.worldgen.layer;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
@@ -64,10 +67,10 @@ public class Layer1TerrainGenerator {
             Blocks.HORN_CORAL_FAN.defaultBlockState()
     };
 
-    public static final int CAVE_BOTTOM_Y = -60;
+    public static final int CAVE_BOTTOM_Y = -50;
     public static final int CAVE_TOP_Y = -25;
-    private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -42.5
-    private static final double CAVE_HALF_HEIGHT = (CAVE_TOP_Y - CAVE_BOTTOM_Y) / 2.0; // 17.5
+    private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -37.5
+    private static final double CAVE_HALF_HEIGHT = (CAVE_TOP_Y - CAVE_BOTTOM_Y) / 2.0; // 12.5
 
     private final long seed;
     private final AeroNoise continentNoise;
@@ -76,6 +79,8 @@ public class Layer1TerrainGenerator {
     private final AeroNoise detailNoise;
     private final AeroNoise pillarNoise;
     private final AeroNoise caveCeilingNoise;
+    private final AeroNoise caveFloorNoise;
+    private final AeroNoise caveLushNoise;
     private final AeroNoise oceanVegNoise;
     private final AeroNoise coralNoise;
 
@@ -87,6 +92,8 @@ public class Layer1TerrainGenerator {
         this.detailNoise      = new AeroNoise(seed ^ 0x33445566L);
         this.pillarNoise      = new AeroNoise(seed ^ 0x778899AAL);
         this.caveCeilingNoise = new AeroNoise(seed ^ 0xBBCCDDEEL);
+        this.caveFloorNoise   = new AeroNoise(seed ^ 0x13579BDFL);
+        this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
         this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
     }
@@ -122,7 +129,13 @@ public class Layer1TerrainGenerator {
         // Границы пещеры с легкой неровностью сводов
         double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
         int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
-        int bottom = CAVE_BOTTOM_Y;
+
+        // Рельеф пола: крупные холмы/впадины (fbm, низкая частота) + мелкая деталь
+        double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
+        double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
+        int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
+        // Не даём полу подняться выше середины пещеры, сохраняя проходимость объёма
+        bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
 
         if (y >= bottom && y <= top) {
             // Если это не столб — это пустота пещеры
@@ -250,6 +263,66 @@ public class Layer1TerrainGenerator {
                 if (surfaceY < SEA_LEVEL) {
                     for (int y = surfaceY + 1; y <= SEA_LEVEL; y++) {
                         writer.setBlockState(wx, y, wz, BS_WATER);
+                    }
+                }
+            }
+        }
+
+        decorateCaveCeiling(writer, chunkX, chunkZ);
+    }
+
+    /**
+     * Декорирует свод гигантской пещеры под стилистику "пышных пещер":
+     * мох на потолочном камне, светящийся лишайник и свисающие пещерные лианы
+     * (с шансом светящихся ягод на конце) в полости под потолком.
+     */
+    private void decorateCaveCeiling(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+
+        BlockState mossBlock   = Blocks.MOSS_BLOCK.defaultBlockState();
+        BlockState glowLichen  = Blocks.GLOW_LICHEN.defaultBlockState()
+                .setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
+        BlockState vineBerries = Blocks.CAVE_VINES.defaultBlockState()
+                .setValue(BlockStateProperties.BERRIES, true);
+        BlockState vineNoBerry = Blocks.CAVE_VINES.defaultBlockState()
+                .setValue(BlockStateProperties.BERRIES, false);
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+
+                int surfaceY = getHeight(wx, wz);
+                if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
+
+                double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
+                int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+
+                // Потолок пещеры: блок камня прямо над полостью (top+1), только если сама
+                // точка top действительно воздух пещеры (не столб).
+                if (!isCaveAir(wx, top, wz, surfaceY)) continue;
+                int ceilingBlockY = top + 1;
+                if (ceilingBlockY > surfaceY) continue;
+
+                double mossNoise = caveLushNoise.fbm2D(wx * 0.05, wz * 0.05, 2, 2.0, 0.5);
+                if (mossNoise <= 0.05) continue; // пятнами, не сплошным ковром
+
+                writer.setBlockState(wx, ceilingBlockY, wz, mossBlock);
+
+                double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 100.0, wz * 0.11);
+                if (lichenRoll > -0.2) {
+                    writer.setBlockState(wx, top, wz, glowLichen);
+                }
+
+                double vineRoll = caveLushNoise.noise2D(wx * 0.17 + 500.0, wz * 0.17 + 500.0);
+                if (vineRoll > 0.55) {
+                    int vineLen = 1 + ((int) (Math.abs(vineRoll) * 100.0) % 4); // 1..4 сегмента
+                    for (int i = 0; i < vineLen; i++) {
+                        int vy = top - 1 - i;
+                        if (!isCaveAir(wx, vy, wz, surfaceY)) break;
+                        boolean isLast = i == vineLen - 1;
+                        writer.setBlockState(wx, vy, wz, isLast ? vineBerries : vineNoBerry);
                     }
                 }
             }
