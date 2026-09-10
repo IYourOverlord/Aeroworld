@@ -332,7 +332,8 @@ public class Layer1TerrainGenerator {
 
     /**
      * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола,
-     * если над ним пустота пещеры (не столб).
+     * если над ним пустота пещеры (не столб). Учитывает, что столб может локально
+     * перекрывать расчётный уровень bottom — в этом случае реальный пол выше (верх столба).
      */
     private void decorateCaveFloor(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
         int startX = chunkX << 4;
@@ -354,13 +355,19 @@ public class Layer1TerrainGenerator {
                 int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
                 bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
 
-                // Точка bottom — воздух пещеры прямо над твёрдым полом (bottom-1).
-                if (!isCaveAir(wx, bottom, wz, surfaceY)) continue;
-                if (bottom - 1 < MIN_Y + BEDROCK_LAYERS) continue;
+                // Находим реальную первую воздушную клетку пещеры снизу вверх: столб может
+                // локально перекрывать расчётный bottom, тогда фактический пол — верх столба.
+                int airY = bottom;
+                while (airY <= CAVE_TOP_Y && isPillar(wx, airY, wz)) {
+                    airY++;
+                }
+                if (airY > CAVE_TOP_Y) continue; // столб полностью перекрыл колонну
+                if (!isCaveAir(wx, airY, wz, surfaceY)) continue;
+                if (airY - 1 < MIN_Y + BEDROCK_LAYERS) continue;
 
                 double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 900.0, wz * 0.11 + 900.0);
                 if (lichenRoll > -0.2) {
-                    writer.setBlockState(wx, bottom, wz, glowLichenUp);
+                    writer.setBlockState(wx, airY, wz, glowLichenUp);
                 }
             }
         }
