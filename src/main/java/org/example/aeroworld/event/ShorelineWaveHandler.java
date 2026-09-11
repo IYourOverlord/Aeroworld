@@ -12,31 +12,35 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import org.example.aeroworld.AeroWorld;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
- * Симуляция наката волны на берег.
+ * Симуляция наката и отката волны на берег.
  *
  * <h3>Как это работает</h3>
  * Вдоль кромки океан/песок с шагом {@value CELL} блоков выбираются стартовые
- * точки — позиции самой воды (source), у которых есть хотя бы один сухой
+ * точки - позиции самой воды (source), у которых есть хотя бы один сухой
  * сосед (трава/песок) на той же высоте. Раз в свой цикл такая точка
  * запускает "веер" наката: BFS от воздуха НАД этим water-блоком по соседним
  * сухим клеткам суши, на каждом шаге суши ставится тонкий flowing-блок воды
- * ({@code LEVEL=7} — минимальная толщина растёкшейся воды, ванилью не
- * распространяется сам, так как это не source). Каждый следующий "слой" BFS
- * (по расстоянию от старта) ставится с задержкой — это и даёт эффект
- * расходящегося веером наката, а не мгновенной заливки.
+ * ({@code LEVEL=7} - минимальная толщина растёкшейся воды, ванилью не
+ * распространяется сам, так как это не source). Каждое следующее "кольцо"
+ * BFS (по расстоянию от старта) ставится с нарастающей задержкой - это даёт
+ * эффект расходящегося веером наката, а не мгновенной заливки.
  *
- * Блок ставится в воздух НАД сухой поверхностью (как и раньше) — так гребень
+ * Блок ставится в воздух НАД сухой поверхностью (как и раньше) - так гребень
  * не проваливается физически в толщу песка/травы и всегда виден поверх неё.
  *
- * У каждого поставленного блока свой TTL — он исчезает (заменяется на воздух)
- * ровно через {@value TTL_TICKS} тиков после постановки, независимо от
- * остальных блоков веера (собственный откат по таймеру, а не общий откат всей
- * цепочки как раньше).
+ * Когда веер доходит до самого дальнего кольца (максимальной глубины), он
+ * держится {@value HOLD_TICKS} тиков, а затем начинает ОТКАТЫВАТЬСЯ назад:
+ * снятие блоков идёт от самого дальнего кольца к самому ближнему (от
+ * большего к меньшему), с тем же шагом задержки {@value STEP_DELAY_TICKS} -
+ * визуально волна именно отступает от суши обратно к морю, а не исчезает
+ * вся разом или вразнобой.
  */
 public final class ShorelineWaveHandler {
 
@@ -50,12 +54,12 @@ public final class ShorelineWaveHandler {
     private static final int CYCLE_TICKS = 100; // 5 секунд
     // Максимальная глубина BFS-веера (шагов по суше от кромки воды).
     private static final int WAVE_DEPTH = 5;
-    // Задержка (тиков) между соседними "кольцами" BFS-веера — скорость наката.
+    // Задержка (тиков) между соседними "кольцами" BFS-веера - скорость наката/отката.
     private static final int STEP_DELAY_TICKS = 3;
-    // Время жизни одного блока тонкой воды после постановки (2 секунды).
-    private static final int TTL_TICKS = 40;
+    // Время удержания волны у максимальной точки наката перед началом отката.
+    private static final int HOLD_TICKS = 8;
     // Грубый Y-фильтр: побережье слоя 1 всегда возле уровня моря (WATER_LEVEL=44,
-    // BASE_SURFACE_Y=48) — острова слоёв 2-4 (Y≥400) не должны попадать сюда.
+    // BASE_SURFACE_Y=48) - острова слоёв 2-4 (Y>=400) не должны попадать сюда.
     private static final int MIN_Y_FILTER = -10;
     private static final int MAX_Y_FILTER = 90;
 
@@ -65,9 +69,9 @@ public final class ShorelineWaveHandler {
     // Те же флаги, что использует BucketItem при выливании ведра.
     private static final int PLACE_FLAGS = 11; // UPDATE_CLIENTS | UPDATE_NEIGHBORS | UPDATE_INVISIBLE
 
-    /** Один шаг веера: поставить тонкую воду в pos в момент dueGameTime. */
+    /** Один шаг наката: поставить тонкую воду в pos в момент dueGameTime. */
     private record PendingPlace(ServerLevel level, BlockPos pos, long dueGameTime) {}
-    /** Снятие ранее поставленного блока по истечении его TTL. */
+    /** Один шаг отката: снять ранее поставленный блок в момент dueGameTime. */
     private record PendingRevert(ServerLevel level, BlockPos pos, long dueGameTime) {}
 
     private final Deque<PendingPlace> pendingPlaces = new ArrayDeque<>();
@@ -91,11 +95,10 @@ public final class ShorelineWaveHandler {
                     && level.hasChunkAt(pp.pos())
                     && pp.level().getBlockState(pp.pos()).isAir()) {
                 pp.level().setBlock(pp.pos(), BS_WATER_THIN, PLACE_FLAGS);
-                pendingReverts.addLast(new PendingRevert(pp.level(), pp.pos(), gameTime + TTL_TICKS));
             }
         }
 
-        // ── Снятие блоков веера по истечении их персонального TTL ───────────
+        // ── Снятие блоков отступающего веера, чей срок настал ──────────────
         while (!pendingReverts.isEmpty() && pendingReverts.peekFirst().dueGameTime() <= gameTime) {
             PendingRevert pr = pendingReverts.pollFirst();
             if (pr.level() == level
@@ -174,10 +177,20 @@ public final class ShorelineWaveHandler {
 
     /**
      * Строит веер тонкой воды методом BFS от точки над водой ({@code startAbove})
-     * по соседним сухим клеткам суши (песок/трава). Каждое "кольцо" BFS
-     * (группа клеток на одинаковом расстоянии от старта) ставится с
-     * нарастающей задержкой — так веер визуально расходится от кромки воды
-     * вглубь берега. Глубина ограничена {@value WAVE_DEPTH} шагами.
+     * по соседним сухим клеткам суши (песок/трава), затем планирует откат в
+     * обратном порядке.
+     *
+     * Накат: каждое "кольцо" BFS (группа клеток на одинаковом расстоянии от
+     * старта) ставится с нарастающей задержкой depth * {@value STEP_DELAY_TICKS} -
+     * так веер визуально расходится от кромки воды вглубь берега. Глубина
+     * ограничена {@value WAVE_DEPTH} шагами (или меньше, если веер упёрся в
+     * край суши раньше).
+     *
+     * Откат: после того как поставлено последнее (самое дальнее) кольцо,
+     * выдерживается пауза {@value HOLD_TICKS} тиков, а затем кольца снимаются
+     * в обратном порядке — сначала самое дальнее (наибольшая глубина), затем
+     * ближе и ближе к воде, с тем же шагом {@value STEP_DELAY_TICKS}. Так
+     * волна отступает так же, как и пришла, но в обратную сторону.
      */
     private void launchWaveFan(ServerLevel level, BlockPos startAbove, int shoreY, long gameTime) {
         Set<Long> visited = new HashSet<>();
@@ -186,8 +199,13 @@ public final class ShorelineWaveHandler {
         Deque<int[]> currentRing = new ArrayDeque<>();
         currentRing.add(new int[] { startAbove.getX(), startAbove.getZ() });
 
+        // Кольца в порядке возрастания глубины: rings.get(0) — глубина 1 (ближе к воде),
+        // последний элемент — самая дальняя глубина, до которой реально дошёл веер.
+        List<List<BlockPos>> rings = new ArrayList<>();
+
         for (int depth = 1; depth <= WAVE_DEPTH && !currentRing.isEmpty(); depth++) {
             Deque<int[]> nextRing = new ArrayDeque<>();
+            List<BlockPos> ringPositions = new ArrayList<>();
             long due = gameTime + (long) depth * STEP_DELAY_TICKS;
 
             for (int[] cell : currentRing) {
@@ -207,13 +225,33 @@ public final class ShorelineWaveHandler {
                         BlockPos dryPos = new BlockPos(nx, topY, nz);
                         if (!isDryGround(level, dryPos)) continue; // не суша или сверху занято
 
-                        BlockPos abovePos = dryPos.above();
-                        pendingPlaces.addLast(new PendingPlace(level, abovePos.immutable(), due));
+                        BlockPos abovePos = dryPos.above().immutable();
+                        pendingPlaces.addLast(new PendingPlace(level, abovePos, due));
+                        ringPositions.add(abovePos);
                         nextRing.add(new int[] { nx, nz });
                     }
                 }
             }
+
+            if (!ringPositions.isEmpty()) {
+                rings.add(ringPositions);
+            }
             currentRing = nextRing;
+        }
+
+        if (rings.isEmpty()) return;
+
+        // Откат: время постановки самого дальнего кольца + пауза удержания.
+        long lastPlaceDue = gameTime + (long) rings.size() * STEP_DELAY_TICKS;
+        long retreatStart = lastPlaceDue + HOLD_TICKS;
+
+        // Идём от последнего (самого дальнего) кольца к первому (ближайшему к воде) —
+        // ring index rings.size()-1 снимается первым (offset 0), index 0 снимается последним.
+        for (int i = rings.size() - 1; i >= 0; i--) {
+            long removalDue = retreatStart + (long) (rings.size() - 1 - i) * STEP_DELAY_TICKS;
+            for (BlockPos pos : rings.get(i)) {
+                pendingReverts.addLast(new PendingRevert(level, pos, removalDue));
+            }
         }
     }
 
