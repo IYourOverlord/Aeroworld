@@ -17,7 +17,7 @@ import java.util.Set;
  *   <li>Явный deny-список — никогда не размещать в AeroWorld.</li>
  *   <li>Явный whitelist по точному id — всегда принимать без проверок.</li>
  *   <li>Подземные структуры (по id или по токену в пути).</li>
- *   <li>Водные структуры (ocean, monument, shipwreck…).</li>
+ *   <li>Водные структуры (ocean, monument, shipwreck, buried_treasure…).</li>
  *   <li>Небесные парящие (airship, floating, sky, aerial, cloud…).</li>
  *   <li>Всё остальное → {@link StructureCategory#SURFACE} (наземные).</li>
  * </ol>
@@ -48,7 +48,7 @@ public final class StructureCategoryResolver {
     );
 
     private static final Set<String> WATER_TOKENS = Set.of(
-            "ocean", "monument", "shipwreck", "ruins", "underwater"
+            "ocean", "monument", "shipwreck", "ruins", "underwater", "buried_treasure"
     );
 
     private static final Set<String> SKY_FLOATING_TOKENS = Set.of(
