@@ -442,6 +442,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                              BiomeManager biomeManager, StructureManager structureManager,
                              ChunkAccess chunk, GenerationStep.Carving step) {
         initializeWithSeed(seed);
+        super.applyCarvers(region, seed, random, biomeManager, structureManager, chunk, step);
     }
 
     @Override
@@ -472,6 +473,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
             layer4VaultTrialPlacer.placeForChunk(region, chunk, upperIslands);
         }
 
+        // Островная каменная ступенчатая опора под Ancient City в пещере
+        AncientCityIslandSupportPlacer.placeSupportForChunk(region, chunk);
     }
 
 

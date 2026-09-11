@@ -24,8 +24,6 @@ public class Layer1TerrainGenerator {
     public static final int MIN_Y = -64;
     public static final int MAX_Y = 300;
     public static final int BEDROCK_LAYERS = 5;
-    // Compatibility boundary for ancient-city support code. Cavern carving is disabled.
-    public static final int CAVE_BOTTOM_Y = MIN_Y + BEDROCK_LAYERS;
 
     private static final BlockState BS_BEDROCK = Blocks.BEDROCK.defaultBlockState();
     private static final BlockState BS_DEEPSLATE = Blocks.DEEPSLATE.defaultBlockState();
@@ -72,17 +70,23 @@ public class Layer1TerrainGenerator {
             Blocks.HORN_CORAL_FAN.defaultBlockState()
     };
 
+    public static final int CAVE_BOTTOM_Y = -50;
+    public static final int CAVE_TOP_Y = -25;
+    private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -37.5
+
     private final long seed;
     private final AeroNoise continentNoise;
     private final AeroNoise erosionNoise;
     private final AeroNoise heightNoise;
     private final AeroNoise detailNoise;
+    private final AeroNoise caveCeilingNoise;
+    private final AeroNoise caveFloorNoise;
+    private final AeroNoise caveLushNoise;
     private final AeroNoise oceanVegNoise;
     private final AeroNoise coralNoise;
     private final AeroNoise ridgeNoise;
     private final AeroNoise riverNoise;
     private final AeroNoise riverWarpNoise;
-    private final AeroNoise ridgeDetailNoise;
 
     public Layer1TerrainGenerator(long seed) {
         this.seed = seed;
@@ -90,24 +94,39 @@ public class Layer1TerrainGenerator {
         this.erosionNoise     = new AeroNoise(seed ^ 0x5E6F7A8BL);
         this.heightNoise      = new AeroNoise(seed ^ 0x9C0D1E2FL);
         this.detailNoise      = new AeroNoise(seed ^ 0x33445566L);
+        this.caveCeilingNoise = new AeroNoise(seed ^ 0xBBCCDDEEL);
+        this.caveFloorNoise   = new AeroNoise(seed ^ 0x13579BDFL);
+        this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
         this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
         this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
         this.riverNoise       = new AeroNoise(seed ^ 0x4E9B17C3L);
         this.riverWarpNoise   = new AeroNoise(seed ^ 0xC3815F29L);
-        this.ridgeDetailNoise  = new AeroNoise(seed ^ 0x95B4E631L);
     }
 
     public long getSeed() {
         return seed;
     }
 
-
     /**
-     * Compatibility hook for height-column consumers. Layer 1 never carves cave air.
+     * Проверяет, находится ли точка внутри полости гигантской пещеры (не под водой).
      */
     public boolean isCaveAir(int wx, int y, int wz, int surfaceY) {
-        return false;
+        // Пещера генерируется только на суше (surfaceY >= SEA_LEVEL)
+        if (surfaceY < SEA_LEVEL) return false;
+
+        // Границы пещеры с легкой неровностью сводов
+        double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
+        int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+
+        // Рельеф пола: крупные холмы/впадины (fbm, низкая частота) + мелкая деталь
+        double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
+        double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
+        int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
+        // Не даём полу подняться выше середины пещеры, сохраняя проходимость объёма
+        bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+
+        return y >= bottom && y <= top;
     }
 
     /**
@@ -148,16 +167,11 @@ public class Layer1TerrainGenerator {
         double land = 3.0 + continentalRise + mountainness * 80.0 * mountainShape
                 + macro * 4.0 + detail * 1.5;
 
-        // Continental ridge systems use a broad shoulder plus a sharply tapered,
-        // noise-distorted summit. The summit term approaches a single column instead
-        // of producing a flat clipped plateau.
+        // Rare continent-scale ridge systems. The ridge field is sampled in world
+        // coordinates and blended by continentality, so it cannot create chunk seams.
         double ridge = getRidgeStrength(wx, wz);
         double ridgeLandMask = smoothstep(0.04, 0.22, continentality);
-        double ridgeDetail = ridgeDetailNoise.fbm2D(wx * 0.018, wz * 0.018, 4, 2.0, 0.5);
-        double shoulder = ridge * (28.0 + 12.0 * mountainShape);
-        double summit = Math.pow(ridge, 4.0) * (58.0 + 22.0 * mountainShape);
-        double crag = Math.pow(ridge, 1.5) * ridgeDetail * 12.0;
-        land += ridgeLandMask * Math.max(0.0, shoulder + summit + crag);
+        land += ridgeLandMask * ridge * (92.0 + 34.0 * mountainShape);
 
         double height = lerp(deepOcean, shelf, smoothstep(-0.42, -0.16, continentality));
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
@@ -232,6 +246,12 @@ public class Layer1TerrainGenerator {
 
                 // Каменная толща: deepslate ниже Y=0, stone выше Y=0
                 for (int y = MIN_Y + BEDROCK_LAYERS; y <= surfaceY; y++) {
+                    // Проверяем полость гигантской пещеры:
+                    // если это суша и точка попадает в пещеру (и не является столбом), то блок не ставим (оставляем воздух)
+                    if (isCaveAir(wx, y, wz, surfaceY)) {
+                        continue;
+                    }
+
                     if (y < -8) {
                         writer.setBlockState(wx, y, wz, BS_DEEPSLATE);
                     } else if (y <= 0) {
@@ -247,6 +267,101 @@ public class Layer1TerrainGenerator {
                     for (int y = surfaceY + 1; y <= SEA_LEVEL; y++) {
                         writer.setBlockState(wx, y, wz, BS_WATER);
                     }
+                }
+            }
+        }
+
+        decorateCaveCeiling(writer, chunkX, chunkZ);
+        decorateCaveFloor(writer, chunkX, chunkZ);
+    }
+
+    /**
+     * Декорирует свод гигантской пещеры под стилистику "пышных пещер":
+     * мох на потолочном камне, светящийся лишайник и свисающие пещерные лианы
+     * (с шансом светящихся ягод на конце) в полости под потолком.
+     */
+    private void decorateCaveCeiling(ChunkWriter writer, int chunkX, int chunkZ) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+
+        BlockState mossBlock   = Blocks.MOSS_BLOCK.defaultBlockState();
+        BlockState glowLichen  = Blocks.GLOW_LICHEN.defaultBlockState()
+                .setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
+        BlockState vineBerries = Blocks.CAVE_VINES.defaultBlockState()
+                .setValue(BlockStateProperties.BERRIES, true);
+        BlockState vineNoBerry = Blocks.CAVE_VINES.defaultBlockState()
+                .setValue(BlockStateProperties.BERRIES, false);
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+
+                int surfaceY = getHeight(wx, wz);
+                if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
+
+                double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
+                int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+
+                // Потолок пещеры: блок камня прямо над полостью (top+1), только если сама
+                // точка top действительно воздух пещеры (не столб).
+                if (!isCaveAir(wx, top, wz, surfaceY)) continue;
+                int ceilingBlockY = top + 1;
+                if (ceilingBlockY > surfaceY) continue;
+
+                double mossNoise = caveLushNoise.fbm2D(wx * 0.05, wz * 0.05, 2, 2.0, 0.5);
+                if (mossNoise <= 0.05) continue; // пятнами, не сплошным ковром
+
+                writer.setBlockState(wx, ceilingBlockY, wz, mossBlock);
+
+                double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 100.0, wz * 0.11);
+                if (lichenRoll > -0.2) {
+                    writer.setBlockState(wx, top, wz, glowLichen);
+                }
+
+                double vineRoll = caveLushNoise.noise2D(wx * 0.17 + 500.0, wz * 0.17 + 500.0);
+                if (vineRoll > 0.55) {
+                    int vineLen = 1 + ((int) (Math.abs(vineRoll) * 100.0) % 4); // 1..4 сегмента
+                    for (int i = 0; i < vineLen; i++) {
+                        int vy = top - 1 - i;
+                        if (!isCaveAir(wx, vy, wz, surfaceY)) break;
+                        boolean isLast = i == vineLen - 1;
+                        writer.setBlockState(wx, vy, wz, isLast ? vineBerries : vineNoBerry);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола.
+     */
+    private void decorateCaveFloor(ChunkWriter writer, int chunkX, int chunkZ) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+
+        BlockState glowLichenUp = Blocks.GLOW_LICHEN.defaultBlockState()
+                .setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+
+                int surfaceY = getHeight(wx, wz);
+                if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
+
+                double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
+                double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
+                int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
+                bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+
+                if (!isCaveAir(wx, bottom, wz, surfaceY)) continue;
+                if (bottom - 1 < MIN_Y + BEDROCK_LAYERS) continue;
+
+                double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 900.0, wz * 0.11 + 900.0);
+                if (lichenRoll > -0.2) {
+                    writer.setBlockState(wx, bottom, wz, glowLichenUp);
                 }
             }
         }
