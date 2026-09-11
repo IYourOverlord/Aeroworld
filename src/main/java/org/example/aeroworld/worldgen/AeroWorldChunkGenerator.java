@@ -34,7 +34,8 @@ import org.example.aeroworld.worldgen.structure.StructureSupportValidator;
 import org.example.aeroworld.worldgen.structure.ValidationResult;
 import org.example.aeroworld.worldgen.structure.AncientCityIslandSupportPlacer;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
-import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
+import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
+import org.example.aeroworld.worldgen.util.ChunkWriter;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.List;
@@ -390,19 +391,19 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         final int chunkMinY = chunk.getMinBuildHeight();
         final int chunkMaxY = chunk.getMaxBuildHeight();
 
-        SectionDirectChunkWriter directWriter = new SectionDirectChunkWriter(chunk);
+        ChunkWriter chunkWriter = new ChunkAccessWriter(chunk);
 
         // Layer 1: кастомный рельеф
         if (chunkMinY <= Layer1TerrainGenerator.MAX_Y && chunkMaxY >= Layer1TerrainGenerator.MIN_Y) {
             if (layer1Terrain != null) {
-                layer1Terrain.fillTerrain(directWriter, chunkX, chunkZ);
+                layer1Terrain.fillTerrain(chunkWriter, chunkX, chunkZ);
             }
         }
 
         // Layer 2 (Lower Islands): Y 300..400
         if (chunkMinY <= LowerIslandGenerator.LAYER_MAX_Y && chunkMaxY >= LowerIslandGenerator.LAYER_MIN_Y) {
             if (lowerIslands != null) {
-                lowerIslands.fillChunk(directWriter, chunkX, chunkZ);
+                lowerIslands.fillChunk(chunkWriter, chunkX, chunkZ);
                 if (structurePlacer != null) {
                     structurePlacer.placeForChunk(chunk, lowerIslands,
                             RandomSource.create(worldSeed ^ ((long) chunkX * 341873128712L + (long) chunkZ * 132897987541L) ^ 0xDEADBEEFL));
@@ -413,14 +414,14 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Layer 3 (High Islands): Y 1000..1100
         if (chunkMinY <= HighIslandGenerator.LAYER_MAX_Y && chunkMaxY >= HighIslandGenerator.LAYER_MIN_Y) {
             if (highIslands != null) {
-                highIslands.fillChunk(directWriter, chunkX, chunkZ);
+                highIslands.fillChunk(chunkWriter, chunkX, chunkZ);
             }
         }
 
         // Layer 4 (Upper Islands): Y 1900..2031
         if (chunkMinY <= UpperIslandGenerator.LAYER_MAX_Y && chunkMaxY >= UpperIslandGenerator.LAYER_MIN_Y) {
             if (upperIslands != null) {
-                upperIslands.fillChunk(directWriter, chunkX, chunkZ);
+                upperIslands.fillChunk(chunkWriter, chunkX, chunkZ);
             }
         }
 
@@ -441,7 +442,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                              BiomeManager biomeManager, StructureManager structureManager,
                              ChunkAccess chunk, GenerationStep.Carving step) {
         initializeWithSeed(seed);
-        // Layer 1 carvers: no-op for now (пещеры вырезаны по ТЗ для чистой базы)
+        super.applyCarvers(region, seed, random, biomeManager, structureManager, chunk, step);
     }
 
     @Override
@@ -453,6 +454,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         // Делегируем стандартную декорацию биомов ванильному пайплайну (структуры, растительность)
         super.applyBiomeDecoration(region, chunk, structureManager);
+
+        // Удаляем ванильные руды, просочившиеся через biome features (Layer 1)
+        Layer1OreFilter.applyToChunk(chunk);
 
         if (lowerIslands != null) {
             lowerIslands.clearVanillaVegetationInCentralZone(region, chunk);
@@ -473,8 +477,5 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         AncientCityIslandSupportPlacer.placeSupportForChunk(region, chunk);
     }
 
-    @Override
-    public void spawnOriginalMobs(WorldGenRegion region) {
-        // No-op or handle via natural spawner
-    }
+
 }

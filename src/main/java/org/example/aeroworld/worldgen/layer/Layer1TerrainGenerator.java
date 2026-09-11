@@ -10,7 +10,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
-import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
+import org.example.aeroworld.worldgen.util.ChunkWriter;
 
 import java.util.function.BiFunction;
 
@@ -38,6 +38,9 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_GRAVEL = Blocks.GRAVEL.defaultBlockState();
     private static final BlockState BS_SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState();
     private static final BlockState BS_PODZOL = Blocks.PODZOL.defaultBlockState();
+    private static final BlockState BS_CALCITE = Blocks.CALCITE.defaultBlockState();
+    private static final BlockState BS_BASALT = Blocks.BASALT.defaultBlockState();
+    private static final BlockState BS_BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState();
 
     private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
     private static final BlockState BS_KELP_PLANT = Blocks.KELP_PLANT.defaultBlockState();
@@ -70,7 +73,6 @@ public class Layer1TerrainGenerator {
     public static final int CAVE_BOTTOM_Y = -50;
     public static final int CAVE_TOP_Y = -25;
     private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -37.5
-    private static final double CAVE_HALF_HEIGHT = (CAVE_TOP_Y - CAVE_BOTTOM_Y) / 2.0; // 12.5
 
     private final long seed;
     private final AeroNoise continentNoise;
@@ -82,6 +84,9 @@ public class Layer1TerrainGenerator {
     private final AeroNoise caveLushNoise;
     private final AeroNoise oceanVegNoise;
     private final AeroNoise coralNoise;
+    private final AeroNoise ridgeNoise;
+    private final AeroNoise riverNoise;
+    private final AeroNoise riverWarpNoise;
 
     public Layer1TerrainGenerator(long seed) {
         this.seed = seed;
@@ -94,6 +99,9 @@ public class Layer1TerrainGenerator {
         this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
         this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
+        this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
+        this.riverNoise       = new AeroNoise(seed ^ 0x4E9B17C3L);
+        this.riverWarpNoise   = new AeroNoise(seed ^ 0xC3815F29L);
     }
 
     public long getSeed() {
@@ -144,45 +152,63 @@ public class Layer1TerrainGenerator {
      * Горы (низкая эрозия): могут подниматься выше Y=20 (до 60..120+).
      */
     public int getHeight(int wx, int wz) {
-        double cont = getContinentality(wx, wz);
-        double eros = getErosion(wx, wz);
-        double fbm  = heightNoise.fbm2D(wx * 0.003, wz * 0.003, 5, 2.0, 0.5);
-        double detail = detailNoise.noise2D(wx * 0.02, wz * 0.02) * 1.5;
+        double continentality = getContinentality(wx, wz);
+        double erosion = getErosion(wx, wz);
+        double macro = heightNoise.fbm2D(wx * 0.003, wz * 0.003, 5, 2.0, 0.5);
+        double detail = detailNoise.noise2D(wx * 0.02, wz * 0.02);
 
-        double baseHeight;
-        if (cont < -0.20) {
-            // Глубокий океан (быстрое падение до -50)
-            double t = Math.min(1.0, (cont - (-0.20)) / (-0.30)); // 0 у -0.20, 1 при <= -0.50
-            baseHeight = -35.0 - t * 15.0; // от -35 до -50
-        } else if (cont < -0.05) {
-            // Крутой склон шельфа: быстрый спуск от -2 до -35
-            double t = (cont - (-0.05)) / (-0.15); // 0 при -0.05, 1 при -0.20
-            double curved = t * t; // квадратичное ускорение спуска
-            baseHeight = -2.0 - curved * 33.0; // от -2 до -35
-        } else if (cont < 0.0) {
-            // Узкая прибрежная линия / пляж (0..3)
-            double t = (cont - (-0.05)) / 0.05; // 0..1
-            baseHeight = 0.0 + t * 3.0;
-        } else {
-            // Стандартная суша (3..14)
-            double t = Math.min(1.0, cont / 0.7);
-            baseHeight = 3.0 + t * 11.0;
+        double deepOcean = -47.0 + macro * 3.0 + detail * 0.75;
+        double shelf = -8.0 + macro * 2.5 + detail;
+        double beach = 2.0 + macro * 1.5 + detail;
 
-            // Холмы и горы от эрозии
-            if (eros < 0.0) {
-                double mountainFactor = -eros; // 0..1
-                // Горы могут превышать предел Y=20, поднимаясь до 60..120+
-                baseHeight += mountainFactor * 80.0 * (0.5 + 0.5 * fbm);
-            }
-        }
+        double continentalRise = smoothstep(0.0, 0.70, continentality) * 11.0;
+        double mountainness = smoothstep(0.0, 0.55, -erosion);
+        double mountainShape = 0.35 + 0.65 * ((macro + 1.0) * 0.5);
+        double land = 3.0 + continentalRise + mountainness * 80.0 * mountainShape
+                + macro * 4.0 + detail * 1.5;
 
-        // Детализация рельефа: для обычной суши небольшая вариация (±3)
-        double h = baseHeight + (fbm * 4.0) + detail;
+        // Rare continent-scale ridge systems. The ridge field is sampled in world
+        // coordinates and blended by continentality, so it cannot create chunk seams.
+        double ridge = getRidgeStrength(wx, wz);
+        double ridgeLandMask = smoothstep(0.04, 0.22, continentality);
+        land += ridgeLandMask * ridge * (92.0 + 34.0 * mountainShape);
 
-        int finalH = (int) Math.round(h);
-        if (finalH < MIN_Y + BEDROCK_LAYERS + 1) finalH = MIN_Y + BEDROCK_LAYERS + 1;
-        if (finalH > MAX_Y - 5) finalH = MAX_Y - 5;
-        return finalH;
+        double height = lerp(deepOcean, shelf, smoothstep(-0.42, -0.16, continentality));
+        height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
+        height = lerp(height, land, smoothstep(-0.06, 0.10, continentality));
+
+        // Domain-warped river valleys form continuous, naturally curved channels.
+        // They are only cut through land; the centre is five to six blocks below sea level.
+        double river = getRiverStrength(wx, wz);
+        double riverLandMask = smoothstep(-0.01, 0.10, continentality);
+        double riverBed = SEA_LEVEL - (5.0 + riverNoise.noise2D(wx * 0.018, wz * 0.018) * 0.5);
+        height = lerp(height, Math.min(height, riverBed), river * riverLandMask);
+
+        int finalHeight = (int) Math.round(height);
+        return Math.max(MIN_Y + BEDROCK_LAYERS + 1, Math.min(220, finalHeight));
+    }
+
+    /** Returns the continuous ridge contribution used by terrain and biome selection. */
+    public double getRidgeStrength(int wx, int wz) {
+        double field = 1.0 - Math.abs(ridgeNoise.fbm2D(wx * 0.00125, wz * 0.00125, 4, 2.0, 0.5));
+        return smoothstep(0.72, 0.90, field);
+    }
+
+    /** Returns the continuous river-channel mask; one equals the channel centre. */
+    public double getRiverStrength(int wx, int wz) {
+        double warpX = riverWarpNoise.fbm2D(wx * 0.0018 + 91.0, wz * 0.0018 - 37.0, 3, 2.0, 0.5) * 130.0;
+        double warpZ = riverWarpNoise.fbm2D(wx * 0.0018 - 53.0, wz * 0.0018 + 71.0, 3, 2.0, 0.5) * 130.0;
+        double channel = Math.abs(riverNoise.fbm2D((wx + warpX) * 0.0042, (wz + warpZ) * 0.0042, 3, 2.0, 0.5));
+        return 1.0 - smoothstep(0.035, 0.075, channel);
+    }
+
+    private static double smoothstep(double edge0, double edge1, double value) {
+        double t = Math.max(0.0, Math.min(1.0, (value - edge0) / (edge1 - edge0)));
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    private static double lerp(double from, double to, double progress) {
+        return from + (to - from) * progress;
     }
 
     /**
@@ -196,7 +222,7 @@ public class Layer1TerrainGenerator {
     /**
      * Заполняет твёрдую толщу Layer 1 камнем/глубинным сланцем, бедроком и водой до sea_level.
      */
-    public void fillTerrain(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
+    public void fillTerrain(ChunkWriter writer, int chunkX, int chunkZ) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
@@ -254,7 +280,7 @@ public class Layer1TerrainGenerator {
      * мох на потолочном камне, светящийся лишайник и свисающие пещерные лианы
      * (с шансом светящихся ягод на конце) в полости под потолком.
      */
-    private void decorateCaveCeiling(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
+    private void decorateCaveCeiling(ChunkWriter writer, int chunkX, int chunkZ) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
@@ -310,12 +336,12 @@ public class Layer1TerrainGenerator {
     /**
      * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола.
      */
-    private void decorateCaveFloor(SectionDirectChunkWriter writer, int chunkX, int chunkZ) {
+    private void decorateCaveFloor(ChunkWriter writer, int chunkX, int chunkZ) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
         BlockState glowLichenUp = Blocks.GLOW_LICHEN.defaultBlockState()
-                .setValue(MultifaceBlock.getFaceProperty(Direction.UP), true);
+                .setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
@@ -393,7 +419,13 @@ public class Layer1TerrainGenerator {
                         topBlock = BS_GRASS;
                         underBlock = BS_DIRT;
                     }
-                } else if (biomePath.contains("old_growth") || biomePath.contains("taiga")) {
+                } else if (biomePath.contains("volcanic")) {
+                    topBlock = BS_BASALT;
+                    underBlock = BS_BLACKSTONE;
+                } else if (biomePath.contains("karst")) {
+                    topBlock = BS_CALCITE;
+                    underBlock = BS_STONE;
+                } else if (biomePath.contains("heather") || biomePath.contains("old_growth") || biomePath.contains("taiga")) {
                     topBlock = BS_PODZOL;
                     underBlock = BS_DIRT;
                 }

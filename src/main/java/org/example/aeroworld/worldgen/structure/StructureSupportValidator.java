@@ -143,24 +143,18 @@ public final class StructureSupportValidator {
             return cacheAndReturn(start, ValidationResult.denied(structureId, category, bounds));
         }
 
-        // ── 2. Водные структуры — Layer 1 имеет полноценные океаны (WATER_LEVEL,
-        //    см. getSeaLevel()), поэтому больше не отклоняются безусловно.
-        //    Требуем твёрдое дно/опору под подошвой структуры (тот же порог,
-        //    что и для наземных SURFACE), только если фактический слой — Layer 1
-        //    (actualLayer == 1) или не определён (actualLayer < 0, часто бывает
-        //    прямо на воде, где сэмплер не видит тверди в толще над дном).
+        // ── 2. Водные структуры — разрешаем только в океаническом Layer 1. ───
         if (category == StructureCategory.WATER) {
             if (actualLayer == 2 || actualLayer == 3 || actualLayer == 4) {
                 logRejection(structureId, bounds, "водная структура попала на небесный остров");
                 return cacheAndReturn(start, ValidationResult.waterStructure(structureId, bounds));
             }
-            // Подводные структуры (ocean_monument) стоят на дне, а bounds.minY()
-            // может быть на несколько блоков выше самого дна (толща воды над
-            // основанием монумента) — SUPPORT_SCAN_DEPTH=6 в hasSolidBelow этого
-            // не всегда достаёт. Сканируем от maxY бокса вниз, глубина скана там
-            // покрывает всю высоту структуры + запас.
-            return cacheAndReturn(start, sampleSupport(structureId, StructureCategory.WATER, bounds, sampler,
-                    bounds.maxY(), SURFACE_SUPPORT_THRESHOLD));
+            // Vanilla water structures already validate their biome and fluid volume while
+            // creating the start. Their bounding boxes may span far above the ocean floor,
+            // so a shallow support scan rejects valid monuments, ruins, and shipwrecks in
+            // the custom deep-ocean profile. At this phase only prevent cross-layer starts.
+            return cacheAndReturn(start, ValidationResult.accepted(structureId, StructureCategory.WATER,
+                    bounds, 1, 1, 1.0, 1.0));
         }
 
         // ── 3. Пустота между слоями — структура гарантированно в воздухе ──────

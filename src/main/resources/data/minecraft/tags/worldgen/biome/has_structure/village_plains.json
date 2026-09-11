@@ -3,6 +3,9 @@
   "values": [
     "aeroworld:meadow",
     "aeroworld:plains",
-    "aeroworld:sunflower_plains"
+    "aeroworld:sunflower_plains",
+    "aeroworld:alpine_meadow",
+    "aeroworld:autumn_forest",
+    "aeroworld:heather_moor"
   ]
 }

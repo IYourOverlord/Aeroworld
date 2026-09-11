@@ -34,7 +34,8 @@ public class AeroBiomeSource extends BiomeSource {
             "savanna", "savanna_plateau", "snowy_beach", "snowy_plains", "snowy_slopes",
             "snowy_taiga", "sparse_jungle", "stony_peaks", "stony_shore", "sunflower_plains",
             "swamp", "taiga", "warm_ocean", "windswept_forest", "windswept_gravelly_hills",
-            "windswept_hills", "windswept_savanna", "wooded_badlands"
+            "windswept_hills", "windswept_savanna", "wooded_badlands",
+            "alpine_meadow", "karst_highlands", "autumn_forest", "heather_moor", "volcanic_wastes"
     };
 
     private final MultiNoiseBiomeSource delegate;
@@ -135,15 +136,16 @@ public class AeroBiomeSource extends BiomeSource {
         Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
         double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
         double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
+        double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
 
         double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
         double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
 
-        String biomeName = resolveLayer1Biome(cont, eros, temp, humid);
+        String biomeName = resolveLayer1Biome(cont, eros, ridge, temp, humid);
         return findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
     }
 
-    private String resolveLayer1Biome(double cont, double eros, double temp, double humid) {
+    private String resolveLayer1Biome(double cont, double eros, double ridge, double temp, double humid) {
         // 1. Океан
         if (cont < -0.05) {
             boolean deep = cont < -0.20;
@@ -167,7 +169,14 @@ public class AeroBiomeSource extends BiomeSource {
             return "beach";
         }
 
-        // 3. Суша: горы и пики
+        // 3. Continuous ridge biomes.
+        if (ridge >= 0.70) {
+            if (temp < -0.10) return "frozen_peaks";
+            if (temp >= 0.20 && humid <= -0.18) return "volcanic_wastes";
+            return humid >= 0.05 ? "alpine_meadow" : "karst_highlands";
+        }
+
+        // 4. Суша: горы и пики
         if (eros < -0.35) {
             if (temp < -0.3) return "frozen_peaks";
             if (temp < 0.1)  return "jagged_peaks";
@@ -175,43 +184,44 @@ public class AeroBiomeSource extends BiomeSource {
             return "windswept_hills";
         }
 
-        // 4. Холодно
+        // 5. Холодно
         if (temp < -0.3) {
             if (humid > 0.1) return "snowy_taiga";
             if (humid < -0.2 && eros < -0.1) return "ice_spikes";
             return "snowy_plains";
         }
 
-        // 5. Умеренно-холодно
+        // 6. Умеренно-холодно
         if (temp < 0.0) {
             if (humid > 0.2) return "old_growth_pine_taiga";
             if (humid > -0.1) return "taiga";
             return "windswept_forest";
         }
 
-        // 6. Умеренно
-        if (temp < 0.4) {
+        // 7. Temperate
+        if (temp < 0.16) {
             if (humid > 0.35) return "dark_forest";
-            if (humid > 0.15) return "forest";
-            if (humid > -0.1) return "birch_forest";
-            if (humid > -0.3) return "meadow";
-            return "plains";
+            if (humid > 0.18) return "autumn_forest";
+            if (humid > -0.08) return "birch_forest";
+            if (humid > -0.24) return "meadow";
+            return "heather_moor";
         }
 
-        // 7. Жарко
-        if (humid > 0.4) {
-            return "bamboo_jungle";
-        } else if (humid > 0.2) {
-            return "jungle";
-        } else if (humid > 0.0) {
-            return "swamp";
-        } else if (humid > -0.25) {
-            return "savanna";
-        } else if (humid > -0.5) {
-            return "desert";
-        } else {
-            return "badlands";
+        // 8. Warm climates. Thresholds are intentionally centred on the observed
+        // fBm range so every vanilla arid biome receives a meaningful share.
+        if (temp >= 0.16 && humid <= -0.18) {
+            return ridge >= 0.45 ? "eroded_badlands" : "badlands";
         }
+        if (temp >= 0.16 && humid <= 0.05) {
+            return "desert";
+        }
+        if (temp >= 0.16 && humid <= 0.20) {
+            return "savanna";
+        }
+        if (temp >= 0.16 && humid <= 0.38) {
+            return "jungle";
+        }
+        return "bamboo_jungle";
     }
 
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,

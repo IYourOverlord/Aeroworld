@@ -31,6 +31,11 @@
     "aeroworld:taiga",
     "aeroworld:windswept_forest",
     "aeroworld:windswept_gravelly_hills",
-    "aeroworld:windswept_hills"
+    "aeroworld:windswept_hills",
+    "aeroworld:alpine_meadow",
+    "aeroworld:karst_highlands",
+    "aeroworld:autumn_forest",
+    "aeroworld:heather_moor",
+    "aeroworld:volcanic_wastes"
   ]
 }

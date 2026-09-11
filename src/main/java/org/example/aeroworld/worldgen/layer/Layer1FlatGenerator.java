@@ -15,7 +15,6 @@ public class Layer1FlatGenerator {
 
     public static final int WATER_LEVEL = Layer1TerrainGenerator.SEA_LEVEL;
     public static final int BASE_SURFACE_Y = 12;
-    public static final int PUBLIC_BASE_SURFACE_Y = BASE_SURFACE_Y;
 
     private final long seed;
     private final Layer1TerrainGenerator terrainGenerator;

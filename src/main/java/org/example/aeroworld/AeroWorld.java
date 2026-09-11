@@ -121,6 +121,7 @@ public class AeroWorld {
                 PhysicalStructures.registerStructure(def);
             }
         } catch (Exception e) {
+            LOGGER.error("[AeroWorld] Failed to register structure {}: {}", def.id(), e.getMessage());
         }
     }
 

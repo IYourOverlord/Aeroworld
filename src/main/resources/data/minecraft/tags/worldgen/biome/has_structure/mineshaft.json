@@ -49,6 +49,11 @@
     "aeroworld:windswept_gravelly_hills",
     "aeroworld:windswept_hills",
     "aeroworld:windswept_savanna",
-    "aeroworld:wooded_badlands"
+    "aeroworld:wooded_badlands",
+    "aeroworld:alpine_meadow",
+    "aeroworld:karst_highlands",
+    "aeroworld:autumn_forest",
+    "aeroworld:heather_moor",
+    "aeroworld:volcanic_wastes"
   ]
 }
