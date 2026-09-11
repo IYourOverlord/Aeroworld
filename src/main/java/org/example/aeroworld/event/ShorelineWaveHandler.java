@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -11,38 +12,31 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import org.example.aeroworld.AeroWorld;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Симуляция наката волны на берег.
  *
  * <h3>Как это работает</h3>
- * Вдоль кромки океан/песок с шагом {@value CELL} блоков выбираются точки.
- * У каждой точки вычисляется направление "вглубь суши" (нормаль к берегу) —
- * горизонтальный вектор от ближайшей воды к точке, продолженный дальше.
- * Раз в свой цикл точка запускает "гребень" волны: вдоль этого направления
- * последовательно, с небольшой задержкой между шагами, ставятся настоящие
- * source-блоки воды ({@code setBlock(..., 11)} — те же флаги, что у ведра).
+ * Вдоль кромки океан/песок с шагом {@value CELL} блоков выбираются стартовые
+ * точки — позиции самой воды (source), у которых есть хотя бы один сухой
+ * сосед (трава/песок) на той же высоте. Раз в свой цикл такая точка
+ * запускает "веер" наката: BFS от воздуха НАД этим water-блоком по соседним
+ * сухим клеткам суши, на каждом шаге суши ставится тонкий flowing-блок воды
+ * ({@code LEVEL=7} — минимальная толщина растёкшейся воды, ванилью не
+ * распространяется сам, так как это не source). Каждый следующий "слой" BFS
+ * (по расстоянию от старта) ставится с задержкой — это и даёт эффект
+ * расходящегося веером наката, а не мгновенной заливки.
  *
- * <b>Важно:</b> source ставится не ВМЕСТО блока песка, а в воздух НАД ним
- * ({@code pos.above()}). Если бы вода заменяла сам песок, при перекрытии
- * соседних гребней (или на изрезанной кромке) source мог оказаться со всех
- * сторон окружён другим песком/сушей и физически не иметь свободной стороны
- * для стекания — вода "запиралась" точечными лужами прямо в толще пляжа.
- * Постановка над поверхностью гарантирует как минимум одну свободную грань
- * (вверх и в стороны, если соседняя клетка суши ниже или уровня), так что
- * ваниль всегда может её растащить — от кромки к суше пробегает видимый
- * фронт наката, а не запертая точка. Дальше воду ведёт САМА ВАНИЛЬ — её
- * растекание в стороны никто не трогает.
+ * Блок ставится в воздух НАД сухой поверхностью (как и раньше) — так гребень
+ * не проваливается физически в толщу песка/травы и всегда виден поверх неё.
  *
- * После того как гребень доходит до дальней точки, начинается ОТКАТ: те же
- * позиции (тоже "над песком") убираются в ТОМ ЖЕ порядке, в котором
- * ставились (от берега вглубь), что визуально читается как волна,
- * вернувшаяся обратно в море. Каждая позиция снимается, только если там
- * всё ещё стоит наш собственный source-блок (не трогаем воду, растёкшуюся
- * туда самой ванилью или поставленную соседним гребнем).
+ * У каждого поставленного блока свой TTL — он исчезает (заменяется на воздух)
+ * ровно через {@value TTL_TICKS} тиков после постановки, независимо от
+ * остальных блоков веера (собственный откат по таймеру, а не общий откат всей
+ * цепочки как раньше).
  */
 public final class ShorelineWaveHandler {
 
@@ -54,24 +48,26 @@ public final class ShorelineWaveHandler {
     private static final int TICK_INTERVAL = 10; // раз в 0.5 сек
     // Раз в сколько тиков одна и та же точка может накатывать повторно.
     private static final int CYCLE_TICKS = 100; // 5 секунд
-    // Сколько блоков в глубину суши пробегает гребень волны.
+    // Максимальная глубина BFS-веера (шагов по суше от кромки воды).
     private static final int WAVE_DEPTH = 5;
-    // Задержка (тиков) между постановкой соседних блоков гребня — скорость наката.
+    // Задержка (тиков) между соседними "кольцами" BFS-веера — скорость наката.
     private static final int STEP_DELAY_TICKS = 3;
-    // Сколько тиков гребень держится у дальней точки перед откатом.
-    private static final int HOLD_TICKS = 8;
+    // Время жизни одного блока тонкой воды после постановки (2 секунды).
+    private static final int TTL_TICKS = 40;
     // Грубый Y-фильтр: побережье слоя 1 всегда возле уровня моря (WATER_LEVEL=44,
     // BASE_SURFACE_Y=48) — острова слоёв 2-4 (Y≥400) не должны попадать сюда.
     private static final int MIN_Y_FILTER = -10;
     private static final int MAX_Y_FILTER = 90;
 
-    private static final BlockState BS_WATER_SOURCE = Blocks.WATER.defaultBlockState(); // LEVEL=0 = source
+    // Тонкая растёкшаяся вода: flowing (не source), минимальная толщина.
+    private static final BlockState BS_WATER_THIN = Blocks.WATER.defaultBlockState()
+            .setValue(LiquidBlock.LEVEL, 7);
     // Те же флаги, что использует BucketItem при выливании ведра.
     private static final int PLACE_FLAGS = 11; // UPDATE_CLIENTS | UPDATE_NEIGHBORS | UPDATE_INVISIBLE
 
-    /** Один шаг гребня: поставить source в pos в момент dueGameTime. */
+    /** Один шаг веера: поставить тонкую воду в pos в момент dueGameTime. */
     private record PendingPlace(ServerLevel level, BlockPos pos, long dueGameTime) {}
-    /** Один шаг отката: убрать (вернуть песок) source в pos, если он ещё наш. */
+    /** Снятие ранее поставленного блока по истечении его TTL. */
     private record PendingRevert(ServerLevel level, BlockPos pos, long dueGameTime) {}
 
     private final Deque<PendingPlace> pendingPlaces = new ArrayDeque<>();
@@ -88,17 +84,18 @@ public final class ShorelineWaveHandler {
 
         long gameTime = level.getGameTime();
 
-        // ── Постановка блоков наступающего гребня, чей срок настал ──────────
+        // ── Постановка блоков наступающего веера, чей срок настал ──────────
         while (!pendingPlaces.isEmpty() && pendingPlaces.peekFirst().dueGameTime() <= gameTime) {
             PendingPlace pp = pendingPlaces.pollFirst();
             if (pp.level() == level
                     && level.hasChunkAt(pp.pos())
                     && pp.level().getBlockState(pp.pos()).isAir()) {
-                pp.level().setBlock(pp.pos(), BS_WATER_SOURCE, PLACE_FLAGS);
+                pp.level().setBlock(pp.pos(), BS_WATER_THIN, PLACE_FLAGS);
+                pendingReverts.addLast(new PendingRevert(pp.level(), pp.pos(), gameTime + TTL_TICKS));
             }
         }
 
-        // ── Снятие блоков отступающего гребня, чей срок настал ──────────────
+        // ── Снятие блоков веера по истечении их персонального TTL ───────────
         while (!pendingReverts.isEmpty() && pendingReverts.peekFirst().dueGameTime() <= gameTime) {
             PendingRevert pr = pendingReverts.pollFirst();
             if (pr.level() == level
@@ -143,94 +140,85 @@ public final class ShorelineWaveHandler {
                 int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz) - 1;
                 if (topY < MIN_Y_FILTER || topY > MAX_Y_FILTER) continue;
 
-                BlockPos sandPos = new BlockPos(wx, topY, wz);
-                if (!level.getBlockState(sandPos).is(Blocks.SAND)) continue; // не сухой песок — пропустить
-                BlockPos abovePos = sandPos.above();
-                if (!level.getBlockState(abovePos).isAir()) continue; // над песком не свободно — пропустить
+                BlockPos waterPos = new BlockPos(wx, topY, wz);
+                // Стартовая точка веера — сама вода (source) на кромке.
+                if (!level.getBlockState(waterPos).is(Blocks.WATER)) continue;
+                BlockPos abovePos = waterPos.above();
+                if (!level.getBlockState(abovePos).isAir()) continue; // над водой не свободно — пропустить
 
-                int[] inland = inlandDirection(level, sandPos);
-                if (inland == null) continue; // не у самой кромки океана
+                if (!hasDryNeighbor(level, waterPos)) continue; // не у самой кромки суши
 
-                launchWave(level, abovePos, inland[0], inland[1], gameTime);
+                launchWaveFan(level, abovePos, waterPos.getY(), gameTime);
             }
         }
     }
 
-    /**
-     * Строит цепочку позиций НАД песком (воздух прямо над поверхностью пляжа)
-     * от берега вглубь суши вдоль направления {@code (dx, dz)} и планирует их
-     * последовательную постановку (накат), а следом — снятие в том же порядке
-     * (откат), начиная после того, как накат полностью завершится.
-     */
-    private void launchWave(ServerLevel level, BlockPos startAbove, int dx, int dz, long gameTime) {
-        List<BlockPos> chain = new ArrayList<>(WAVE_DEPTH);
-        chain.add(startAbove.immutable());
-        int x = startAbove.getX();
-        int z = startAbove.getZ();
-        for (int step = 1; step < WAVE_DEPTH; step++) {
-            x += dx;
-            z += dz;
-            int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
-            if (topY < MIN_Y_FILTER || topY > MAX_Y_FILTER) break;
-            BlockPos sandPos = new BlockPos(x, topY, z);
-            if (!level.getBlockState(sandPos).is(Blocks.SAND)) break; // гребень уткнулся не в песок — обрываем
-            BlockPos abovePos = sandPos.above();
-            if (!level.getBlockState(abovePos).isAir()) break; // сверху не свободно — обрываем
-            chain.add(abovePos.immutable());
-        }
-
-        long lastPlaceDue = gameTime;
-        for (int i = 0; i < chain.size(); i++) {
-            long due = gameTime + (long) (i + 1) * STEP_DELAY_TICKS;
-            lastPlaceDue = due;
-            pendingPlaces.addLast(new PendingPlace(level, chain.get(i).immutable(), due));
-        }
-
-        long revertStart = lastPlaceDue + HOLD_TICKS;
-        for (int i = 0; i < chain.size(); i++) {
-            long due = revertStart + (long) i * STEP_DELAY_TICKS;
-            pendingReverts.addLast(new PendingRevert(level, chain.get(i).immutable(), due));
-        }
-    }
-
-    /**
-     * Определяет горизонтальное направление "от воды к суше" в точке берега:
-     * ищет среди 8 соседей клетку с настоящей водой и возвращает противоположный
-     * от неё единичный вектор (dx, dz). Возвращает {@code null}, если рядом
-     * воды не найдено (точка не является кромкой берега).
-     */
-    private int[] inlandDirection(ServerLevel level, BlockPos pos) {
+    /** Проверяет, есть ли среди 8 горизонтальных соседей сухая поверхность (песок/трава) на той же высоте. */
+    private boolean hasDryNeighbor(ServerLevel level, BlockPos waterPos) {
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-        int sumDx = 0;
-        int sumDz = 0;
-        boolean found = false;
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 if (dx == 0 && dz == 0) continue;
-                p.set(pos.getX() + dx, pos.getY(), pos.getZ() + dz);
-                boolean water = level.getBlockState(p).is(Blocks.WATER);
-                if (!water) {
-                    p.setY(pos.getY() - 1);
-                    water = level.getBlockState(p).is(Blocks.WATER);
-                }
-                if (water) {
-                    found = true;
-                    sumDx -= dx;
-                    sumDz -= dz;
-                }
+                p.set(waterPos.getX() + dx, waterPos.getY(), waterPos.getZ() + dz);
+                if (isDryGround(level, p)) return true;
             }
         }
-        if (!found) return null;
+        return false;
+    }
 
-        int outDx = Integer.signum(sumDx);
-        int outDz = Integer.signum(sumDz);
-        if (outDx == 0 && outDz == 0) {
-            // Вода со всех сторон уравновешена (узкий мыс/симметрия) — берём
-            // произвольную, но детерминированную ось на основе хэша позиции.
-            outDx = ((pos.getX() + pos.getZ()) & 1) == 0 ? 1 : 0;
-            outDz = outDx == 0 ? 1 : 0;
+    private boolean isDryGround(ServerLevel level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return (state.is(Blocks.SAND) || state.is(Blocks.GRASS_BLOCK))
+                && level.getBlockState(pos.above()).isAir();
+    }
+
+    /**
+     * Строит веер тонкой воды методом BFS от точки над водой ({@code startAbove})
+     * по соседним сухим клеткам суши (песок/трава). Каждое "кольцо" BFS
+     * (группа клеток на одинаковом расстоянии от старта) ставится с
+     * нарастающей задержкой — так веер визуально расходится от кромки воды
+     * вглубь берега. Глубина ограничена {@value WAVE_DEPTH} шагами.
+     */
+    private void launchWaveFan(ServerLevel level, BlockPos startAbove, int shoreY, long gameTime) {
+        Set<Long> visited = new HashSet<>();
+        visited.add(packXZ(startAbove.getX(), startAbove.getZ()));
+
+        Deque<int[]> currentRing = new ArrayDeque<>();
+        currentRing.add(new int[] { startAbove.getX(), startAbove.getZ() });
+
+        for (int depth = 1; depth <= WAVE_DEPTH && !currentRing.isEmpty(); depth++) {
+            Deque<int[]> nextRing = new ArrayDeque<>();
+            long due = gameTime + (long) depth * STEP_DELAY_TICKS;
+
+            for (int[] cell : currentRing) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dz == 0) continue;
+                        if (dx != 0 && dz != 0) continue; // только 4 стороны, без диагоналей
+                        int nx = cell[0] + dx;
+                        int nz = cell[1] + dz;
+                        long key = packXZ(nx, nz);
+                        if (!visited.add(key)) continue;
+
+                        int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, nx, nz) - 1;
+                        if (topY < MIN_Y_FILTER || topY > MAX_Y_FILTER) continue;
+                        if (Math.abs(topY - shoreY) > 1) continue; // резкий перепад высоты — не берег
+
+                        BlockPos dryPos = new BlockPos(nx, topY, nz);
+                        if (!isDryGround(level, dryPos)) continue; // не суша или сверху занято
+
+                        BlockPos abovePos = dryPos.above();
+                        pendingPlaces.addLast(new PendingPlace(level, abovePos.immutable(), due));
+                        nextRing.add(new int[] { nx, nz });
+                    }
+                }
+            }
+            currentRing = nextRing;
         }
-        return new int[] { outDx, outDz };
+    }
+
+    private static long packXZ(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
     }
 
     private static long cellHash(int cellX, int cellZ, long seed) {
