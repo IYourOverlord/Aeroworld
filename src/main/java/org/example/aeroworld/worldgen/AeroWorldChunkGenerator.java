@@ -441,8 +441,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     public void applyCarvers(WorldGenRegion region, long seed, RandomState random,
                              BiomeManager biomeManager, StructureManager structureManager,
                              ChunkAccess chunk, GenerationStep.Carving step) {
+        // Ванильные carvers (пещеры, каньоны) отключены: используется кастомная генерация пещер (SinkholeCarver).
         initializeWithSeed(seed);
-        super.applyCarvers(region, seed, random, biomeManager, structureManager, chunk, step);
     }
 
     @Override
