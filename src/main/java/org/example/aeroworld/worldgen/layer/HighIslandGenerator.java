@@ -168,9 +168,9 @@ public class HighIslandGenerator {
         double vr     = (heightVariance.noise2D(cx * 0.013, cz * 0.013) + 1.0) * 0.5;
         double radius = minRadius + vr * (maxRadius - minRadius);
 
-        long packed = ChunkKey.of(cx, cz);
-        // ТЗ п.2: BodyType = ((seed ^ ChunkKey.of(cx, cz)) & 1) == 0 ? METEORITE : PLANET
-        BodyType bodyType = ((worldSeed ^ packed) & 1L) == 0L ? BodyType.METEORITE : BodyType.PLANET;
+        // Координаты центра всегда кратны 8 (см. IslandPlacer.rawCentreForCell: blockX/Z = ...* 16 + 8),
+        // поэтому packed & 1 == 0 всегда → тип всегда METEORITE. Используем hashUnit по соли.
+        BodyType bodyType = hashUnit(cx, cz, 0xDEADBEEF12345678L) < 0.5 ? BodyType.METEORITE : BodyType.PLANET;
 
         double[] axes = computeEllipsoidAxes(cx, cz, radius, botY, topY);
 
