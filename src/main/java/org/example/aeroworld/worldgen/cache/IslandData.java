@@ -38,6 +38,22 @@ public final class IslandData {
     // null для других слоёв
     public final double[][] tentacleData;
 
+    // ── Layer 3: тип небесного тела и производные геометрические поля ─────
+    // null/0.0 для других слоёв.
+    public final BodyType bodyType;
+
+    /** Толщина стенки метеорита (блоки). 0.0 для планет и других слоёв. */
+    public final double wallThickness;
+
+    /** Полуоси внутренней полости метеорита [rx, ry, rz] = ellipsoidAxes - wallThickness. Null, если не метеорит. */
+    public final double[] innerAxes;
+
+    /**
+     * Радиусы колец планеты: [in1, out1, in2, out2, in3, out3] (блоки, в плоскости XZ).
+     * Null для метеоритов и других слоёв.
+     */
+    public final double[] ringRadii;
+
     // ── Конструктор для Layer 2 (профиль + интенсивность шума кэшируются) ───
     public IslandData(int cx, int cz, int bottomY, int topY, double radius,
                       int shapeProfile, double shapeNoiseIntensity) {
@@ -50,6 +66,10 @@ public final class IslandData {
         this.shapeNoiseIntensity  = shapeNoiseIntensity;
         this.ellipsoidAxes        = null;
         this.tentacleData         = null;
+        this.bodyType             = null;
+        this.wallThickness        = 0.0;
+        this.innerAxes            = null;
+        this.ringRadii            = null;
     }
 
     // ── Конструктор для Layer 2 без кэша профиля (обратная совместимость) ────
@@ -58,9 +78,16 @@ public final class IslandData {
         this(cx, cz, bottomY, topY, radius, -1, 0.0);
     }
 
-    // ── Конструктор для Layer 3 (эллипсоид) ──────────────────────────────
+    // ── Конструктор для Layer 3 (эллипсоид, обратная совместимость) ──────
     public IslandData(int cx, int cz, int bottomY, int topY, double radius,
                       double[] ellipsoidAxes) {
+        this(cx, cz, bottomY, topY, radius, ellipsoidAxes, null, 0.0, null, null);
+    }
+
+    // ── Конструктор для Layer 3 (метеорит/планета с кольцами) ────────────
+    public IslandData(int cx, int cz, int bottomY, int topY, double radius,
+                      double[] ellipsoidAxes, BodyType bodyType, double wallThickness,
+                      double[] innerAxes, double[] ringRadii) {
         this.cx                   = cx;
         this.cz                   = cz;
         this.bottomY              = bottomY;
@@ -70,6 +97,10 @@ public final class IslandData {
         this.shapeNoiseIntensity  = 0.0;
         this.ellipsoidAxes        = ellipsoidAxes;
         this.tentacleData         = null;
+        this.bodyType             = bodyType;
+        this.wallThickness        = wallThickness;
+        this.innerAxes            = innerAxes;
+        this.ringRadii            = ringRadii;
     }
 
     // ── Конструктор для Layer 4 (медузы) ─────────────────────────────────
@@ -84,6 +115,10 @@ public final class IslandData {
         this.shapeNoiseIntensity  = 0.0;
         this.ellipsoidAxes        = null;
         this.tentacleData         = tentacleData;
+        this.bodyType             = null;
+        this.wallThickness        = 0.0;
+        this.innerAxes            = null;
+        this.ringRadii            = null;
     }
 
     /** Высота острова в блоках. */

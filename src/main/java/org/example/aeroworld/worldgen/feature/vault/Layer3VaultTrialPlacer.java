@@ -13,18 +13,22 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 /**
  * Layer3-специфичная точка входа для генерации Vault/Trial Spawner на островах
- * Layer 3 (High Sky Islands, эллипсоиды).
+ * Layer 3 (High Sky Islands — полые метеориты и планеты с кольцами).
  *
  * <p>Копия {@link Layer2VaultTrialPlacer} по структуре, но:</p>
  * <ul>
  *   <li>вызывает {@link IslandVaultTrialGenerator#placeForEllipsoidIsland}, а не
  *       {@link IslandVaultTrialGenerator#placeForIsland} — у Layer 3 нет
- *       {@code IslandShape}, геометрия острова эллипсоидная
- *       ({@code IslandData.ellipsoidAxes}, см. {@code HighIslandGenerator.fillChunk});</li>
- *   <li>не передаёт {@code noiseDeform} отдельным параметром — эллипсоидные
+ *       {@code IslandShape}; геометрия ветвится по {@code IslandData.bodyType}
+ *       (метеорит — дно внутренней полости, планета — внешняя поверхность
+ *       ядра, кольца исключены), см. {@code HighIslandGenerator.fillChunk}
+ *       и {@code IslandVaultTrialGenerator.findBuriedSpotEllipsoid};</li>
+ *   <li>не передаёт {@code noiseDeform} отдельным параметром — геометрические
  *       методы {@code HighIslandGenerator} ({@code getEllipsoidTopY}/
- *       {@code getEllipsoidBottomY}/{@code computeXZSq}) уже инкапсулируют
- *       собственный {@code edgeNoise}/{@code noiseDeform} внутри генератора;</li>
+ *       {@code getEllipsoidBottomY}/{@code computeXZSq}/
+ *       {@code getMeteoriteCavityTopY}/{@code getMeteoriteCavityBottomY})
+ *       уже инкапсулируют собственный {@code edgeNoise}/{@code noiseDeform}
+ *       внутри генератора;</li>
  *   <li>использует {@link VaultTrialLootConfig#LAYER_3} (золото/редстоун/железо
  *       вместо меди/железа/угля).</li>
  * </ul>

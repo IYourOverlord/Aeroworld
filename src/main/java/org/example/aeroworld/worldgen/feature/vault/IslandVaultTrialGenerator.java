@@ -11,6 +11,7 @@ import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.AeroWorld;
+import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
@@ -528,24 +529,23 @@ public final class IslandVaultTrialGenerator {
     }
 
     /**
-     * Аналог {@link #findBuriedSpot}, но под эллипсоидную геометрию Layer 3
-     * ({@code HighIslandGenerator}) — сплошной эллипсоид без {@link IslandShape}.
+     * Аналог {@link #findBuriedSpot}, но под геометрию Layer 3
+     * ({@code HighIslandGenerator}) — ветвится по {@link BodyType} (ТЗ раздел 4):
+     * <ul>
+     *   <li>{@link BodyType#PLANET}: точка ищется строго на внешней
+     *       поверхности верхней полусферы ядра ({@code Y ∈ [cy, cy+R]}),
+     *       позиции на кольцах астероидов исключены проверкой
+     *       {@code dist <= planetR * 0.9} — делегировано {@link #findBuriedSpotPlanet}.</li>
+     *   <li>{@link BodyType#METEORITE}: точка ищется строго на внутренней
+     *       поверхности дна полости ({@code Y = cavityBottomY}), с проверкой
+     *       {@code >= 5} блоков воздуха до свода — делегировано
+     *       {@link #findBuriedSpotMeteoriteCavityFloor}.</li>
+     * </ul>
      *
      * <h3>Почему нельзя переиспользовать {@link #findBuriedSpot}</h3>
      * {@code findBuriedSpot} завязан на {@code IslandShape.isSolid()}/
      * {@code precomputeXZ()} — у Layer 3 этой геометрии нет вообще (см. javadoc
-     * {@link #placeForEllipsoidIsland}). Вместо этого поверхность колонки
-     * берётся из {@link HighIslandGenerator#getEllipsoidTopY} — тот же метод,
-     * которым LOD получает реальный Y верхней границы острова, а значит он уже
-     * учитывает {@code edgeNoise} (nx/nz) и формулу {@code xzSq + dyInv² ≤ 1}
-     * идентично {@code HighIslandGenerator.fillChunk}. Без этого шума кандидат
-     * мог бы попасть в шумовой зазор на краю острова, где реального блока нет.
-     *
-     * <p>Все остальные правила (ограничение точки одним чанком decoration,
-     * {@code EFFECTIVE_EXCLUSION_RADIUS} от центра острова — здесь это будущий
-     * excraft:HAUL-01, {@code MIN_SPACING} между уже поставленными структурами)
-     * идентичны {@link #findBuriedSpot} — см. его javadoc за подробным
-     * обоснованием каждой проверки.
+     * {@link #placeForEllipsoidIsland}).
      */
     private static BlockPos findBuriedSpotEllipsoid(WorldGenLevel region,
                                                     HighIslandGenerator generator,
@@ -554,45 +554,93 @@ public final class IslandVaultTrialGenerator {
                                                     List<BlockPos> alreadyPlaced,
                                                     int chunkX,
                                                     int chunkZ) {
+        if (island.bodyType == BodyType.METEORITE) {
+            return findBuriedSpotMeteoriteCavityFloor(generator, island, rng, alreadyPlaced, chunkX, chunkZ);
+        }
+        return findBuriedSpotPlanet(generator, island, rng, alreadyPlaced, chunkX, chunkZ);
+    }
+
+    /**
+     * ТЗ раздел 4.1 — Планета: спавнеры/ларцы строго на внешней поверхности
+     * верхней полусферы ядра ({@code Y ∈ [cy, cy+R]}). Позиции на кольцах
+     * категорически запрещены — проверка {@code dist <= R * 0.9} отсекает
+     * XZ-колонки, которые могли бы попасть в зону колец до проверки
+     * поверхности ядра.
+     */
+    private static BlockPos findBuriedSpotPlanet(HighIslandGenerator generator,
+                                                 IslandData island,
+                                                 RandomSource rng,
+                                                 List<BlockPos> alreadyPlaced,
+                                                 int chunkX,
+                                                 int chunkZ) {
+        double planetR = island.ellipsoidAxes[0];
+        int cy = island.centerY();
 
         for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-            // Сэмплируем точку строго внутри чанка-инициатора decoration —
-            // та же причина, что и в findBuriedSpot (см. его javadoc):
-            // WorldGenLevel.setBlock тихо отбрасывает запись за пределами
-            // safe-radius decoration-фазы для любого другого чанка.
             int wx = (chunkX << 4) + rng.nextInt(16);
             int wz = (chunkZ << 4) + rng.nextInt(16);
 
-            // Не ставим структуру там, где её сфера расчистки (CLEAR_RADIUS)
-            // может дотянуться до зоны будущего excraft:HAUL-01 (origin =
-            // island.cx/cz, см. Layer3StructurePlacer) — тот же принцип, что и
-            // EFFECTIVE_EXCLUSION_RADIUS у Layer 2 (см. его javadoc).
             double distFromCentreSq = (double) (wx - island.cx) * (wx - island.cx)
                     + (double) (wz - island.cz) * (wz - island.cz);
-            if (distFromCentreSq < EFFECTIVE_EXCLUSION_RADIUS * EFFECTIVE_EXCLUSION_RADIUS) continue;
+            // Строго внутри 0.9*R от центра по XZ — кольца начинаются на
+            // 1.4*R и дальше, так что этот запас надёжно исключает их, а
+            // заодно (0.9 < 1.0) не даёт кандидату уйти за пределы сферы ядра.
+            if (distFromCentreSq > planetR * 0.9 * planetR * 0.9) continue;
 
-            // XZ-проверка "не слишком близко к краю" — эллипсоидный аналог
-            // island.radius * 0.7 у Layer 2 (см. ELLIPSOID_INNER_XZ_SQ). Заодно
-            // отсекает xzSq > 1.0 (вне эллипсоида по XZ), т.к. 0.49 < 1.0.
             double xzSq = generator.computeXZSq(wx, wz, island);
             if (xzSq > ELLIPSOID_INNER_XZ_SQ) continue;
 
-            // Верхняя поверхность колонки — та же формула (с тем же edgeNoise),
-            // что fillChunk использовал при заливке острова сплошным камнем.
             int surfaceY = generator.getEllipsoidTopY(wx, wz, island);
-            if (surfaceY < island.bottomY) continue; // колонка вне острова
+            if (surfaceY < island.bottomY) continue; // колонка вне ядра
 
             int wy = surfaceY;
+            // Верхняя полусфера: Y должен быть строго выше центра ядра.
+            if (wy <= cy) continue;
             if (wy <= island.bottomY) continue;
 
-            // Под точкой должна быть твёрдая почва минимум на 2 блока вниз.
-            // Эллипсоид — СПЛОШНОЕ тело (fillChunk заливает камнем весь объём
-            // от columnBottomY до columnTopY в этой XZ-колонке, без полостей),
-            // поэтому достаточно убедиться, что (wy - 2) не ниже нижней границы
-            // эллипсоида в этой колонке — тогда весь диапазон [wy-2, wy] заведомо
-            // внутри сплошного тела и, значит, твёрдый.
+            // Ядро планеты сплошное — минимум 2 блока твёрдой почвы вниз.
             int columnBottomY = generator.getEllipsoidBottomY(wx, wz, island);
             if (wy - 2 < columnBottomY) continue;
+
+            BlockPos candidate = new BlockPos(wx, wy, wz);
+            if (tooClose(candidate, alreadyPlaced)) continue;
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * ТЗ раздел 4.2 — Полый метеорит: спавнеры/ларцы строго на внутренней
+     * поверхности дна полости ({@code Y = cavityBottomY}), с проверкой, что
+     * над точкой есть {@code >= MIN_HEADROOM_ABOVE_FLOOR} блоков воздуха до
+     * верхнего свода полости — внешняя поверхность метеорита остаётся
+     * свободна от спавнеров (эта функция вообще не рассматривает внешнюю
+     * оболочку, только {@code getMeteoriteCavityBottomY}/{@code TopY}).
+     */
+    private static final int MIN_HEADROOM_ABOVE_FLOOR = 5;
+
+    private static BlockPos findBuriedSpotMeteoriteCavityFloor(HighIslandGenerator generator,
+                                                               IslandData island,
+                                                               RandomSource rng,
+                                                               List<BlockPos> alreadyPlaced,
+                                                               int chunkX,
+                                                               int chunkZ) {
+        for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+            int wx = (chunkX << 4) + rng.nextInt(16);
+            int wz = (chunkZ << 4) + rng.nextInt(16);
+
+            int floorY = generator.getMeteoriteCavityBottomY(wx, wz, island);
+            if (floorY > island.topY) continue; // колонка не пересекает полость по XZ
+
+            int ceilY = generator.getMeteoriteCavityTopY(wx, wz, island);
+            if (ceilY < island.bottomY) continue;
+
+            // Проверка безопасности: >= 5 блоков воздуха от пола до свода полости.
+            if (ceilY - floorY < MIN_HEADROOM_ABOVE_FLOOR) continue;
+
+            int wy = floorY;
+            if (wy < island.bottomY || wy > island.topY) continue;
 
             BlockPos candidate = new BlockPos(wx, wy, wz);
             if (tooClose(candidate, alreadyPlaced)) continue;

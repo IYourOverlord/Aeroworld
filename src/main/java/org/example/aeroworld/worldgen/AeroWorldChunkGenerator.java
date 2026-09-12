@@ -160,6 +160,17 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         return src != null ? src : super.getBiomeSource();
     }
 
+    /**
+     * Эффективный радиус LOD-bounding-box острова Layer 3 для грубых
+     * {@code getBaseHeight}/{@code getBaseColumn} проверок: для планет с
+     * кольцами (см. {@code IslandData.ringRadii}) это внешняя граница
+     * третьего кольца, иначе — макс. горизонтальная полуось эллипсоида.
+     */
+    private static double highIslandEffectiveRadius(IslandData d) {
+        if (d.ringRadii != null) return d.ringRadii[5];
+        return (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
+    }
+
     @Override public int getMinY()     { return -64; }
     @Override public int getGenDepth() { return 2164; }
     @Override public int getSeaLevel() { return Layer1TerrainGenerator.SEA_LEVEL; }
@@ -189,7 +200,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 long packed = centres.getLong(i);
                 IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
-                double effR = (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
+                double effR = highIslandEffectiveRadius(d);
                 if (dx * dx + dz * dz <= effR * effR) return d.topY + 1;
             }
         }
@@ -276,7 +287,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 long packed = centres.getLong(i);
                 IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
-                double effR = (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
+                double effR = highIslandEffectiveRadius(d);
                 if (dx * dx + dz * dz > effR * effR) continue;
                 for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }
             }
