@@ -68,7 +68,8 @@ public final class SectionDirectChunkWriter implements ChunkWriter {
                 wx & 15,
                 wy & 15,
                 wz & 15,
-                state
+                state,
+                false
         );
     }
 

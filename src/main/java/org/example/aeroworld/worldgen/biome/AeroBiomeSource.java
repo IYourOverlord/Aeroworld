@@ -48,6 +48,26 @@ public class AeroBiomeSource extends BiomeSource {
 
     private volatile java.util.Set<Holder<Biome>> cachedBiomes = null;
 
+    private final java.util.concurrent.ConcurrentHashMap<Holder<Biome>, Holder<Biome>> islandBiomeMap =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
+    private final java.util.concurrent.ConcurrentHashMap<String, Optional<Holder<Biome>>> aeroBiomeNameCache =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
+
+    @SuppressWarnings("unchecked")
+    private static final class BiomeColumnCache {
+        private static final int MASK = 63;
+        final int[] xs = new int[64];
+        final int[] zs = new int[64];
+        final boolean[] valid = new boolean[64];
+        final Holder<Biome>[] islandBiomes = new Holder[64];
+        final Holder<Biome>[] layer1Biomes = new Holder[64];
+        final boolean[] hasDeepDark = new boolean[64];
+        final Holder<Biome>[] deepDarkBiomes = new Holder[64];
+    }
+
+    private final ThreadLocal<BiomeColumnCache> threadColumnCache =
+            ThreadLocal.withInitial(BiomeColumnCache::new);
+
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed) {
         this(delegate, seed, null);
     }
@@ -114,35 +134,59 @@ public class AeroBiomeSource extends BiomeSource {
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
-        // Островные слои (выше Layer 1)
-        if (y > LAYER1_MAX_NOISE_Y) {
-            return delegateWithSafety(x, 20, z, sampler, true);
-        }
+        int slot = (x * 31 + z) & BiomeColumnCache.MASK;
+        BiomeColumnCache cache = threadColumnCache.get();
 
-        double wx = x * 4.0;
-        double wz = z * 4.0;
+        Holder<Biome> islandBiome;
+        Holder<Biome> layer1Biome;
+        boolean hasDD;
+        Holder<Biome> ddBiome;
 
-        // Deep Dark на глубине (-64..-8)
-        int blockY = y * 4;
-        if (blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
+        if (cache.valid[slot] && cache.xs[slot] == x && cache.zs[slot] == z) {
+            islandBiome = cache.islandBiomes[slot];
+            layer1Biome = cache.layer1Biomes[slot];
+            hasDD = cache.hasDeepDark[slot];
+            ddBiome = cache.deepDarkBiomes[slot];
+        } else {
+            islandBiome = delegateWithSafety(x, 20, z, sampler, true);
+
+            double wx = x * 4.0;
+            double wz = z * 4.0;
+
             double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
-            if (dd > DEEP_DARK_THRESHOLD) {
-                Optional<Holder<Biome>> deepDark = findAeroBiome("deep_dark");
-                if (deepDark.isPresent()) return deepDark.get();
-            }
+            hasDD = dd > DEEP_DARK_THRESHOLD;
+            ddBiome = hasDD ? findAeroBiome("deep_dark").orElse(null) : null;
+
+            Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
+            double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
+            double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
+            double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
+
+            double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+            double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+
+            String biomeName = resolveLayer1Biome(cont, eros, ridge, temp, humid);
+            layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
+
+            cache.xs[slot] = x;
+            cache.zs[slot] = z;
+            cache.islandBiomes[slot] = islandBiome;
+            cache.layer1Biomes[slot] = layer1Biome;
+            cache.hasDeepDark[slot] = hasDD;
+            cache.deepDarkBiomes[slot] = ddBiome;
+            cache.valid[slot] = true;
         }
 
-        // Layer 1 кастомный шум
-        Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
-        double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
-        double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
-        double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
+        if (y > LAYER1_MAX_NOISE_Y) {
+            return islandBiome;
+        }
 
-        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+        int blockY = y * 4;
+        if (hasDD && ddBiome != null && blockY <= DEEP_DARK_MAX_Y_BLOCK && blockY >= DEEP_DARK_MIN_Y_BLOCK) {
+            return ddBiome;
+        }
 
-        String biomeName = resolveLayer1Biome(cont, eros, ridge, temp, humid);
-        return findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
+        return layer1Biome;
     }
 
     private String resolveLayer1Biome(double cont, double eros, double ridge, double temp, double humid) {
@@ -231,6 +275,10 @@ public class AeroBiomeSource extends BiomeSource {
             return vanilla;
         }
 
+        return islandBiomeMap.computeIfAbsent(vanilla, this::mapVanillaToIslandBiome);
+    }
+
+    private Holder<Biome> mapVanillaToIslandBiome(Holder<Biome> vanilla) {
         ResourceLocation vanillaId = vanilla.unwrapKey()
                 .map(k -> k.location())
                 .orElse(ResourceLocation.withDefaultNamespace("plains"));
@@ -243,6 +291,10 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     private Optional<Holder<Biome>> findAeroBiome(String path) {
+        return aeroBiomeNameCache.computeIfAbsent(path, this::lookupAeroBiome);
+    }
+
+    private Optional<Holder<Biome>> lookupAeroBiome(String path) {
         ResourceLocation id = ResourceLocation.fromNamespaceAndPath("aeroworld", path);
         Optional<Holder<Biome>> cached = AeroBiomeRegistryCache.get(id);
         if (cached.isPresent()) return cached;

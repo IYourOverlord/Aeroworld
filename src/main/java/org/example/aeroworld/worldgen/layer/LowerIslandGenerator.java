@@ -1,5 +1,6 @@
 package org.example.aeroworld.worldgen.layer;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -23,6 +24,7 @@ import org.example.aeroworld.config.Layer2Settings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.StampedLock;
 
 
 public class LowerIslandGenerator {
@@ -122,7 +124,10 @@ public class LowerIslandGenerator {
      * Кэш мостов для острова.
      * Устраняет вложенный O(N^2) поиск пар мостов при каждом вызове fillChunk.
      */
-    private final java.util.concurrent.ConcurrentHashMap<Long, List<BridgePair>> islandBridgeCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int MAX_BRIDGE_CACHE_SIZE = 2048;
+    private final Long2ObjectLinkedOpenHashMap<List<BridgePair>> islandBridgeCache =
+            new Long2ObjectLinkedOpenHashMap<>(MAX_BRIDGE_CACHE_SIZE);
+    private final StampedLock bridgeLock = new StampedLock();
 
     /**
      * Кэш списка центров островов для чанка.
@@ -667,51 +672,59 @@ public class LowerIslandGenerator {
 
     private List<BridgePair> getBridgesForIsland(IslandData src) {
         long key = ChunkKey.of(src.cx, src.cz);
-        List<BridgePair> result = islandBridgeCache.computeIfAbsent(key, k -> {
-            List<BridgePair> pairs = new ArrayList<>();
-            // Поиск соседних центров островов в радиусе searchRadius
-            int cellX = Math.floorDiv(src.cx, gridChunks * 16);
-            int cellZ = Math.floorDiv(src.cz, gridChunks * 16);
 
-            // 1. Гарантированный аметистовый мост к центру архипелага, если src - спутник
-            long srcArchCentre = placer.isArchipelagoCentre(key)
-                    ? key
-                    : placer.findArchipelagoCentreFor(src.cx, src.cz, searchRadius);
-            if (srcArchCentre != IslandPlacer.NO_ISLAND && !placer.isArchipelagoCentre(key)) {
-                IslandData centreData = getIslandData(ChunkKey.x(srcArchCentre), ChunkKey.z(srcArchCentre));
-                pairs.add(new BridgePair(src, centreData, Math.min(src.topY, centreData.topY) - 1, true));
-            }
+        long stamp = bridgeLock.readLock();
+        try {
+            List<BridgePair> existing = islandBridgeCache.get(key);
+            if (existing != null) return existing;
+        } finally {
+            bridgeLock.unlockRead(stamp);
+        }
 
-            // 2. Обычные и аметистовые мосты к соседним островам в радиусе bridgeMaxRange
-            for (int dcx = -searchRadius; dcx <= searchRadius; dcx++) {
-                for (int dcz = -searchRadius; dcz <= searchRadius; dcz++) {
-                    long centre = placer.getCentreForCell(cellX + dcx, cellZ + dcz);
-                    if (centre == IslandPlacer.NO_ISLAND) continue;
+        List<BridgePair> pairs = new ArrayList<>();
+        // Поиск соседних центров островов в радиусе searchRadius
+        int cellX = Math.floorDiv(src.cx, gridChunks * 16);
+        int cellZ = Math.floorDiv(src.cz, gridChunks * 16);
 
-                    addCandidateBridge(src, centre, pairs);
+        // 1. Гарантированный аметистовый мост к центру архипелага, если src - спутник
+        long srcArchCentre = placer.isArchipelagoCentre(key)
+                ? key
+                : placer.findArchipelagoCentreFor(src.cx, src.cz, searchRadius);
+        if (srcArchCentre != IslandPlacer.NO_ISLAND && !placer.isArchipelagoCentre(key)) {
+            IslandData centreData = getIslandData(ChunkKey.x(srcArchCentre), ChunkKey.z(srcArchCentre));
+            pairs.add(new BridgePair(src, centreData, Math.min(src.topY, centreData.topY) - 1, true));
+        }
 
-                    if (placer.isArchipelagoCentre(centre)) {
-                        for (long sat : placer.getSatellitesForCentre(centre)) {
-                            addCandidateBridge(src, sat, pairs);
-                        }
+        // 2. Обычные и аметистовые мосты к соседним островам в радиусе bridgeMaxRange
+        for (int dcx = -searchRadius; dcx <= searchRadius; dcx++) {
+            for (int dcz = -searchRadius; dcz <= searchRadius; dcz++) {
+                long centre = placer.getCentreForCell(cellX + dcx, cellZ + dcz);
+                if (centre == IslandPlacer.NO_ISLAND) continue;
+
+                addCandidateBridge(src, centre, pairs);
+
+                if (placer.isArchipelagoCentre(centre)) {
+                    for (long sat : placer.getSatellitesForCentre(centre)) {
+                        addCandidateBridge(src, sat, pairs);
                     }
                 }
             }
-            return pairs.isEmpty() ? List.of() : pairs;
-        });
-
-        if (islandBridgeCache.size() > 2048) {
-            int toRemove = 512;
-            var it = islandBridgeCache.keySet().iterator();
-            while (it.hasNext() && toRemove > 0) {
-                long evict = it.next();
-                if (evict != key) {
-                    it.remove();
-                    toRemove--;
-                }
-            }
         }
-        return result;
+        List<BridgePair> result = pairs.isEmpty() ? List.of() : pairs;
+
+        stamp = bridgeLock.writeLock();
+        try {
+            List<BridgePair> existing = islandBridgeCache.get(key);
+            if (existing != null) return existing;
+
+            islandBridgeCache.putAndMoveToLast(key, result);
+            while (islandBridgeCache.size() > MAX_BRIDGE_CACHE_SIZE) {
+                islandBridgeCache.removeFirst();
+            }
+            return result;
+        } finally {
+            bridgeLock.unlockWrite(stamp);
+        }
     }
 
     private void addCandidateBridge(IslandData src, long otherPacked, List<BridgePair> pairs) {

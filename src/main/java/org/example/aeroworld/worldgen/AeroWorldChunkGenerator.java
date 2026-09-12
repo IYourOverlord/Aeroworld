@@ -36,10 +36,12 @@ import org.example.aeroworld.worldgen.structure.AncientCityIslandSupportPlacer;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
 import org.example.aeroworld.worldgen.util.ChunkWriter;
+import org.example.aeroworld.worldgen.util.SectionDirectChunkWriter;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -232,9 +234,12 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         if (layer1Terrain != null && minY <= Layer1TerrainGenerator.MAX_Y) {
             int surfaceY = layer1Terrain.getHeight(x, z);
             int seaLevel = Layer1TerrainGenerator.SEA_LEVEL;
+            boolean hasCave = surfaceY >= seaLevel;
+            int caveTop = hasCave ? layer1Terrain.computeCaveTop(x, z) : Integer.MIN_VALUE;
+            int caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
 
             for (int y = minY; y <= surfaceY && y <= levelMax; y++) {
-                if (layer1Terrain.isCaveAir(x, y, z, surfaceY)) {
+                if (hasCave && y >= caveBottom && y <= caveTop) {
                     continue;
                 }
                 int idx = y - minY;
@@ -391,7 +396,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         final int chunkMinY = chunk.getMinBuildHeight();
         final int chunkMaxY = chunk.getMaxBuildHeight();
 
-        ChunkWriter chunkWriter = new ChunkAccessWriter(chunk);
+        ChunkWriter chunkWriter = new SectionDirectChunkWriter(chunk);
 
         // Layer 1: кастомный рельеф
         if (chunkMinY <= Layer1TerrainGenerator.MAX_Y && chunkMaxY >= Layer1TerrainGenerator.MIN_Y) {
@@ -425,6 +430,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
             }
         }
 
+        Heightmap.primeHeightmaps(chunk, Set.of(Heightmap.Types.OCEAN_FLOOR_WG, Heightmap.Types.WORLD_SURFACE_WG));
+
         return CompletableFuture.completedFuture(chunk);
     }
 
@@ -442,7 +449,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                              BiomeManager biomeManager, StructureManager structureManager,
                              ChunkAccess chunk, GenerationStep.Carving step) {
         // Ванильные carvers (пещеры, каньоны) отключены: используется кастомная генерация пещер (SinkholeCarver).
-        initializeWithSeed(seed);
+        if (!seedInitialized || worldSeed != seed) {
+            initializeWithSeed(seed);
+        }
     }
 
     @Override

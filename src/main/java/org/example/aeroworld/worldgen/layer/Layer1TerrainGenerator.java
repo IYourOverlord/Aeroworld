@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.util.ChunkWriter;
 
@@ -108,25 +109,33 @@ public class Layer1TerrainGenerator {
         return seed;
     }
 
+    private final ThreadLocal<Layer1ColumnCache> columnCache =
+            ThreadLocal.withInitial(Layer1ColumnCache::new);
+
+    public Layer1ColumnCache getColumnCache(int chunkX, int chunkZ) {
+        Layer1ColumnCache cache = columnCache.get();
+        cache.initForChunk(chunkX, chunkZ, this);
+        return cache;
+    }
+
+    public int computeCaveTop(int wx, int wz) {
+        double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
+        return (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+    }
+
+    public int computeCaveBottom(int wx, int wz) {
+        double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
+        double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
+        int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
+        return Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+    }
+
     /**
      * Проверяет, находится ли точка внутри полости гигантской пещеры (не под водой).
      */
     public boolean isCaveAir(int wx, int y, int wz, int surfaceY) {
-        // Пещера генерируется только на суше (surfaceY >= SEA_LEVEL)
         if (surfaceY < SEA_LEVEL) return false;
-
-        // Границы пещеры с легкой неровностью сводов
-        double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
-        int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
-
-        // Рельеф пола: крупные холмы/впадины (fbm, низкая частота) + мелкая деталь
-        double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
-        double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
-        int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
-        // Не даём полу подняться выше середины пещеры, сохраняя проходимость объёма
-        bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
-
-        return y >= bottom && y <= top;
+        return y >= computeCaveBottom(wx, wz) && y <= computeCaveTop(wx, wz);
     }
 
     /**
@@ -223,15 +232,21 @@ public class Layer1TerrainGenerator {
      * Заполняет твёрдую толщу Layer 1 камнем/глубинным сланцем, бедроком и водой до sea_level.
      */
     public void fillTerrain(ChunkWriter writer, int chunkX, int chunkZ) {
+        Layer1ColumnCache cache = getColumnCache(chunkX, chunkZ);
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
+            int xOffset = lx << 4;
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
+                int idx = xOffset | lz;
 
-                int surfaceY = getHeight(wx, wz);
+                int surfaceY = cache.surfaceY[idx];
+                boolean hasCave = surfaceY >= SEA_LEVEL;
+                int caveTop = cache.caveTop[idx];
+                int caveBottom = cache.caveBottom[idx];
 
                 // Бедрок на дне (0..4 слоя от MIN_Y)
                 for (int y = MIN_Y; y < MIN_Y + BEDROCK_LAYERS; y++) {
@@ -247,8 +262,8 @@ public class Layer1TerrainGenerator {
                 // Каменная толща: deepslate ниже Y=0, stone выше Y=0
                 for (int y = MIN_Y + BEDROCK_LAYERS; y <= surfaceY; y++) {
                     // Проверяем полость гигантской пещеры:
-                    // если это суша и точка попадает в пещеру (и не является столбом), то блок не ставим (оставляем воздух)
-                    if (isCaveAir(wx, y, wz, surfaceY)) {
+                    // если это суша и точка попадает в пещеру, то блок не ставим (оставляем воздух)
+                    if (hasCave && y >= caveBottom && y <= caveTop) {
                         continue;
                     }
 
@@ -271,8 +286,8 @@ public class Layer1TerrainGenerator {
             }
         }
 
-        decorateCaveCeiling(writer, chunkX, chunkZ);
-        decorateCaveFloor(writer, chunkX, chunkZ);
+        decorateCaveCeiling(writer, chunkX, chunkZ, cache);
+        decorateCaveFloor(writer, chunkX, chunkZ, cache);
     }
 
     /**
@@ -280,7 +295,7 @@ public class Layer1TerrainGenerator {
      * мох на потолочном камне, светящийся лишайник и свисающие пещерные лианы
      * (с шансом светящихся ягод на конце) в полости под потолком.
      */
-    private void decorateCaveCeiling(ChunkWriter writer, int chunkX, int chunkZ) {
+    private void decorateCaveCeiling(ChunkWriter writer, int chunkX, int chunkZ, Layer1ColumnCache cache) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
@@ -294,18 +309,18 @@ public class Layer1TerrainGenerator {
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
+            int xOffset = lx << 4;
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
+                int idx = xOffset | lz;
 
-                int surfaceY = getHeight(wx, wz);
+                int surfaceY = cache.surfaceY[idx];
                 if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
 
-                double ceilingOffset = caveCeilingNoise.noise2D(wx * 0.03, wz * 0.03) * 2.0;
-                int top = (int) Math.round(CAVE_TOP_Y + ceilingOffset);
+                int top = cache.caveTop[idx];
+                int bottom = cache.caveBottom[idx];
+                if (top < bottom) continue;
 
-                // Потолок пещеры: блок камня прямо над полостью (top+1), только если сама
-                // точка top действительно воздух пещеры (не столб).
-                if (!isCaveAir(wx, top, wz, surfaceY)) continue;
                 int ceilingBlockY = top + 1;
                 if (ceilingBlockY > surfaceY) continue;
 
@@ -324,7 +339,7 @@ public class Layer1TerrainGenerator {
                     int vineLen = 1 + ((int) (Math.abs(vineRoll) * 100.0) % 4); // 1..4 сегмента
                     for (int i = 0; i < vineLen; i++) {
                         int vy = top - 1 - i;
-                        if (!isCaveAir(wx, vy, wz, surfaceY)) break;
+                        if (vy < bottom) break;
                         boolean isLast = i == vineLen - 1;
                         writer.setBlockState(wx, vy, wz, isLast ? vineBerries : vineNoBerry);
                     }
@@ -336,7 +351,7 @@ public class Layer1TerrainGenerator {
     /**
      * Декорирует пол гигантской пещеры светящимся лишайником (грань UP) поверх блока пола.
      */
-    private void decorateCaveFloor(ChunkWriter writer, int chunkX, int chunkZ) {
+    private void decorateCaveFloor(ChunkWriter writer, int chunkX, int chunkZ, Layer1ColumnCache cache) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
 
@@ -345,18 +360,17 @@ public class Layer1TerrainGenerator {
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
+            int xOffset = lx << 4;
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
+                int idx = xOffset | lz;
 
-                int surfaceY = getHeight(wx, wz);
+                int surfaceY = cache.surfaceY[idx];
                 if (surfaceY < SEA_LEVEL) continue; // пещера только на суше
 
-                double floorHills = caveFloorNoise.fbm2D(wx * 0.015, wz * 0.015, 4, 2.0, 0.5) * 14.0;
-                double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
-                int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
-                bottom = Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
-
-                if (!isCaveAir(wx, bottom, wz, surfaceY)) continue;
+                int bottom = cache.caveBottom[idx];
+                int top = cache.caveTop[idx];
+                if (bottom > top) continue;
                 if (bottom - 1 < MIN_Y + BEDROCK_LAYERS) continue;
 
                 double lichenRoll = caveLushNoise.noise2D(wx * 0.11 + 900.0, wz * 0.11 + 900.0);
@@ -367,22 +381,87 @@ public class Layer1TerrainGenerator {
         }
     }
 
+    public enum SurfaceType {
+        DEFAULT(BS_GRASS, BS_DIRT),
+        DESERT(BS_SAND, BS_SANDSTONE),
+        BADLANDS(BS_RED_SAND, BS_TERRACOTTA),
+        BEACH(BS_SAND, BS_SANDSTONE),
+        STONY(BS_STONE, BS_STONE),
+        COLD(null, null),
+        VOLCANIC(BS_BASALT, BS_BLACKSTONE),
+        KARST(BS_CALCITE, BS_STONE),
+        PODZOL(BS_PODZOL, BS_DIRT);
+
+        final BlockState top;
+        final BlockState under;
+
+        SurfaceType(BlockState top, BlockState under) {
+            this.top = top;
+            this.under = under;
+        }
+    }
+
+    public record BiomeSurfaceInfo(SurfaceType type, boolean isCold, boolean isWarmOcean, boolean isFrozenOcean) {}
+
+    private final java.util.concurrent.ConcurrentHashMap<Holder<Biome>, BiomeSurfaceInfo> surfaceInfoCache =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
+
+    private BiomeSurfaceInfo getSurfaceInfo(Holder<Biome> holder) {
+        return surfaceInfoCache.computeIfAbsent(holder, this::classifyBiome);
+    }
+
+    private BiomeSurfaceInfo classifyBiome(Holder<Biome> holder) {
+        String path = holder.unwrapKey().map(k -> k.location().getPath()).orElse("plains");
+        boolean warm = path.contains("warm");
+        boolean frozen = path.contains("frozen");
+        boolean isCold = path.contains("snowy") || frozen;
+
+        SurfaceType type;
+        if (path.contains("desert")) {
+            type = SurfaceType.DESERT;
+        } else if (path.contains("badlands")) {
+            type = SurfaceType.BADLANDS;
+        } else if (path.contains("beach")) {
+            type = SurfaceType.BEACH;
+        } else if (path.contains("stony")) {
+            type = SurfaceType.STONY;
+        } else if (isCold) {
+            type = SurfaceType.COLD;
+        } else if (path.contains("volcanic")) {
+            type = SurfaceType.VOLCANIC;
+        } else if (path.contains("karst")) {
+            type = SurfaceType.KARST;
+        } else if (path.contains("heather") || path.contains("old_growth") || path.contains("taiga")) {
+            type = SurfaceType.PODZOL;
+        } else {
+            type = SurfaceType.DEFAULT;
+        }
+
+        return new BiomeSurfaceInfo(type, isCold, warm, frozen);
+    }
+
     /**
      * Накладывает слой поверхности в зависимости от биома (песок, трава, снег, терракота и т.д.).
      */
     public void buildSurface(ChunkAccess chunk, BiFunction<Integer, Integer, Holder<Biome>> biomeGetter) {
+        int chunkX = chunk.getPos().x;
+        int chunkZ = chunk.getPos().z;
+        Layer1ColumnCache cache = getColumnCache(chunkX, chunkZ);
+
         int startX = chunk.getPos().getMinBlockX();
         int startZ = chunk.getPos().getMinBlockZ();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
+            int xOffset = lx << 4;
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
+                int idx = xOffset | lz;
 
-                int surfaceY = getHeight(wx, wz);
+                int surfaceY = cache.surfaceY[idx];
                 Holder<Biome> biomeHolder = biomeGetter.apply(wx, wz);
-                String biomePath = biomeHolder.unwrapKey().map(k -> k.location().getPath()).orElse("plains");
+                BiomeSurfaceInfo info = getSurfaceInfo(biomeHolder);
 
                 boolean underWater = surfaceY < SEA_LEVEL;
 
@@ -399,19 +478,20 @@ public class Layer1TerrainGenerator {
                         topBlock = BS_SAND;
                         underBlock = BS_SANDSTONE;
                     }
-                } else if (biomePath.contains("desert")) {
-                    topBlock = BS_SAND;
-                    underBlock = BS_SANDSTONE;
-                } else if (biomePath.contains("badlands")) {
-                    topBlock = BS_RED_SAND;
-                    underBlock = BS_TERRACOTTA;
-                } else if (biomePath.contains("beach")) {
-                    topBlock = BS_SAND;
-                    underBlock = BS_SANDSTONE;
-                } else if (biomePath.contains("stony")) {
-                    topBlock = BS_STONE;
-                    underBlock = BS_STONE;
-                } else if (biomePath.contains("snowy") || biomePath.contains("frozen") || surfaceY >= 50) {
+                } else if (info.type != SurfaceType.DEFAULT) {
+                    if (info.type == SurfaceType.COLD) {
+                        if (surfaceY >= 60) {
+                            topBlock = BS_SNOW_BLOCK;
+                            underBlock = BS_STONE;
+                        } else {
+                            topBlock = BS_GRASS;
+                            underBlock = BS_DIRT;
+                        }
+                    } else {
+                        topBlock = info.type.top;
+                        underBlock = info.type.under;
+                    }
+                } else if (surfaceY >= 50) {
                     if (surfaceY >= 60) {
                         topBlock = BS_SNOW_BLOCK;
                         underBlock = BS_STONE;
@@ -419,15 +499,6 @@ public class Layer1TerrainGenerator {
                         topBlock = BS_GRASS;
                         underBlock = BS_DIRT;
                     }
-                } else if (biomePath.contains("volcanic")) {
-                    topBlock = BS_BASALT;
-                    underBlock = BS_BLACKSTONE;
-                } else if (biomePath.contains("karst")) {
-                    topBlock = BS_CALCITE;
-                    underBlock = BS_STONE;
-                } else if (biomePath.contains("heather") || biomePath.contains("old_growth") || biomePath.contains("taiga")) {
-                    topBlock = BS_PODZOL;
-                    underBlock = BS_DIRT;
                 }
 
                 // Заменяем верхние 3-4 блока
@@ -445,18 +516,17 @@ public class Layer1TerrainGenerator {
 
                 // Подводная растительность и коралловые рифы
                 if (underWater && surfaceY < SEA_LEVEL - 1) {
-                    placeUnderwaterFeatures(chunk, wx, surfaceY, wz, biomePath);
+                    placeUnderwaterFeatures(chunk, wx, surfaceY, wz, info.isWarmOcean, info.isFrozenOcean);
                 }
             }
         }
     }
 
-    private void placeUnderwaterFeatures(ChunkAccess chunk, int wx, int surfaceY, int wz, String biomePath) {
+    private void placeUnderwaterFeatures(ChunkAccess chunk, int wx, int surfaceY, int wz, boolean isWarmOcean, boolean isFrozenOcean) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int waterDepth = SEA_LEVEL - surfaceY;
 
         // 1. Коралловые рифы (в теплых океанах, warm_ocean или lukwarm_ocean, на глубине от 4 до 35 блоков)
-        boolean isWarmOcean = biomePath.contains("warm");
         if (isWarmOcean && waterDepth >= 4) {
             double cNoise = coralNoise.fbm2D(wx * 0.05, wz * 0.05, 3, 2.0, 0.5);
             if (cNoise > 0.40) {
@@ -481,7 +551,7 @@ public class Layer1TerrainGenerator {
 
         // 2. Ламинарии (Kelp) — растут высокими стеблями на глубинах от 6 блоков
         double veg = oceanVegNoise.fbm2D(wx * 0.03, wz * 0.03, 3, 2.0, 0.5);
-        if (veg > 0.35 && waterDepth >= 6 && !biomePath.contains("frozen")) {
+        if (veg > 0.35 && waterDepth >= 6 && !isFrozenOcean) {
             int kelpHeight = 3 + (int) (detailNoise.noise2D(wx * 0.1, wz * 0.1) * 8.0);
             kelpHeight = Math.max(2, Math.min(kelpHeight, waterDepth - 2));
 

@@ -58,7 +58,7 @@ public final class Layer2StructurePlacer {
 
         LongArrayList centres = sharedChunkCache.get(
                 LowerIslandGenerator.LAYER_ID, chunkX, chunkZ,
-                key -> generator.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, 1));
+                key -> generator.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, generator.getSearchRadius()));
 
         for (int i = 0; i < centres.size(); i++) {
             long packed = centres.getLong(i);
