@@ -79,8 +79,6 @@ public class HighIslandGenerator {
     private static final BlockState BS_BASALT         = Blocks.BASALT.defaultBlockState();
     private static final BlockState BS_OBSIDIAN       = Blocks.OBSIDIAN.defaultBlockState();
     private static final BlockState BS_MAGMA          = Blocks.MAGMA_BLOCK.defaultBlockState();
-    private static final BlockState BS_GOLD_ORE       = Blocks.DEEPSLATE_GOLD_ORE.defaultBlockState();
-    private static final BlockState BS_IRON_ORE       = Blocks.DEEPSLATE_IRON_ORE.defaultBlockState();
 
     private static final BlockState BS_TERRACOTTA     = Blocks.TERRACOTTA.defaultBlockState();
     private static final BlockState BS_STONE          = Blocks.STONE.defaultBlockState();
@@ -386,14 +384,12 @@ public class HighIslandGenerator {
         }
     }
 
-    /** Материал стенки метеорита: глубинный сланец с вкраплениями базальта/обсидиана/магмы/руд. */
+    /** Материал стенки метеорита: глубинный сланец с вкраплениями базальта/обсидиана/магмы. */
     private BlockState wallMaterial(int wx, int wy, int wz, int cy) {
         double m = wallMaterialNoise.noise3D(wx * 0.08, wy * 0.08, wz * 0.08);
         if (m > 0.75) return BS_OBSIDIAN;
         if (m > 0.55) return BS_MAGMA;
         if (m > 0.35) return BS_BASALT;
-        if (m > 0.28) return BS_GOLD_ORE;
-        if (m > 0.20) return BS_IRON_ORE;
         return BS_DEEPSLATE;
     }
 
@@ -487,8 +483,8 @@ public class HighIslandGenerator {
                 // Центр астероида — детерминированное смещение внутри ячейки.
                 int cellBaseX = ccx * ringCellSize;
                 int cellBaseZ = ccz * ringCellSize;
-                int offX = (int) ((cellHash >>> 8) % ringCellSize);
-                int offZ = (int) ((cellHash >>> 16) % ringCellSize);
+                int offX = (int) ((cellHash >>> 8) & 0x7FFFFFFFL) % ringCellSize;
+                int offZ = (int) ((cellHash >>> 16) & 0x7FFFFFFFL) % ringCellSize;
                 int ax = cellBaseX + offX;
                 int az = cellBaseZ + offZ;
 
@@ -504,7 +500,7 @@ public class HighIslandGenerator {
                 int ay = cy + (int) ((cellHash >>> 24) % 3) - 1; // ay ∈ [cy-1, cy+1]
 
                 double shapeN = shapeNoise.noise3D(ax * 0.3, ay * 0.3, az * 0.3);
-                double maxDist = 1.5 + shapeN * 0.4;
+                double maxDist = 2.0 + shapeN * 0.8;
 
                 double ddx = wx - ax, ddz = wz - az;
                 double horizDistSq = ddx * ddx + ddz * ddz;

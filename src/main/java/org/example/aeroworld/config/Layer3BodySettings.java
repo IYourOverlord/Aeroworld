@@ -31,7 +31,7 @@ public record Layer3BodySettings(
     public static final double DEFAULT_WALL_THICKNESS_MIN = 5.0;
     public static final double DEFAULT_WALL_THICKNESS_MAX = 8.0;
     /** Порог шума кратера [-1..1]: выше — сквозная воронка в верхнем своде метеорита. */
-    public static final double DEFAULT_CRATER_THRESHOLD = 0.62;
+    public static final double DEFAULT_CRATER_THRESHOLD = 0.35;
     /** Минимальная толщина дна нижней полусферы метеорита (блоки), не пробивается кратерами. */
     public static final int DEFAULT_CRATER_MIN_BOTTOM_THICKNESS = 4;
 
@@ -42,8 +42,8 @@ public record Layer3BodySettings(
     public static final double DEFAULT_RING_OUTER_FACTOR_MIN = 2.3;
     public static final double DEFAULT_RING_OUTER_FACTOR_MAX = 2.6;
     public static final int    DEFAULT_RING_CELL_SIZE      = 6;
-    /** Астероид в ячейке существует, если (cellHash & mask) == 0 — 1/8 плотность. */
-    public static final int    DEFAULT_RING_SPARSITY_MASK  = 7;
+    /** Астероид в ячейке существует, если (cellHash & mask) == 0 — 1/4 плотность. */
+    public static final int    DEFAULT_RING_SPARSITY_MASK  = 3;
 
     public static final Layer3BodySettings DEFAULT = new Layer3BodySettings(
             DEFAULT_WALL_THICKNESS_MIN, DEFAULT_WALL_THICKNESS_MAX,

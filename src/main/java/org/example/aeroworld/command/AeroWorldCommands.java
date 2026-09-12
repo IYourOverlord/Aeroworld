@@ -13,6 +13,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.event.ProximityTriggerHandler;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
+import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
@@ -82,7 +83,11 @@ public final class AeroWorldCommands {
                                                 new String[]{"POOR", "MEDIUM", "RICH"}, builder))
                                         .executes(AeroWorldCommands::runFindLowerIslandTyped))))
                 .then(Commands.literal("findIsland3")
-                        .executes(AeroWorldCommands::runFindHighIsland)));
+                        .executes(AeroWorldCommands::runFindHighIsland)
+                        .then(Commands.literal("meteorite")
+                                .executes(ctx -> runFindHighIslandByType(ctx, false)))
+                        .then(Commands.literal("planet")
+                                .executes(ctx -> runFindHighIslandByType(ctx, true)))));
     }
 
     private static int runForcePlacePending(CommandContext<CommandSourceStack> ctx) {
@@ -563,6 +568,96 @@ public final class AeroWorldCommands {
         source.sendSuccess(() -> Component.literal(
                 "[AeroWorld] Найден остров слоя 2 (" + type + ", тир " + wantTier + "): X=" + fx + " Z=" + fz +
                         " (Y " + data.bottomY + "\u2013" + data.topY + "), кольцо сетки #" + fring +
+                        " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
+        return 1;
+    }
+
+    /**
+     * {@code /aeroworld findIsland3 meteorite|planet} — спиральный поиск ближайшего
+     * острова Layer 3 заданного типа ({@link BodyType#METEORITE} или {@link BodyType#PLANET}).
+     * Тип определяется детерминированно по {@code IslandData.bodyType} — та же формула,
+     * что использует {@code HighIslandGenerator.computeIslandData}.
+     *
+     * @param planet true — искать PLANET, false — METEORITE
+     */
+    private static int runFindHighIslandByType(CommandContext<CommandSourceStack> ctx, boolean planet) {
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+
+        boolean isAeroWorld = level.dimensionTypeRegistration().unwrapKey()
+                .map(k -> k.location().getNamespace().equals(AeroWorld.MOD_ID))
+                .orElse(false);
+        if (!isAeroWorld) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Эту команду нужно выполнять находясь в измерении aeroworld " +
+                            "(сейчас: " + level.dimension().location() + "). " +
+                            "Используйте /execute in aeroworld:aeroworld run aeroworld findIsland3 " +
+                            (planet ? "planet" : "meteorite")));
+            return 0;
+        }
+
+        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        if (!(generator instanceof AeroWorldChunkGenerator aeroGen)) {
+            source.sendFailure(Component.literal("[AeroWorld] Неожиданный тип генератора: " + generator.getClass()));
+            return 0;
+        }
+
+        HighIslandGenerator highIslands = aeroGen.getHighIslands();
+        if (highIslands == null) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] highIslands ещё не инициализирован — сгенерируйте хотя бы один чанк и повторите."));
+            return 0;
+        }
+
+        IslandPlacer placer = highIslands.getPlacer();
+        int gridChunks = placer.gridSizeChunks();
+
+        BlockPos origin = BlockPos.containing(source.getPosition());
+        int originCellX = Math.floorDiv(origin.getX() >> 4, gridChunks);
+        int originCellZ = Math.floorDiv(origin.getZ() >> 4, gridChunks);
+
+        BodyType wantType = planet ? BodyType.PLANET : BodyType.METEORITE;
+        final int MAX_RING = 256; // тип занят в 50% островов, поэтому запас вдвое больше базового
+        long found = IslandPlacer.NO_ISLAND;
+        int foundRing = -1;
+        search:
+        for (int ring = 0; ring <= MAX_RING; ring++) {
+            for (int dcx = -ring; dcx <= ring; dcx++) {
+                for (int dcz = -ring; dcz <= ring; dcz++) {
+                    if (Math.max(Math.abs(dcx), Math.abs(dcz)) != ring) continue;
+                    long c = placer.getCentreForCell(originCellX + dcx, originCellZ + dcz);
+                    if (c == IslandPlacer.NO_ISLAND) continue;
+                    IslandData d = highIslands.getIslandData(ChunkKey.x(c), ChunkKey.z(c));
+                    if (d.bodyType != wantType) continue;
+                    found = c;
+                    foundRing = ring;
+                    break search;
+                }
+            }
+        }
+
+        if (found == IslandPlacer.NO_ISLAND) {
+            source.sendFailure(Component.literal(
+                    "[AeroWorld] Остров слоя 3 типа " + (planet ? "planet" : "meteorite") +
+                            " не найден в радиусе " + MAX_RING + " ячеек сетки."));
+            return 0;
+        }
+
+        IslandData data = highIslands.getIslandData(ChunkKey.x(found), ChunkKey.z(found));
+        int teleportY = data.topY + 5;
+
+        final int fx = ChunkKey.x(found), fz = ChunkKey.z(found), fring = foundRing;
+        final String typeName = planet ? "planet" : "meteorite";
+        boolean teleported = false;
+        if (source.getEntity() instanceof ServerPlayer player) {
+            player.teleportTo(level, fx + 0.5, teleportY, fz + 0.5, Set.of(), player.getYRot(), player.getXRot());
+            teleported = true;
+        }
+        final boolean tp = teleported;
+
+        source.sendSuccess(() -> Component.literal(
+                "[AeroWorld] Ближайший остров слоя 3 (" + typeName + "): X=" + fx + " Z=" + fz +
+                        " (Y " + data.bottomY + "–" + data.topY + "), кольцо сетки #" + fring +
                         " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
         return 1;
     }
