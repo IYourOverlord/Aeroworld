@@ -360,7 +360,10 @@ public class HighIslandGenerator {
                 int floorTop = Math.min(yMaxOut, hasCavity ? (yMinIn - 1) : yMaxOut);
                 floorTop = Math.min(floorTop, cy); // дно не заходит выше центра
                 int carveFromY = yMinOut + craterMinBottomThickness;
-                boolean floorCraterHit = craterNoise.fbm2D(wx * 0.02, wz * 0.02, 3, 2.0, 0.5) > craterThreshold;
+                // Шум дна — смещение +200: независим от свода, иначе те же колонки
+                // одновременно открыты сверху и вырезаны снизу (несквозной кратер дна
+                // не имеет смысла там, где свод уже открыт).
+                boolean floorCraterHit = craterNoise.fbm2D(wx * 0.02 + 200.0, wz * 0.02 + 200.0, 3, 2.0, 0.5) > craterThreshold;
                 for (int wy = yMinOut; wy <= floorTop; wy++) {
                     boolean craterCarve = floorCraterHit && wy >= carveFromY;
                     if (craterCarve) continue;
@@ -370,6 +373,7 @@ public class HighIslandGenerator {
                 // ── Свод (верхняя полусфера, со сквозными воронками) ─────────
                 int ceilBottom = Math.max(yMinOut, hasCavity ? (yMaxIn + 1) : yMinOut);
                 ceilBottom = Math.max(ceilBottom, cy + 1);
+                // Шум свода — без смещения: независим от дна.
                 boolean crater = craterNoise.fbm2D(wx * 0.02, wz * 0.02, 3, 2.0, 0.5) > craterThreshold;
                 if (!crater) {
                     for (int wy = ceilBottom; wy <= yMaxOut; wy++) {

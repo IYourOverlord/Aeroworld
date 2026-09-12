@@ -23,7 +23,7 @@ public record Layer3Settings(
     public static final double DEFAULT_SPAWN_CHANCE  = 0.10;
     public static final int    DEFAULT_GRID_CHUNKS   = 26;
     public static final double DEFAULT_MIN_RADIUS    = 22.0;
-    public static final double DEFAULT_MAX_RADIUS    = 45.0;
+    public static final double DEFAULT_MAX_RADIUS    = 30.0;
     public static final int    DEFAULT_MAX_HEIGHT    = 50;
     public static final double DEFAULT_NOISE_DEFORM  = 6.0;
 

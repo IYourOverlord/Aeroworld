@@ -31,7 +31,7 @@ public record Layer3BodySettings(
     public static final double DEFAULT_WALL_THICKNESS_MIN = 5.0;
     public static final double DEFAULT_WALL_THICKNESS_MAX = 8.0;
     /** Порог шума кратера [-1..1]: выше — сквозная воронка в верхнем своде метеорита. */
-    public static final double DEFAULT_CRATER_THRESHOLD = 0.35;
+    public static final double DEFAULT_CRATER_THRESHOLD = 0.20;
     /** Минимальная толщина дна нижней полусферы метеорита (блоки), не пробивается кратерами. */
     public static final int DEFAULT_CRATER_MIN_BOTTOM_THICKNESS = 4;
 
