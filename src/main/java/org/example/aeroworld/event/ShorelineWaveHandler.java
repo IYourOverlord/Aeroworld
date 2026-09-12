@@ -1,4 +1,4 @@
- package org.example.aeroworld.event;
+package org.example.aeroworld.event;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -10,6 +10,8 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import org.example.aeroworld.AeroWorld;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -38,6 +40,9 @@ import java.util.Set;
  * Каждая волна полностью независима.
  */
 public final class ShorelineWaveHandler {
+
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(ShorelineWaveHandler.class);
 
     // ========================================================================
     // НАСТРОЙКИ
@@ -94,20 +99,36 @@ public final class ShorelineWaveHandler {
     // ========================================================================
 
     /**
-     * Тонкая текущая вода.
+     * Вода волны.
      *
-     * LEVEL=7 — минимальная сила текущей воды.
+     * LEVEL=0 — source-блок.
+     *
+     * ВАЖНО:
+     * LEVEL=7 (текучая вода) не годится — у неё нет соседнего
+     * source/flow, поддерживающего уровень, поэтому ванильный
+     * fluid tick обнуляет её в AIR почти сразу после установки
+     * (ещё до наступления HOLD_TICKS/removalTime). Наш Java-код
+     * при этом ни разу не видит "исчезновение" как ошибку, т.к.
+     * removeWaveBlock() просто находит уже отсутствующую воду
+     * и снимает владение без вопросов — отсюда и мигание кольцами
+     * вместо накопления слоёв.
+     *
+     * Source-блок стабилен и не тикает сам по себе, поэтому стоит
+     * ровно до вызова removeWaveBlock() по расписанию волны.
      */
     private static final BlockState BS_WATER_THIN =
             Blocks.WATER.defaultBlockState()
-                    .setValue(LiquidBlock.LEVEL, 7);
+                    .setValue(LiquidBlock.LEVEL, 0);
 
     /**
      * Флаги установки блока.
      *
-     * Оставлены такими же, как в рабочей версии.
+     * UPDATE_CLIENTS (2) — обязателен, иначе клиент не увидит блок.
+     * Без UPDATE_NEIGHBORS (1): не пересчитываем окружающую
+     * жидкостную физику при установке, чтобы не провоцировать
+     * немедленный fluid tick соседних клеток волны.
      */
-    private static final int PLACE_FLAGS = 11;
+    private static final int PLACE_FLAGS = 2;
 
     // ========================================================================
     // ВНУТРЕННИЕ ОБЪЕКТЫ
@@ -146,7 +167,13 @@ public final class ShorelineWaveHandler {
             long id,
             ServerLevel level,
             List<List<WaveBlock>> rings,
-            long endTime
+            long lastPlacementTime,
+            long endTime,
+            int minX,
+            int maxX,
+            int minZ,
+            int maxZ,
+            int y
     ) {
     }
 
@@ -253,6 +280,8 @@ public final class ShorelineWaveHandler {
 
             activeWaves.remove(wave);
 
+            spongeCleanup(wave, level);
+
             Map<BlockPos, Long> ownership =
                     ownedWaterBlocks.get(wave.level());
 
@@ -264,6 +293,49 @@ public final class ShorelineWaveHandler {
 
                 if (ownership.isEmpty()) {
                     ownedWaterBlocks.remove(wave.level());
+                }
+            }
+        }
+    }
+
+    /**
+     * Губко-подобная зачистка.
+     *
+     * Снимает любую воду в bounding box волны, включая source-блоки,
+     * самопроизвольно расплодившиеся через ванильную infinite-water
+     * механику (два соседних source рождают новый source между собой
+     * при randomTick) — такие блоки не входят ни в rings, ни в
+     * ownedWaterBlocks, поэтому removeWaveBlock() их не видит.
+     *
+     * Настоящее "море" находится за пределами bounding box (он строится
+     * строго по позициям над сушей, куда волна докатилась), поэтому
+     * зачистка не трогает исходный водоём.
+     */
+    private void spongeCleanup(
+            Wave wave,
+            ServerLevel level
+    ) {
+
+        BlockPos.MutableBlockPos pos =
+                new BlockPos.MutableBlockPos();
+
+        for (int x = wave.minX(); x <= wave.maxX(); x++) {
+
+            for (int z = wave.minZ(); z <= wave.maxZ(); z++) {
+
+                pos.set(x, wave.y(), z);
+
+                if (!level.hasChunkAt(pos)) {
+                    continue;
+                }
+
+                if (level.getBlockState(pos).is(Blocks.WATER)) {
+
+                    level.setBlock(
+                            pos,
+                            Blocks.AIR.defaultBlockState(),
+                            PLACE_FLAGS
+                    );
                 }
             }
         }
@@ -322,6 +394,20 @@ public final class ShorelineWaveHandler {
         // ====================================================================
 
         /*
+         * Жёсткая гарантия:
+         *
+         * ни один блок не снимается, пока накат волны
+         * не завершён полностью (последнее кольцо доставлено).
+         *
+         * Это защищает от преждевременного исчезновения слоёв
+         * даже если individual removalTime по какой-то причине
+         * наступил раньше срока.
+         */
+        if (gameTime < wave.lastPlacementTime()) {
+            return;
+        }
+
+        /*
          * Идём ОТ САМОГО ДАЛЬНЕГО кольца к морю.
          *
          * Это и создаёт визуальное движение воды назад.
@@ -349,6 +435,66 @@ public final class ShorelineWaveHandler {
                 );
             }
         }
+
+        /*
+         * Побочная зачистка от самотиражированной воды.
+         *
+         * После lastPlacementTime вся площадь волны фиксирована
+         * (новых колец больше не появится), поэтому безопасно
+         * снимать любую "ничью" воду в bounding box — она либо
+         * наша (тогда удалится по расписанию removeWaveBlock выше),
+         * либо результат ванильной infinite-water генерации.
+         *
+         * Выполняется каждый тик фазы возврата, чтобы лишние
+         * блоки не оставались видимыми лужами вплоть до endTime.
+         */
+        sweepUnownedWater(wave, level);
+    }
+
+    /**
+     * Снимает воду в bounding box волны, не принадлежащую
+     * ни одной активной волне.
+     *
+     * См. spongeCleanup() — та же причина (infinite-water),
+     * но вызывается на каждом тике возврата, а не только
+     * в момент завершения волны.
+     */
+    private void sweepUnownedWater(
+            Wave wave,
+            ServerLevel level
+    ) {
+
+        Map<BlockPos, Long> ownership =
+                ownedWaterBlocks.get(level);
+
+        BlockPos.MutableBlockPos pos =
+                new BlockPos.MutableBlockPos();
+
+        for (int x = wave.minX(); x <= wave.maxX(); x++) {
+
+            for (int z = wave.minZ(); z <= wave.maxZ(); z++) {
+
+                pos.set(x, wave.y(), z);
+
+                if (ownership != null
+                        && ownership.containsKey(pos)) {
+                    continue;
+                }
+
+                if (!level.hasChunkAt(pos)) {
+                    continue;
+                }
+
+                if (level.getBlockState(pos).is(Blocks.WATER)) {
+
+                    level.setBlock(
+                            pos,
+                            Blocks.AIR.defaultBlockState(),
+                            PLACE_FLAGS
+                    );
+                }
+            }
+        }
     }
 
     // ========================================================================
@@ -365,6 +511,23 @@ public final class ShorelineWaveHandler {
 
         if (!level.hasChunkAt(pos)) {
             return;
+        }
+
+        /*
+         * Не перехватываем блок, уже принадлежащий другой активной волне.
+         */
+        Map<BlockPos, Long> existingOwnership =
+                ownedWaterBlocks.get(level);
+
+        if (existingOwnership != null) {
+
+            Long existingOwner =
+                    existingOwnership.get(pos);
+
+            if (existingOwner != null
+                    && existingOwner != wave.id()) {
+                return;
+            }
         }
 
         /*
@@ -480,7 +643,25 @@ public final class ShorelineWaveHandler {
 
         Long owner = ownership.get(pos);
 
-        return owner != null && owner == waveId;
+        if (owner == null || owner != waveId) {
+            return false;
+        }
+
+        /*
+         * Карта владения могла устареть: блок мог исчезнуть
+         * не через removeWaveBlock() (сосед снёс воду, чанк
+         * перезагрузился, взрыв и т.д.). Если это так — считаем
+         * позицию свободной, чтобы НАКАТ переставил блок заново,
+         * а не молчаливо решил, что она уже занята.
+         */
+        if (!level.getBlockState(pos).is(Blocks.WATER)) {
+
+            ownership.remove(pos);
+
+            return false;
+        }
+
+        return true;
     }
 
     // ========================================================================
@@ -673,8 +854,8 @@ public final class ShorelineWaveHandler {
 
                     BlockPos pos = block.pos();
 
-                    if (Math.abs(pos.getX() - start.getX()) <= 2
-                            && Math.abs(pos.getZ() - start.getZ()) <= 2) {
+                    if (Math.abs(pos.getX() - start.getX()) <= WAVE_DEPTH
+                            && Math.abs(pos.getZ() - start.getZ()) <= WAVE_DEPTH) {
 
                         return true;
                     }
@@ -914,11 +1095,57 @@ public final class ShorelineWaveHandler {
                         (rawRings.size() - 1)
                         * STEP_DELAY_TICKS;
 
+        /*
+         * Bounding box волны — нужен для губко-подобной зачистки
+         * при завершении (см. spongeCleanup()).
+         *
+         * Ванильная вода с LEVEL=0 (source) самотиражируется:
+         * два соседних source-блока рождают новый source между ними
+         * через randomTick, независимо от нашего кода. Эти лишние
+         * блоки никогда не попадают в rings/ownedWaterBlocks, поэтому
+         * обычное removeWaveBlock() их не видит. Зачистка по всей
+         * площади волны решает это гарантированно.
+         */
+        int boxMinX = Integer.MAX_VALUE;
+        int boxMaxX = Integer.MIN_VALUE;
+        int boxMinZ = Integer.MAX_VALUE;
+        int boxMaxZ = Integer.MIN_VALUE;
+
+        for (List<BlockPos> ring : rawRings) {
+
+            for (BlockPos pos : ring) {
+
+                boxMinX = Math.min(boxMinX, pos.getX());
+                boxMaxX = Math.max(boxMaxX, pos.getX());
+                boxMinZ = Math.min(boxMinZ, pos.getZ());
+                boxMaxZ = Math.max(boxMaxZ, pos.getZ());
+            }
+        }
+
+        LOGGER.info(
+                "[ShorelineWave] wave {} created at {}: rings={}, "
+                        + "gameTime={}, lastPlacementTime={}, "
+                        + "firstRemovalTime={}, endTime={}",
+                waveId,
+                startAbove,
+                rawRings.size(),
+                gameTime,
+                lastPlacementTime,
+                firstRemovalTime,
+                endTime
+        );
+
         return new Wave(
                 waveId,
                 level,
                 rings,
-                endTime
+                lastPlacementTime,
+                endTime,
+                boxMinX,
+                boxMaxX,
+                boxMinZ,
+                boxMaxZ,
+                startAbove.getY()
         );
     }
 
