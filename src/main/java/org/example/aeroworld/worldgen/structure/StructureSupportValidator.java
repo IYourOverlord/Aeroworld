@@ -53,6 +53,20 @@ public final class StructureSupportValidator {
     private static final double ISLAND_SUPPORT_THRESHOLD   = 0.65;
     /** Мин. доля опорных точек для подземных структур */
     private static final double UNDERGROUND_THRESHOLD      = 0.80;
+    /**
+     * Максимально допустимое отклонение реальной высоты рельефа
+     * (heightSampler) от {@code bounds.minY()} структуры SURFACE в любой
+     * точке сетки подошвы. {@code hasSolidBelow} сканирует твёрдость в
+     * фиксированном окне [bounds.minY()-24, bounds.minY()], одинаковом для
+     * всей структуры — на резком кастомном рельефе (горы, хребты) это
+     * позволяет структуре набрать 70% "опорных" точек даже когда реальная
+     * земля в части точек на 15-30 блоков выше или ниже подошвы, то есть
+     * структура физически висит в воздухе или наполовину закопана. Проверка
+     * разброса высоты — быстрая (один проход по уже вычисляемой сетке,
+     * heightSampler кэширован в Layer1ColumnCache) и всегда выполняется до
+     * дорогого sampleSupport, отсекая явно неровные случаи заранее.
+     */
+    private static final int SURFACE_MAX_HEIGHT_DEVIATION   = 6;
 
     // ── Параметры сетки сэмплов ───────────────────────────────────────────────
     /** Шаг сетки сэмплирования по XZ (блоков) */
@@ -225,6 +239,33 @@ public final class StructureSupportValidator {
             return ValidationResult.insufficientSupport(id, StructureCategory.SURFACE, bounds,
                     total - waterCovered, total,
                     (double) (total - waterCovered) / total, SURFACE_SUPPORT_THRESHOLD, List.of());
+        }
+
+        // ── Проверка разброса рельефа под подошвой ────────────────────────────
+        // Дешёвая (переиспользует heightSampler, уже кэшированный Layer1ColumnCache),
+        // выполняется ДО дорогого sampleSupport и отсекает структуры, чья
+        // жёсткая подошва (bounds.minY()) не совпадает с реальной высотой земли
+        // хотя бы в одной точке сетки сильнее допустимого — именно это даёт
+        // парящие/полузакопанные деревни и порталы на резком кастомном рельефе.
+        List<SupportSample> unevenSamples = new ArrayList<>();
+        int uneven = 0, heightTotal = 0;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x += SAMPLE_STEP) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z += SAMPLE_STEP) {
+                heightTotal++;
+                int groundY = sampler.groundHeightAt(x, z);
+                if (Math.abs(groundY - bounds.minY()) > SURFACE_MAX_HEIGHT_DEVIATION) {
+                    uneven++;
+                    if (unevenSamples.size() < MAX_FAILING_LOGGED) unevenSamples.add(new SupportSample(x, z));
+                }
+            }
+        }
+        if (heightTotal > 0 && (double) (heightTotal - uneven) / heightTotal < SURFACE_SUPPORT_THRESHOLD) {
+            logRejection(id, bounds,
+                    String.format("рельеф под подошвой слишком неровный: %d/%d точек вне допуска ±%d",
+                            uneven, heightTotal, SURFACE_MAX_HEIGHT_DEVIATION));
+            return ValidationResult.insufficientSupport(id, StructureCategory.SURFACE, bounds,
+                    heightTotal - uneven, heightTotal,
+                    (double) (heightTotal - uneven) / heightTotal, SURFACE_SUPPORT_THRESHOLD, unevenSamples);
         }
 
         return sampleSupport(id, StructureCategory.SURFACE, bounds, sampler,

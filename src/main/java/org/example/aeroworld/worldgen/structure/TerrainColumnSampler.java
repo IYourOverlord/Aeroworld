@@ -135,6 +135,17 @@ public final class TerrainColumnSampler {
     // ── Публичный API ─────────────────────────────────────────────────────────
 
     /**
+     * Реальная высота земли Layer 1 в точке (wx, wz) — тонкая обёртка над
+     * {@link #heightSampler}, который уже читает {@code Layer1ColumnCache}
+     * (заполняется во время {@code createBiomes}/{@code fillFromNoise} того
+     * же чанка), поэтому вызов практически бесплатный и не требует
+     * отдельного кэша здесь.
+     */
+    public int groundHeightAt(int wx, int wz) {
+        return heightSampler.getHeight(wx, wz, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
+    }
+
+    /**
      * Есть ли твёрдый блок в колонке (wx, wz) в диапазоне [fromY - depth, fromY]?
      * Используется для проверки опоры структур Layer 2–4.
      */
