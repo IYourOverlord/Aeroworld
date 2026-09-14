@@ -88,6 +88,13 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 dependencies {
     compileOnly fileTree(dir: 'libs', include: ['physical_structures-*.jar'])
     compileOnly fileTree(dir: 'libs', include: ['DistantHorizonsApi-*.jar'])
+    // Полный джар DH нужен ТОЛЬКО для Mixin AP/IDE, чтобы резолвить таргеты
+    // мода org.example.aeroworld.mixin.dh.* (@Mixin(targets = "..."))
+    // по реальному байткоду. В рантайме не требуется: compileOnly не
+    // пакуется в jar и не тянется как зависимость — мягкая зависимость
+    // на distanthorizons обеспечена IMixinConfigPlugin (DhWorldGenBorderMixinPlugin)
+    // и type = "optional" в neoforge.mods.toml.
+    compileOnly fileTree(dir: 'libs', include: ['DistantHorizons-*.jar'])
 }
 
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {

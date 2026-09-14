@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "minVersion": "0.8.5",
+  "package": "org.example.aeroworld.mixin.dh",
+  "compatibilityLevel": "JAVA_21",
+  "refmap": "aeroworld.refmap.json",
+  "plugin": "org.example.aeroworld.mixin.dh.DhWorldGenBorderMixinPlugin",
+  "mixins": [
+    "BatchGenerationEnvironmentNeoforgeMixin"
+  ],
+  "client": [],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -180,6 +180,42 @@ public final class IslandVaultTrialGenerator {
     }
 
     /**
+     * {@code true}, если {@code region} — не настоящий серверный
+     * {@code WorldGenRegion}, а одноразовый stub-регион стороннего мода
+     * (например, {@code DhLitWorldGenRegion} у Distant Horizons: DH вызывает
+     * {@code applyBiomeDecoration} того же экземпляра
+     * {@code AeroWorldChunkGenerator}, подставляя свой фейковый регион вместо
+     * реального, чтобы построить приблизительный LOD-рендер).
+     *
+     * <p><b>Почему это критично для Vault/Trial:</b> {@link IslandVaultTrialCache.Progress}
+     * — общий бюджет острова (vaults/trial spawners remaining), живущий в
+     * памяти ОДНОГО экземпляра {@code AeroWorldChunkGenerator} и разделяемый
+     * между ЛЮБЫМИ вызовами {@code applyBiomeDecoration} для этого острова —
+     * не только настоящими. Без этой проверки одноразовый LOD-проход DH
+     * декрементирует {@code vaultsRemaining}/{@code trialSpawnersRemaining} до
+     * нуля, ставя блоки только в свой выбрасываемый {@code DhLitWorldGenRegion}
+     * (откуда их и рисует LOD-рендер DH). Когда позже игрок долетает и чанк
+     * генерируется по-настоящему, общий бюджет острова уже израсходован
+     * фейковым проходом DH — {@code while (progress.vaultsRemaining.get() > 0)}
+     * не выполняется ни разу, и в реальном мире ларец/спавнер отсутствует,
+     * хотя DH продолжает показывать его на LOD-превью (он ставился именно
+     * туда). Отсюда и наблюдаемый симптом: "издалека ларец виден, а при
+     * подлёте пропадает".</p>
+     *
+     * <p>Проверка — по имени пакета конкретного класса региона, а не
+     * {@code instanceof}, чтобы не создавать compile-зависимость от классов
+     * DH (которых нет и не должно быть в classpath этого мода). Настоящий
+     * серверный проход всегда передаёт {@code net.minecraft.server.level.WorldGenRegion}
+     * (или его стандартные обёртки от C2ME и подобных мод-оптимизаторов
+     * параллельной генерации, которые не переопределяют пакет
+     * {@code com.seibel.distanthorizons}), поэтому ложных срабатываний на
+     * реальной генерации быть не должно.</p>
+     */
+    private static boolean isNonRealPreviewRegion(WorldGenLevel region) {
+        return region.getClass().getName().startsWith("com.seibel.distanthorizons.");
+    }
+
+    /**
      * Размещает Vault и Trial Spawner для одного острова согласно выбранному тиру.
      *
      * @param region     регион генерации (для записи blockEntity с NBT)
@@ -217,6 +253,8 @@ public final class IslandVaultTrialGenerator {
                                       int chunkZ,
                                       boolean excludeTankZone,
                                       IslandVaultTrialCache.Progress progress) {
+
+        if (isNonRealPreviewRegion(region)) return;
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
@@ -279,6 +317,8 @@ public final class IslandVaultTrialGenerator {
                                                int chunkX,
                                                int chunkZ,
                                                IslandVaultTrialCache.Progress progress) {
+
+        if (isNonRealPreviewRegion(region)) return;
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
@@ -352,6 +392,8 @@ public final class IslandVaultTrialGenerator {
                                                int chunkX,
                                                int chunkZ,
                                                IslandVaultTrialCache.Progress progress) {
+
+        if (isNonRealPreviewRegion(region)) return;
 
         while (progress.vaultsRemaining.get() > 0) {
             if (progress.vaultsRemaining.getAndUpdate(v -> v > 0 ? v - 1 : v) <= 0) break;
