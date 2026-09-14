@@ -172,15 +172,27 @@ public class Layer1TerrainGenerator {
 
         double continentalRise = smoothstep(0.0, 0.70, continentality) * 11.0;
         double mountainness = smoothstep(0.0, 0.55, -erosion);
-        double mountainShape = 0.35 + 0.65 * ((macro + 1.0) * 0.5);
-        double land = 3.0 + continentalRise + mountainness * 80.0 * mountainShape
-                + macro * 4.0 + detail * 1.5;
+
+        // Ridged multifractal: each octave is folded (1 - |noise|) and squared before
+        // summing, so instead of one smooth low-frequency bump we get many separate,
+        // steep-sided peaks and ridgelines with real valleys between them, at a scale
+        // comparable to vanilla mountains (roughly 80-160 blocks peak-to-peak).
+        double ridged = ridgedMultifractal(heightNoise, wx * 0.010, wz * 0.010, 6, 2.05, 0.55);
+        double ridgedSharp = ridged * ridged * ridged; // narrows summits, widens the base
+
+        // High-frequency talus/rock texture, confined to slopes that are already
+        // mountainous, so plains and hills stay smooth.
+        double talus = ridgedMultifractal(detailNoise, wx * 0.045, wz * 0.045, 4, 2.1, 0.5)
+                * mountainness * ridged;
+
+        double land = 3.0 + continentalRise + mountainness * 130.0 * ridgedSharp
+                + macro * 4.0 + detail * 1.5 + talus * 10.0;
 
         // Rare continent-scale ridge systems. The ridge field is sampled in world
         // coordinates and blended by continentality, so it cannot create chunk seams.
         double ridge = getRidgeStrength(wx, wz);
         double ridgeLandMask = smoothstep(0.04, 0.22, continentality);
-        land += ridgeLandMask * ridge * (92.0 + 34.0 * mountainShape);
+        land += ridgeLandMask * ridge * (92.0 + 34.0 * ridgedSharp);
 
         double height = lerp(deepOcean, shelf, smoothstep(-0.42, -0.16, continentality));
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
@@ -209,6 +221,25 @@ public class Layer1TerrainGenerator {
         double warpZ = riverWarpNoise.fbm2D(wx * 0.0018 - 53.0, wz * 0.0018 + 71.0, 3, 2.0, 0.5) * 130.0;
         double channel = Math.abs(riverNoise.fbm2D((wx + warpX) * 0.0042, (wz + warpZ) * 0.0042, 3, 2.0, 0.5));
         return 1.0 - smoothstep(0.035, 0.075, channel);
+    }
+
+    /**
+     * Ridged multifractal noise: each octave is folded to a crease (1 - |noise|)
+     * and squared before accumulating, producing many separate sharp ridges/peaks
+     * with real valleys between them instead of a single smooth low-frequency bump.
+     * Returns a value in 0..1.
+     */
+    private static double ridgedMultifractal(AeroNoise noise, double x, double z, int octaves, double lacunarity, double gain) {
+        double sum = 0.0, amplitude = 0.5, frequency = 1.0, max = 0.0;
+        for (int i = 0; i < octaves; i++) {
+            double n = 1.0 - Math.abs(noise.noise2D(x * frequency, z * frequency));
+            n *= n;
+            sum += n * amplitude;
+            max += amplitude;
+            frequency *= lacunarity;
+            amplitude *= gain;
+        }
+        return sum / max;
     }
 
     private static double smoothstep(double edge0, double edge1, double value) {
