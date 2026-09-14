@@ -223,6 +223,17 @@ public class HighIslandGenerator {
         return ((h >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
     }
 
+    /** Быстрый детерминированный хэш для ячейки Worley-шума. */
+    private static long worleyHash(int vcx, int vcz) {
+        long h = (long) vcx * 0x9E3779B97F4A7C15L ^ (long) vcz * 0x6C62272E07BB0142L;
+        h ^= (h >>> 30);
+        h *= 0xBF58476D1CE4E5B9L;
+        h ^= (h >>> 27);
+        h *= 0x94D049BB133111EBL;
+        h ^= (h >>> 31);
+        return h;
+    }
+
     private double[] computeEllipsoidAxes(int cx, int cz, double radius, int botY, int topY) {
         long h = (long) cx * 741873128L ^ (long) cz * 432897987L;
         h ^= (h >>> 27);
@@ -373,14 +384,40 @@ public class HighIslandGenerator {
                 // ── Свод (верхняя полусфера, со сквозными воронками) ─────────
                 int ceilBottom = Math.max(yMinOut, hasCavity ? (yMaxIn + 1) : yMinOut);
                 ceilBottom = Math.max(ceilBottom, cy + 1);
-                // Шум свода — без смещения: независим от дна.
-                boolean crater = craterNoise.fbm2D(wx * 0.02, wz * 0.02, 3, 2.0, 0.5) > craterThreshold;
-                if (!crater) {
-                    for (int wy = ceilBottom; wy <= yMaxOut; wy++) {
-                        chunk.setBlockState(wx, wy, wz, wallMaterial(wx, wy, wz, cy));
+                if (ceilBottom <= yMaxOut) {
+                    // Worley F2-F1: разность расстояний до второй и первой ближайшей точки.
+                    // F2-F1 ≈ 0 на границах ячеек Voronoi (там обе точки одинаково близко)
+                    // и F2-F1 >> 0 в центрах ячеек.
+                    // Инверсия: (F2-F1) < порога → МОНОЛИТНАЯ СТЕНКА (граница между ячейками),
+                    //           (F2-F1) >= порога → ДЫРА (центр ячейки).
+                    // Это даёт тонкие непрерывные стенки между столбами.
+                    final int cellSize = 10;
+                    int vcx = Math.floorDiv(wx, cellSize);
+                    int vcz = Math.floorDiv(wz, cellSize);
+                    double f1 = Double.MAX_VALUE, f2 = Double.MAX_VALUE;
+                    for (int dvcx = -1; dvcx <= 1; dvcx++) {
+                        for (int dvcz = -1; dvcz <= 1; dvcz++) {
+                            int ncx = vcx + dvcx;
+                            int ncz = vcz + dvcz;
+                            long h = worleyHash(ncx, ncz);
+                            double px = (ncx * cellSize) + ((h & 0xFFL) / 255.0) * cellSize;
+                            double pz = (ncz * cellSize) + (((h >> 8) & 0xFFL) / 255.0) * cellSize;
+                            double dx = wx - px, dz = wz - pz;
+                            double dist = Math.sqrt(dx * dx + dz * dz);
+                            if (dist < f1) { f2 = f1; f1 = dist; }
+                            else if (dist < f2) { f2 = dist; }
+                        }
+                    }
+                    double diff = (f2 - f1) / cellSize; // нормализован ~[0..1]
+                    double warp = craterNoise.noise2D(wx * 0.09, wz * 0.09) * 0.12;
+                    // diff < 0.22 → граница ячейки → монолитная стенка
+                    // diff >= 0.22 → центр ячейки → сквозная дыра
+                    if (diff + warp < 0.22) {
+                        for (int wy = ceilBottom; wy <= yMaxOut; wy++) {
+                            chunk.setBlockState(wx, wy, wz, wallMaterial(wx, wy, wz, cy));
+                        }
                     }
                 }
-                // crater == true → вся колонка свода пропускается (сквозная воронка).
 
                 // Полость [yMinIn..yMaxIn] (если hasCavity) не заполняется —
                 // O(1) пропуск, ни одной записи блока.
