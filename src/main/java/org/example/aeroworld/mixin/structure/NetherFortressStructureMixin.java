@@ -6,7 +6,6 @@ import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePiecesBuilder;
 import net.minecraft.world.level.levelgen.structure.structures.NetherFortressStructure;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
-import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -22,11 +21,9 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * пересчитывает финальную высоту через
  * {@code StructurePiecesBuilder.moveInsideHeights(random, 48, 70)}
  * — то есть даже если бы стартовый Y=64 удалось поменять датапаком (нельзя),
- * это всё равно перезаписывается этим вызовом. В AeroWorld главная пещера
- * лежит вне диапазона Y 48..70, из-за чего крепость утапливается мимо
- * гигантской пещеры (Y {@link Layer1TerrainGenerator#CAVE_BOTTOM_Y}..
- * {@link Layer1TerrainGenerator#CAVE_TOP_Y}). Единственная точка, где высоту
- * можно перехватить — сам этот вызов.
+ * это всё равно перезаписывается этим вызовом. В AeroWorld крепость нужно
+ * зафиксировать строго в диапазоне Y -55..-50. Единственная точка, где
+ * высоту можно перехватить — сам этот вызов.
  *
  * <p>Затрагивает ТОЛЬКО измерение AeroWorld: guard по
  * {@code instanceof AeroWorldChunkGenerator}. Ванильный Нижний мир и любые
@@ -59,10 +56,9 @@ public abstract class NetherFortressStructureMixin {
         }
 
         // Смещаем уже собранные piece'ы так, чтобы структура целиком попала
-        // в диапазон главной пещеры — той же логикой, что и оригинальный
-        // moveInsideHeights(random, minY, maxY), но с координатами пещеры.
-        int caveBottom = Layer1TerrainGenerator.CAVE_BOTTOM_Y;
-        int caveTop    = Layer1TerrainGenerator.CAVE_TOP_Y;
+        // в фиксированный диапазон высот Y -55..-50 внутри AeroWorld.
+        int caveBottom = -55;
+        int caveTop    = -50;
 
         BoundingBox current = collector.getBoundingBox();
         int span = current.getYSpan();

@@ -5,7 +5,7 @@
   "size": 6,
   "spawn_overrides": {},
   "start_height": {
-    "absolute": -37
+    "absolute": -55
   },
   "start_pool": "minecraft:bastion/starts",
   "step": "surface_structures",
