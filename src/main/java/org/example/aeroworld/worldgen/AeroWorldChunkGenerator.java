@@ -475,6 +475,29 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         // Делегируем стандартную декорацию биомов ванильному пайплайну (структуры, растительность)
         super.applyBiomeDecoration(region, chunk, structureManager);
 
+        // ── Постфактум-зачистка невалидных структур ────────────────────────────
+        // createStructures инвалидирует StructureStart раньше (STRUCTURE_STARTS/
+        // STRUCTURE_REFERENCES), но реальная постройка piece'ов происходит здесь,
+        // внутри super.applyBiomeDecoration — инвалидация с предыдущего статуса
+        // на практике до него не долетает. Единственный надёжный способ отловить
+        // парящие деревни/порталы — проверить структуру ПОСЛЕ фактической
+        // постройки и стереть то, что не прошло валидацию. См. javadoc
+        // StructureSupportValidator.postPlacementCleanup().
+        if (structureValidator != null) {
+            StructureSupportValidator.Layer1HeightSampler cleanupHeightSampler = (x, z, type) -> {
+                if (layer1Terrain != null) {
+                    if (type == Heightmap.Types.OCEAN_FLOOR || type == Heightmap.Types.OCEAN_FLOOR_WG) {
+                        return layer1Terrain.getHeight(x, z);
+                    } else {
+                        return layer1Terrain.getTopmostHeight(x, z);
+                    }
+                }
+                return Layer1TerrainGenerator.SEA_LEVEL;
+            };
+            structureValidator.postPlacementCleanup(region, chunk,
+                    region.registryAccess(), cleanupHeightSampler);
+        }
+
         // Удаляем ванильные руды, просочившиеся через biome features (Layer 1)
         Layer1OreFilter.applyToChunk(chunk);
 

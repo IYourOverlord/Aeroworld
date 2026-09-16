@@ -7,6 +7,7 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 import org.example.aeroworld.worldgen.cache.ChunkIslandCache;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.Layer1FlatGenerator;
+import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.slf4j.Logger;
@@ -402,7 +403,114 @@ public final class StructureSupportValidator {
         }
     }
 
-    // ── Утилиты ───────────────────────────────────────────────────────────────
+    // ── Пост-размещение: физическая зачистка уже построенных структур ─────────
+
+    /**
+     * Зачищает уже физически размещённые структуры, не прошедшие валидацию.
+     *
+     * <h3>Почему это нужно</h3>
+     * {@code createStructures} инвалидирует {@link StructureStart} через
+     * {@code StructureManager.setStartForStructure(..., INVALID_START, chunk)},
+     * но эта запись живёт в {@code ChunkAccess}, полученном на статусе
+     * STRUCTURE_STARTS/STRUCTURE_REFERENCES. Реальная постройка piece'ов
+     * (jigsaw-куски деревень, части ruined_portal) происходит позже, на шаге
+     * FEATURES, внутри {@code super.applyBiomeDecoration}, которое читает
+     * старт заново из своего собственного {@code WorldGenRegion}/{@code ChunkAccess}
+     * — инвалидация с предыдущего статуса на практике до него не долетает,
+     * и структура строится как есть, несмотря на отклонение. Единственный
+     * надёжный способ — проверить структуру ПОСЛЕ того как ваниль её уже
+     * физически построила, и стереть то, что не прошло проверку.
+     *
+     * <h3>Как это работает</h3>
+     * Вызывается из {@code applyBiomeDecoration} сразу после
+     * {@code super.applyBiomeDecoration} (структуры уже в блоках чанка).
+     * Для каждого {@code StructureStart}, пересекающего текущий чанк,
+     * повторно валидируем через {@link #validate} (теперь с {@code realLevel},
+     * что также включает более точную {@code isSolidAt}-проверку по факту
+     * блоков вместо детерминированного предсказания). Если отклонена —
+     * заменяем все блоки структуры, попадающие ТОЛЬКО в текущий чанк
+     * (в пределах {@code BoundingBox} структуры), на воздух/воду в
+     * зависимости от того, что было в колонке до структуры на Layer 1.
+     *
+     * <h3>Стоимость</h3>
+     * Выполняется один раз на чанк, только если в чанке вообще есть старты
+     * ({@code getAllStarts()} — тот же дешёвый вызов, что уже используется
+     * в {@code createStructures}). Валидация пересчитывается заново (Java-объект
+     * {@code StructureStart} на шаге FEATURES обычно другой инстанс, чем на
+     * STRUCTURE_STARTS, поэтому {@code validatedCache} по ключу объекта не
+     * даёт хита) — но сам расчёт дешёвый (см. {@code TerrainColumnSampler}
+     * javadoc про O(n) вместо O(height×n)). Стирание блоков — только для
+     * структур, реально отклонённых (редкий случай), не более чем
+     * {@code BoundingBox} структуры пересечённый с текущим чанком (16×16
+     * колонок максимум).
+     */
+    public void postPlacementCleanup(net.minecraft.world.level.WorldGenLevel region,
+                                     net.minecraft.world.level.chunk.ChunkAccess chunk,
+                                     net.minecraft.core.RegistryAccess registryAccess,
+                                     Layer1HeightSampler heightSampler) {
+        java.util.Map<net.minecraft.world.level.levelgen.structure.Structure, StructureStart> allStarts =
+                chunk.getAllStarts();
+        if (allStarts.isEmpty()) return;
+
+        net.minecraft.world.level.ChunkPos chunkPos = chunk.getPos();
+        BoundingBox chunkBox = new BoundingBox(
+                chunkPos.getMinBlockX(), region.getMinBuildHeight(), chunkPos.getMinBlockZ(),
+                chunkPos.getMaxBlockX(), region.getMinBuildHeight() + region.getHeight() - 1, chunkPos.getMaxBlockZ());
+
+        allStarts.forEach((structure, start) -> {
+            if (start == null || start == StructureStart.INVALID_START || !start.isValid()) return;
+
+            ResourceLocation structureId = registryAccess
+                    .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE)
+                    .getKey(structure);
+            if (structureId == null) return;
+
+            ValidationResult result = validate(structureId, start, region, heightSampler);
+            if (result.accepted) return;
+
+            logRejection(structureId, start.getBoundingBox(),
+                    "структура уже построена, но отклонена постфактум — зачистка блоков в чанке");
+            eraseStructureInChunk(region, start, chunkBox, heightSampler);
+        });
+    }
+
+    /**
+     * Заменяет блоки всех {@code StructurePiece} структуры, пересекающие
+     * {@code chunkBox}, на воздух (или воду ниже уровня моря на Layer 1).
+     * Ограничено пересечением с текущим чанком — при повторных вызовах для
+     * соседних чанков той же структуры остальная часть зачистится там же.
+     */
+    private void eraseStructureInChunk(net.minecraft.world.level.WorldGenLevel region,
+                                       StructureStart start, BoundingBox chunkBox,
+                                       Layer1HeightSampler heightSampler) {
+        for (var piece : start.getPieces()) {
+            BoundingBox pieceBox = piece.getBoundingBox();
+            int minX = Math.max(pieceBox.minX(), chunkBox.minX());
+            int maxX = Math.min(pieceBox.maxX(), chunkBox.maxX());
+            int minY = Math.max(pieceBox.minY(), chunkBox.minY());
+            int maxY = Math.min(pieceBox.maxY(), chunkBox.maxY());
+            int minZ = Math.max(pieceBox.minZ(), chunkBox.minZ());
+            int maxZ = Math.min(pieceBox.maxZ(), chunkBox.maxZ());
+            if (minX > maxX || minY > maxY || minZ > maxZ) continue;
+
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    int groundY = heightSampler.getHeight(x, z,
+                            net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG);
+                    for (int y = minY; y <= maxY; y++) {
+                        net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
+                        net.minecraft.world.level.block.state.BlockState replacement =
+                                (y <= groundY && y <= Layer1TerrainGenerator.SEA_LEVEL)
+                                        ? net.minecraft.world.level.block.Blocks.WATER.defaultBlockState()
+                                        : net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+                        region.setBlock(pos, replacement, 2);
+                    }
+                }
+            }
+        }
+    }
+
+
 
     private static void logRejection(ResourceLocation id, BoundingBox bounds, String reason) {
         if (LOG_REJECTED) {
