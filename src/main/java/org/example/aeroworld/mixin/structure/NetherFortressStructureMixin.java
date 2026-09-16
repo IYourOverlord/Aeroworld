@@ -20,11 +20,11 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * захардкоженная структура без height-конфига. {@code findGenerationPoint}
  * фиксирует стартовую точку на Y=64, а {@code generatePieces} в конце ВСЕГДА
  * пересчитывает финальную высоту через
- * {@code StructurePiecesBuilder.moveBelowSeaLevel(seaLevel, minY, random, height)}
+ * {@code StructurePiecesBuilder.moveInsideHeights(random, 48, 70)}
  * — то есть даже если бы стартовый Y=64 удалось поменять датапаком (нельзя),
- * это всё равно перезаписывается этим вызовом. В AeroWorld
- * {@code getSeaLevel() == 0}, из-за чего крепость утапливается к Y≈-3..-5 —
- * мимо гигантской пещеры (Y {@link Layer1TerrainGenerator#CAVE_BOTTOM_Y}..
+ * это всё равно перезаписывается этим вызовом. В AeroWorld главная пещера
+ * лежит вне диапазона Y 48..70, из-за чего крепость утапливается мимо
+ * гигантской пещеры (Y {@link Layer1TerrainGenerator#CAVE_BOTTOM_Y}..
  * {@link Layer1TerrainGenerator#CAVE_TOP_Y}). Единственная точка, где высоту
  * можно перехватить — сам этот вызов.
  *
@@ -32,7 +32,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * {@code instanceof AeroWorldChunkGenerator}. Ванильный Нижний мир и любые
  * другие измерения используют {@code NoiseBasedChunkGenerator} напрямую —
  * под условие не попадают, вызывают оригинальный
- * {@code moveBelowSeaLevel} без изменений.
+ * {@code moveInsideHeights} без изменений.
  */
 @Mixin(value = NetherFortressStructure.class, remap = false)
 public abstract class NetherFortressStructureMixin {
@@ -41,29 +41,35 @@ public abstract class NetherFortressStructureMixin {
             method = "generatePieces",
             at = @At(
                     value = "INVOKE",
-                    target = "Lnet/minecraft/world/level/levelgen/structure/pieces/StructurePiecesBuilder;moveBelowSeaLevel(IILnet/minecraft/util/RandomSource;I)I"
-            )
+                    target = "Lnet/minecraft/world/level/levelgen/structure/pieces/StructurePiecesBuilder;moveInsideHeights(Lnet/minecraft/util/RandomSource;II)V",
+                    remap = false
+            ),
+            remap = false
     )
-    private static int aeroworld$placeFortressInMainCave(StructurePiecesBuilder collector,
-                                                           int seaLevel, int minY,
-                                                           RandomSource random, int height,
-                                                           Structure.GenerationContext context) {
-        if (!(context.chunkGenerator() instanceof AeroWorldChunkGenerator)) {
-            return collector.moveBelowSeaLevel(seaLevel, minY, random, height);
+    private static void aeroworld$placeFortressInMainCave(StructurePiecesBuilder collector,
+                                                          RandomSource random, int minY, int maxY) {
+        // context недоступен как captured-параметр в этой точке инжекции
+        // (генератор чанков определяется через сам конструируемый мир, а не
+        // через явный параметр метода-владельца) — гейт по измерению делаем
+        // через ThreadLocal-флаг, который выставляет AeroWorldChunkGenerator
+        // перед вызовом findGenerationPoint/generatePieces для этой структуры.
+        if (!AeroWorldChunkGenerator.IS_GENERATING.get()) {
+            collector.moveInsideHeights(random, minY, maxY);
+            return;
         }
 
-        // Смещаем уже собранные piece'ы так, чтобы низ структуры попал в
-        // случайную точку внутри главной пещеры, с запасом под высоту (height)
-        // — тем же смыслом, что и оригинальный seaLevel - height - random(3).
+        // Смещаем уже собранные piece'ы так, чтобы структура целиком попала
+        // в диапазон главной пещеры — той же логикой, что и оригинальный
+        // moveInsideHeights(random, minY, maxY), но с координатами пещеры.
         int caveBottom = Layer1TerrainGenerator.CAVE_BOTTOM_Y;
         int caveTop    = Layer1TerrainGenerator.CAVE_TOP_Y;
-        int band       = Math.max(1, (caveTop - caveBottom) - height);
 
         BoundingBox current = collector.getBoundingBox();
-        int targetMinY = caveBottom + random.nextInt(band);
-        int offset     = targetMinY - current.minY();
+        int span = current.getYSpan();
+        int range = Math.max(1, (caveTop - caveBottom + 1) - span);
+        int targetMinY = caveBottom + (range > 1 ? random.nextInt(range) : 0);
+        int offset = targetMinY - current.minY();
 
         collector.offsetPiecesVertically(offset);
-        return offset;
     }
 }

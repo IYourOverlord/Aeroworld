@@ -3,7 +3,6 @@
   "minVersion": "0.8.5",
   "package": "org.example.aeroworld.mixin.structure",
   "compatibilityLevel": "JAVA_21",
-  "refmap": "aeroworld.refmap.json",
   "mixins": [
     "NetherFortressStructureMixin"
   ],

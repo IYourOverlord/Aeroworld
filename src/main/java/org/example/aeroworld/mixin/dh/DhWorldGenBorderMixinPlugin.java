@@ -23,17 +23,14 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 	@Override
 	public void onLoad(String mixinPackage)
 	{
-		boolean present;
-		try
-		{
-			Class.forName(DH_TARGET_CLASS, false, this.getClass().getClassLoader());
-			present = true;
-		}
-		catch (Throwable t)
-		{
-			present = false;
-		}
-		this.distantHorizonsPresent = present;
+		// ВАЖНО: не использовать Class.forName здесь. Даже с initialize=false
+		// это резолвит и линкует класс DH через classloader, что заставляет
+		// его загружаться слишком рано (до того, как DH готов к трансформации
+		// своих собственных классов) -> "was loaded too early" от DH.
+		// Проверяем присутствие класса только по наличию .class-ресурса на
+		// classpath, вообще не трогая classloading DH.
+		String resource = DH_TARGET_CLASS.replace('.', '/') + ".class";
+		this.distantHorizonsPresent = this.getClass().getClassLoader().getResource(resource) != null;
 	}
 
 	@Override

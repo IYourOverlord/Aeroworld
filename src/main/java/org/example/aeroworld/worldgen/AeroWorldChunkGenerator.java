@@ -307,14 +307,29 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         return new NoiseColumn(minY, states);
     }
 
+    /**
+     * Флаг для {@code NetherFortressStructureMixin}: генерация piece'ов
+     * структуры (в т.ч. {@code moveInsideHeights}) идёт глубоко внутри
+     * ванильного {@code Structure.generate}, вызываемого из
+     * {@code super.createStructures(...)}, без доступа к чанк-генератору
+     * как параметру метода — поэтому измерение AeroWorld определяется через
+     * этот ThreadLocal, а не через {@code instanceof} на captured-аргументе.
+     */
+    public static final ThreadLocal<Boolean> IS_GENERATING = ThreadLocal.withInitial(() -> false);
+
     @Override
     public void createStructures(RegistryAccess registryAccess,
                                  ChunkGeneratorStructureState structureState,
                                  StructureManager structureManager,
                                  ChunkAccess chunk,
                                  StructureTemplateManager structureTemplateManager) {
-        super.createStructures(registryAccess, structureState, structureManager,
-                chunk, structureTemplateManager);
+        IS_GENERATING.set(true);
+        try {
+            super.createStructures(registryAccess, structureState, structureManager,
+                    chunk, structureTemplateManager);
+        } finally {
+            IS_GENERATING.set(false);
+        }
 
         if (!seedInitialized) {
             initializeWithSeed(structureState.getLevelSeed());
