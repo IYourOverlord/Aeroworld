@@ -39,3 +39,6 @@ side = "BOTH"
 
 [[mixins]]
 config = "aeroworld.mixins.json"
+
+[[mixins]]
+config = "aeroworld_structures.mixins.json"

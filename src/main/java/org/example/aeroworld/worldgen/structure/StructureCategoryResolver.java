@@ -30,11 +30,13 @@ public final class StructureCategoryResolver {
 
     // ── Жёсткий deny-список ───────────────────────────────────────────────────
     // Эти структуры полностью несовместимы с кастомной генерацией AeroWorld.
+    // minecraft:fortress и minecraft:bastion_remnant сняты с deny-списка:
+    // размещаются в главной пещере Layer 1 (см. KNOWN_UNDERGROUND ниже,
+    // has_structure/nether_fortress.json, has_structure/bastion_remnant.json
+    // и NetherFortressStructureMixin для высоты фортресса).
     private static final Set<ResourceLocation> DENIED = Set.of(
             ResourceLocation.parse("minecraft:end_city"),
-            ResourceLocation.parse("minecraft:nether_fossil"),
-            ResourceLocation.parse("minecraft:bastion_remnant"),
-            ResourceLocation.parse("minecraft:fortress")
+            ResourceLocation.parse("minecraft:nether_fossil")
     );
 
     // ── Whitelist: принимать без валидации ────────────────────────────────────
@@ -60,7 +62,11 @@ public final class StructureCategoryResolver {
             ResourceLocation.parse("minecraft:mineshaft"),
             ResourceLocation.parse("minecraft:trial_chambers"),
             ResourceLocation.parse("minecraft:ancient_city"),
-            ResourceLocation.parse("minecraft:stronghold")
+            ResourceLocation.parse("minecraft:stronghold"),
+            // Главная пещера Layer 1 (Y CAVE_BOTTOM_Y..CAVE_TOP_Y) — валидируются
+            // как обычные подземные структуры (validateUnderground, порог 80%).
+            ResourceLocation.parse("minecraft:fortress"),
+            ResourceLocation.parse("minecraft:bastion_remnant")
     );
 
     private StructureCategoryResolver() {}
