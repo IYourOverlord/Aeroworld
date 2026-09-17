@@ -82,7 +82,7 @@ public abstract class EndCityStructureMixin {
      * сгенерированных пивсов окажется на пару блоков ниже стартового Y
      * (например, из-за случайного поворота базовой площадки).</p>
      */
-    private static final int END_CITY_CLEARANCE = 16;
+    private static final int END_CITY_CLEARANCE = 8;
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
@@ -111,10 +111,10 @@ public abstract class EndCityStructureMixin {
         Field templateNameField = null;
         try {
             Class<?> templateStructurePiece = Class.forName(
-                    "net.minecraft.world.level.levelgen.structure.pieces.TemplateStructurePiece");
+                    "net.minecraft.world.level.levelgen.structure.TemplateStructurePiece");
             templateNameField = templateStructurePiece.getDeclaredField("templateName");
             templateNameField.setAccessible(true);
-        } catch (ReflectiveOperationException e) {
+        } catch (ReflectiveOperationException | LinkageError e) {
             LOGGER.error("[AeroWorld] Не удалось получить доступ к TemplateStructurePiece.templateName рефлексией — фильтр корабля End City отключён", e);
         }
         TEMPLATE_NAME_FIELD = templateNameField;
@@ -123,7 +123,7 @@ public abstract class EndCityStructureMixin {
         try {
             piecesField = StructurePiecesBuilder.class.getDeclaredField("pieces");
             piecesField.setAccessible(true);
-        } catch (ReflectiveOperationException e) {
+        } catch (ReflectiveOperationException | LinkageError e) {
             LOGGER.error("[AeroWorld] Не удалось получить доступ к StructurePiecesBuilder.pieces рефлексией — фильтр корабля End City отключён", e);
         }
         PIECES_FIELD = piecesField;
