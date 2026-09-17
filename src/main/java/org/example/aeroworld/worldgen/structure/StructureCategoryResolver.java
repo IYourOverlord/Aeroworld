@@ -34,8 +34,11 @@ public final class StructureCategoryResolver {
     // размещаются в главной пещере Layer 1 (см. KNOWN_UNDERGROUND ниже,
     // has_structure/nether_fortress.json, has_structure/bastion_remnant.json
     // и NetherFortressStructureMixin для высоты фортресса).
+    // minecraft:end_city снят с deny-списка по той же причине: размещается
+    // по центру островов-планет Layer 3 через EndCityStructureMixin
+    // (findGenerationPoint форсирует старт в центр острова BodyType.PLANET);
+    // категория — SKY_FLOATING, см. KNOWN_SKY_FLOATING ниже.
     private static final Set<ResourceLocation> DENIED = Set.of(
-            ResourceLocation.parse("minecraft:end_city"),
             ResourceLocation.parse("minecraft:nether_fossil")
     );
 
@@ -69,6 +72,16 @@ public final class StructureCategoryResolver {
             ResourceLocation.parse("minecraft:bastion_remnant")
     );
 
+    // ── Явные id парящих структур Minecraft ──────────────────────────────────
+    // End City — парит рядом с планетой Layer 3 (EndCityStructureMixin
+    // стартует её с запасом над макушкой сферы, см. END_CITY_CLEARANCE), а не
+    // стоит на твёрдом грунте — validateIsland (требует твёрдь под подошвой)
+    // всегда отклонял бы её как "недостаточно поддержки". SKY_FLOATING вместо
+    // этого требует только отсутствие коллизий рельефа и близость острова.
+    private static final Set<ResourceLocation> KNOWN_SKY_FLOATING = Set.of(
+            ResourceLocation.parse("minecraft:end_city")
+    );
+
     private StructureCategoryResolver() {}
 
     /**
@@ -78,6 +91,7 @@ public final class StructureCategoryResolver {
     public static StructureCategory resolve(ResourceLocation structureId) {
         if (structureId == null) return StructureCategory.SURFACE;
         if (DENIED.contains(structureId)) return StructureCategory.DENY;
+        if (KNOWN_SKY_FLOATING.contains(structureId)) return StructureCategory.SKY_FLOATING;
         if (ALWAYS_ALLOW.contains(structureId)) return StructureCategory.SURFACE;
         if (KNOWN_UNDERGROUND.contains(structureId)) return StructureCategory.UNDERGROUND;
 
@@ -195,9 +209,9 @@ public final class StructureCategoryResolver {
     public static boolean isIslandLayerY(int y) {
         return (y >= LowerIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
                 && y <= LowerIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN)   // Layer 2 ± запас
-            || (y >= HighIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
+                || (y >= HighIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
                 && y <= HighIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN)   // Layer 3 ± запас
-            || (y >= UpperIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
+                || (y >= UpperIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN
                 && y <= UpperIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN); // Layer 4 ± запас
     }
 
@@ -212,9 +226,9 @@ public final class StructureCategoryResolver {
     public static boolean isVoidGapY(int y) {
         return (y > Layer1FlatGenerator.LAYER_MAX_Y
                 && y < LowerIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN)    // между Layer1 и Layer2
-            || (y > LowerIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
+                || (y > LowerIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
                 && y < HighIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN)    // между Layer2 и Layer3
-            || (y > HighIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
+                || (y > HighIslandGenerator.LAYER_MAX_Y + LAYER_MARGIN
                 && y < UpperIslandGenerator.LAYER_MIN_Y - LAYER_MARGIN);  // между Layer3 и Layer4
     }
 }

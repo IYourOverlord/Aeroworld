@@ -4,7 +4,9 @@
   "package": "org.example.aeroworld.mixin.structure",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "NetherFortressStructureMixin"
+    "NetherFortressStructureMixin",
+    "EndCityStructureMixin",
+    "EndCityStructureAccessor"
   ],
   "client": [],
   "server": [],

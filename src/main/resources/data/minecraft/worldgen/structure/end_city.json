@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:end_city",
+  "biomes": "#aeroworld:aero_biomes",
+  "step": "surface_structures",
+  "terrain_adaptation": "none",
+  "spawn_overrides": {}
+}

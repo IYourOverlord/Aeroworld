@@ -193,9 +193,12 @@ public final class StructureSupportValidator {
         };
 
         if (result.accepted && LOG_ACCEPTED) {
+            LOGGER.info("[AeroWorld] Structure accepted: {} {}", structureId, result);
         }
         if (!result.accepted && LOG_REJECTED) {
+            LOGGER.info("[AeroWorld] Structure rejected: {} {} actualLayer={}", structureId, result, actualLayer);
             if (!result.failingSamples.isEmpty()) {
+                LOGGER.info("[AeroWorld]   failing samples: {}", result.failingSamples);
             }
         }
 
@@ -514,6 +517,7 @@ public final class StructureSupportValidator {
 
     private static void logRejection(ResourceLocation id, BoundingBox bounds, String reason) {
         if (LOG_REJECTED) {
+            LOGGER.info("[AeroWorld] Structure rejected: {} at {} — {}", id, formatBounds(bounds), reason);
         }
     }
 
