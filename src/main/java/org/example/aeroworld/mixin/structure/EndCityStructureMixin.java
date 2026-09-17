@@ -3,8 +3,11 @@ package org.example.aeroworld.mixin.structure;
 import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructurePiece;
+import net.minecraft.world.level.levelgen.structure.pieces.StructurePiecesBuilder;
 import net.minecraft.world.level.levelgen.structure.structures.EndCityStructure;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
 import org.example.aeroworld.worldgen.cache.BodyType;
@@ -18,6 +21,9 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.lang.reflect.Field;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -79,6 +85,70 @@ public abstract class EndCityStructureMixin {
     private static final int END_CITY_CLEARANCE = 16;
 
     private static final Logger LOGGER = LogUtils.getLogger();
+
+    /**
+     * Кэшированное приватное поле {@code templateName} (тип
+     * {@link ResourceLocation}) в {@code TemplateStructurePiece} — базовом
+     * классе {@code EndCityPieces.EndCityPiece}. Хранит имя NBT-шаблона
+     * пивса (например {@code "end_city/ship"}); по нему пост-фильтр отличает
+     * пивс корабля от пивсов башен/лестниц/мостов той же структуры.
+     * {@code setAccessible(true)} выполняется один раз на JVM в статическом
+     * инициализаторе — дешёво, повторного вызова на каждый пивс не требуется.
+     */
+    private static final Field TEMPLATE_NAME_FIELD;
+
+    /**
+     * Кэшированное приватное поле {@code pieces} (тип {@code List<StructurePiece>})
+     * в самом {@link StructurePiecesBuilder}. Реальный ванильный класс (см.
+     * decompile) не публикует геттер списка пивсов — {@code build()} только
+     * оборачивает его в {@code PiecesContainer}, а {@code clear()}/
+     * {@code isEmpty()} работают с ним же, не давая доступа наружу. Поэтому
+     * пост-фильтр обязан читать это поле рефлексией напрямую.
+     */
+    private static final Field PIECES_FIELD;
+
+    static {
+        Field templateNameField = null;
+        try {
+            Class<?> templateStructurePiece = Class.forName(
+                    "net.minecraft.world.level.levelgen.structure.pieces.TemplateStructurePiece");
+            templateNameField = templateStructurePiece.getDeclaredField("templateName");
+            templateNameField.setAccessible(true);
+        } catch (ReflectiveOperationException e) {
+            LOGGER.error("[AeroWorld] Не удалось получить доступ к TemplateStructurePiece.templateName рефлексией — фильтр корабля End City отключён", e);
+        }
+        TEMPLATE_NAME_FIELD = templateNameField;
+
+        Field piecesField = null;
+        try {
+            piecesField = StructurePiecesBuilder.class.getDeclaredField("pieces");
+            piecesField.setAccessible(true);
+        } catch (ReflectiveOperationException e) {
+            LOGGER.error("[AeroWorld] Не удалось получить доступ к StructurePiecesBuilder.pieces рефлексией — фильтр корабля End City отключён", e);
+        }
+        PIECES_FIELD = piecesField;
+    }
+
+    /**
+     * Возвращает {@code true}, если переданный пивс — это пивс корабля
+     * ({@code end_city/ship}), определяемый по имени NBT-шаблона в поле
+     * {@code templateName}. При любой ошибке рефлексии (поле отсутствует/
+     * недоступно, пивс не того типа) — возвращает {@code false}, оставляя
+     * пивс нетронутым (безопасный дефолт: лучше не удалить лишнего, чем
+     * случайно вырезать часть города).
+     */
+    private static boolean aeroworld$isShipPiece(StructurePiece piece) {
+        if (TEMPLATE_NAME_FIELD == null) return false;
+        try {
+            Object value = TEMPLATE_NAME_FIELD.get(piece);
+            if (value instanceof ResourceLocation location) {
+                return location.getPath().contains("ship");
+            }
+        } catch (IllegalAccessException | IllegalArgumentException ignored) {
+            // Пивс не TemplateStructurePiece или поле недоступно — не корабль.
+        }
+        return false;
+    }
 
     @Inject(
             method = "findGenerationPoint",
@@ -144,12 +214,46 @@ public abstract class EndCityStructureMixin {
             cir.setReturnValue(Optional.of(new Structure.GenerationStub(startPos, builder -> {
                 EndCityStructureAccessor accessor = (EndCityStructureAccessor) (Object) this;
                 accessor.aeroworld$invokeGeneratePieces(builder, startPos, rotation, context);
-                LOGGER.info("[AeroWorld] EndCity generatePieces invoked at chunk=({},{}), builder pieceCount after={}",
-                        chunkX, chunkZ, builder.getBoundingBox());
+                aeroworld$stripShipPieces(builder, chunkX, chunkZ);
             })));
             return;
         }
 
         cir.setReturnValue(Optional.empty());
+    }
+
+    /**
+     * Пост-фильтр по builder (вариант 1): после ванильной генерации пивсов
+     * End City убирает уже посчитанные пивсы корабля ({@code end_city/ship})
+     * из приватного поля {@code pieces} билдера (доступ рефлексией — публичного
+     * геттера в ванильном {@link StructurePiecesBuilder} нет) до записи
+     * структуры в чанк. Саму генерацию/NBT не трогает — корабль всё ещё
+     * считается ванильным кодом, но не попадает в финальный список пивсов,
+     * поэтому не материализуется в мире. Никакой доп. нагрузки на диск/датапак.
+     */
+    private void aeroworld$stripShipPieces(StructurePiecesBuilder builder, int chunkX, int chunkZ) {
+        if (PIECES_FIELD == null) return;
+
+        List<StructurePiece> pieces;
+        try {
+            //noinspection unchecked
+            pieces = (List<StructurePiece>) PIECES_FIELD.get(builder);
+        } catch (IllegalAccessException | ClassCastException e) {
+            LOGGER.error("[AeroWorld] Не удалось прочитать StructurePiecesBuilder.pieces — фильтр корабля End City пропущен", e);
+            return;
+        }
+
+        int removed = 0;
+        Iterator<StructurePiece> it = pieces.iterator();
+        while (it.hasNext()) {
+            StructurePiece piece = it.next();
+            if (aeroworld$isShipPiece(piece)) {
+                it.remove();
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            LOGGER.info("[AeroWorld] EndCity ship piece(s) removed at chunk=({},{}): count={}", chunkX, chunkZ, removed);
+        }
     }
 }
