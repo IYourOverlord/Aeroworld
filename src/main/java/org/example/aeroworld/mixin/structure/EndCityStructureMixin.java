@@ -82,7 +82,7 @@ public abstract class EndCityStructureMixin {
      * сгенерированных пивсов окажется на пару блоков ниже стартового Y
      * (например, из-за случайного поворота базовой площадки).</p>
      */
-    private static final int END_CITY_CLEARANCE = 8;
+    private static final int END_CITY_CLEARANCE = 16;
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
