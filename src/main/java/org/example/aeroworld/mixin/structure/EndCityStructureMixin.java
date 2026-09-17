@@ -121,20 +121,25 @@ public abstract class EndCityStructureMixin {
                 return;
             }
 
-            // data.topY — верхняя точка сферы планеты. End City растёт и вверх,
-            // и вниз от стартового пивса (EndCityPieces.startHouseTower ставит
-            // башню, часть которой опускается ниже стартового Y) — при старте
-            // ровно на topY нижняя часть города уходит внутрь тела планеты
-            // (видно на скриншоте: постройка наполовину утоплена в снежной
-            // сфере). Поднимаем старт с запасом над макушкой, чтобы весь город
-            // гарантированно оказался над поверхностью.
-            int startY = data.topY + END_CITY_CLEARANCE;
+            // data.topY — верх ограничивающего бокса острова (botY + islandH,
+            // клампится по LAYER_MAX_Y), а НЕ фактическая макушка сферы/
+            // эллипсоида в центральной колонке (cx, cz). Для сплюснутых или
+            // вытянутых по XZ планет (ellipsoidAxes != бокс) реальная
+            // поверхность в центре заметно ниже topY, из-за чего структура
+            // стартовала выше фактического острова — "парила" над ним на
+            // неопределённой высоте. Берём реальную высоту оболочки в точке
+            // центра через getEllipsoidTopY (тот же расчёт, что использует
+            // LOD/заполнение чанков), затем поднимаем с запасом, чтобы вся
+            // структура (растёт и вверх, и вниз от стартового пивса) оказалась
+            // над поверхностью.
+            int surfaceY = highIslands.getEllipsoidTopY(data.cx, data.cz, data);
+            int startY = surfaceY + END_CITY_CLEARANCE;
 
             BlockPos startPos = new BlockPos(data.cx, startY, data.cz);
             Rotation rotation = Rotation.getRandom(context.random());
 
-            LOGGER.info("[AeroWorld] EndCity start forced: chunk=({},{}) planetCentre=({},{}) topY={} startY={} rotation={}",
-                    chunkX, chunkZ, data.cx, data.cz, data.topY, startY, rotation);
+            LOGGER.info("[AeroWorld] EndCity start forced: chunk=({},{}) planetCentre=({},{}) boundingTopY={} surfaceY={} startY={} rotation={}",
+                    chunkX, chunkZ, data.cx, data.cz, data.topY, surfaceY, startY, rotation);
 
             cir.setReturnValue(Optional.of(new Structure.GenerationStub(startPos, builder -> {
                 EndCityStructureAccessor accessor = (EndCityStructureAccessor) (Object) this;
