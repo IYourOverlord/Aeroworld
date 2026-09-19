@@ -250,6 +250,20 @@ worldgen/
   который не является таргетом ни одного миксина. Мягкая зависимость сохранена, а
   `BatchGenerationEnvironmentNeoforgeMixin` теперь корректно применяется.
 
+### Исправлено: дальние LOD не отображаются (applyToParent у API-пути SeedGen):
+- Симптом (подтверждён логами и БД): DH-оверлей показывает огромную сгенерированную территорию
+  (в `FullData` overworld-БД лежат ~82k источников, ~318 МБ), но в 3D-рендере виден только небольшой
+  участок вокруг спавна; все миксины применяются, ошибок нет.
+- Причина: vanilla-путь DH (`LodDataBuilder.createFromChunk`) выставляет на создаваемом
+  `FullDataSourceV2` флаг `applyToParent = TRUE`, из-за чего DH даунсемплит точные LOD-данные в
+  грубые родительские уровни, которые рендер использует для дальних блоков. API-путь SeedGen
+  (`LodDataBuilder.createFromApiChunkData`) этот флаг НЕ ставит -> иерархия грубых LOD не строится:
+  в БД у всех источников `ApplyToParent=0`, грубая пирамида обрывается на detail 8, выше ничего нет.
+- Фикс: новый миксин `LodDataBuilderApplyToParentMixin` в `createFromApiChunkData` выставляет
+  `applyToParent = TRUE` на возвращаемый источник (зеркально vanilla `createFromChunk`).
+  `FullDataSourceV2.updateFromDataSource()` прокидывает флаг в агрегированный источник
+  (guard detail < 15), и грубые LOD-уровни строятся.
+
 ### Мёртвый код и известные ограничения:
 - `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).
 - `Layer1FlatGenerator.setVanillaSource`: no-op метод.
