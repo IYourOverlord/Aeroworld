@@ -15,8 +15,20 @@ import java.util.Set;
  */
 public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 {
-	private static final String DH_TARGET_CLASS =
-			"com.seibel.distanthorizons.common.wrappers.worldGeneration.BatchGenerationEnvironment_neoforge";
+	/**
+	 * Класс DH, используемый ТОЛЬКО для обнаружения наличия Distant Horizons
+	 * на classpath. Это НЕ класс-таргет ни одного из наших миксинов.
+	 *
+	 * ВАЖНО: нельзя использовать здесь {@code BatchGenerationEnvironment_neoforge}
+	 * (таргет {@code BatchGenerationEnvironmentNeoforgeMixin}): вызов
+	 * {@code Class.forName(name, false, ...)} в onLoad() полностью загружает
+	 * (линкует) класс до того, как Mixin успеет применить трансформацию, из-за
+	 * чего таргет оказывается "загружен слишком рано"
+	 * ("Critical problem ... loaded too early") и инжекты не срабатывают.
+	 * Обнаруживаем DH по не-таргетному классу {@code core.Initializer}.
+	 */
+	private static final String DH_DETECTOR_CLASS =
+			"com.seibel.distanthorizons.core.Initializer";
 
 	private boolean distantHorizonsPresent;
 
@@ -26,7 +38,7 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 		boolean present;
 		try
 		{
-			Class.forName(DH_TARGET_CLASS, false, this.getClass().getClassLoader());
+			Class.forName(DH_DETECTOR_CLASS, false, this.getClass().getClassLoader());
 			present = true;
 		}
 		catch (Throwable t)

@@ -239,6 +239,17 @@ worldgen/
 6. Модели и энумы: `BodyType.java` (планеты и метеориты Layer 3).
 7. Рефакторинг: `getBaseColumn` и `getBaseHeight` в `AeroWorldChunkGenerator` переведены на делегирование в `AeroColumnModel`.
 
+### Исправлено: миксины DH не применялись ("loaded too early"):
+- `DhWorldGenBorderMixinPlugin` в `onLoad()` по строковому литералу грузил таргет-класс
+  `BatchGenerationEnvironment_neoforge` через `Class.forName(...)`. Это полностью загружало
+  (линковало) класс, который является таргетом `BatchGenerationEnvironmentNeoforgeMixin`,
+  ДО того как Mixin успевал применить трансформацию -> в логах
+  "Critical problem: ... loaded too early", инжекты не срабатывали, и батчевая генерация
+  DH не сохраняла результат в LOD (на клиенте ничего не рендерилось, хотя счётчик прогресса рос).
+- Фикс: детектор наличия DH заменён на не-таргетный класс `com.seibel.distanthorizons.core.Initializer`,
+  который не является таргетом ни одного миксина. Мягкая зависимость сохранена, а
+  `BatchGenerationEnvironmentNeoforgeMixin` теперь корректно применяется.
+
 ### Мёртвый код и известные ограничения:
 - `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).
 - `Layer1FlatGenerator.setVanillaSource`: no-op метод.
