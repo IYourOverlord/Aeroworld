@@ -87,7 +87,12 @@ public final class AeroWorldCommands {
                         .then(Commands.literal("meteorite")
                                 .executes(ctx -> runFindHighIslandByType(ctx, false)))
                         .then(Commands.literal("planet")
-                                .executes(ctx -> runFindHighIslandByType(ctx, true)))));
+                                .executes(ctx -> runFindHighIslandByType(ctx, true))))
+                .then(Commands.literal("validateSeedGen")
+                        .executes(ctx -> org.example.aeroworld.worldgen.dh.AeroSeedGenValidation.runValidation(ctx, 1000))
+                        .then(Commands.argument("count", com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, 100000))
+                                .executes(ctx -> org.example.aeroworld.worldgen.dh.AeroSeedGenValidation.runValidation(
+                                        ctx, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "count"))))));
     }
 
     private static int runForcePlacePending(CommandContext<CommandSourceStack> ctx) {

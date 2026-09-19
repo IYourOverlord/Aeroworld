@@ -75,6 +75,8 @@ public class AeroWorld {
         // (нужно вызывать после прегенерации Chunky/C2ME и ДО импорта в Voxy/любой LOD-рендерер)
         NeoForge.EVENT_BUS.addListener(AeroWorldCommands::register);
 
+        // Distant Horizons SeedGen override registration
+        org.example.aeroworld.worldgen.dh.AeroSeedWorldGenBinding.registerIfDhPresent();
     }
 
     // ── Регистрация структур в PhysicalStructures ─────────────────────────────

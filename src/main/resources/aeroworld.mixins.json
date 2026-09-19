@@ -5,7 +5,16 @@
   "compatibilityLevel": "JAVA_21",
   "plugin": "org.example.aeroworld.mixin.dh.DhWorldGenBorderMixinPlugin",
   "mixins": [
-    "BatchGenerationEnvironmentNeoforgeMixin"
+    "BatchGenerationEnvironmentNeoforgeMixin",
+    "ExecutorNameAccessor",
+    "LodQuadTreeAccessor",
+    "RetrievalQueueLimitMixin",
+    "GeneratorBusyMixin",
+    "WorldGenSpeedGateMixin",
+    "SchedulerPriorityMixin",
+    "SaveDelayMixin",
+    "SqliteTuningMixin",
+    "ReloadCoalesceMixin"
   ],
   "client": [],
   "server": [],

@@ -189,7 +189,7 @@ public class AeroBiomeSource extends BiomeSource {
         return layer1Biome;
     }
 
-    private String resolveLayer1Biome(double cont, double eros, double ridge, double temp, double humid) {
+    public static String resolveLayer1Biome(double cont, double eros, double ridge, double temp, double humid) {
         // 1. Океан
         if (cont < -0.05) {
             boolean deep = cont < -0.20;
@@ -268,6 +268,64 @@ public class AeroBiomeSource extends BiomeSource {
         return "bamboo_jungle";
     }
 
+    public String getLayer1BiomeName(int blockX, int blockZ) {
+        Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
+        double wx = blockX;
+        double wz = blockZ;
+        double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
+        double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
+        double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
+
+        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+
+        return resolveLayer1Biome(cont, eros, ridge, temp, humid);
+    }
+
+    public boolean isDeepDark(int blockX, int blockZ) {
+        double wx = blockX;
+        double wz = blockZ;
+        double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+        return dd > DEEP_DARK_THRESHOLD;
+    }
+
+    public String getIslandBiomeName(int blockX, int blockZ) {
+        double wx = blockX;
+        double wz = blockZ;
+        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+        return resolveIslandBiome(temp, humid);
+    }
+
+    public static String resolveIslandBiome(double temp, double humid) {
+        if (temp < -0.3) {
+            return humid > 0.1 ? "snowy_taiga" : "snowy_plains";
+        }
+        if (temp < 0.0) {
+            return humid > 0.2 ? "old_growth_pine_taiga" : (humid > -0.1 ? "taiga" : "windswept_forest");
+        }
+        if (temp < 0.16) {
+            if (humid > 0.35) return "dark_forest";
+            if (humid > 0.18) return "autumn_forest";
+            if (humid > -0.08) return "birch_forest";
+            if (humid > -0.24) return "meadow";
+            return "heather_moor";
+        }
+        if (temp >= 0.16 && humid <= -0.18) {
+            return "badlands";
+        }
+        if (temp >= 0.16 && humid <= 0.05) {
+            return "desert";
+        }
+        if (temp >= 0.16 && humid <= 0.20) {
+            return "savanna";
+        }
+        if (temp >= 0.16 && humid <= 0.38) {
+            return "jungle";
+        }
+        return "bamboo_jungle";
+    }
+
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,
                                               boolean excludeForIslands) {
         Holder<Biome> vanilla = delegate.getNoiseBiome(x, y, z, sampler);
@@ -290,7 +348,7 @@ public class AeroBiomeSource extends BiomeSource {
         return findAeroBiome(vanillaId.getPath()).orElseGet(() -> findAeroBiome("plains").orElse(vanilla));
     }
 
-    private Optional<Holder<Biome>> findAeroBiome(String path) {
+    public Optional<Holder<Biome>> findAeroBiome(String path) {
         return aeroBiomeNameCache.computeIfAbsent(path, this::lookupAeroBiome);
     }
 

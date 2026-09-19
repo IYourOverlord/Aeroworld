@@ -1,0 +1,42 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "mobius.seedrenderer.mixin.dh",
+  "compatibilityLevel": "JAVA_21",
+  "plugin": "mobius.seedrenderer.mixin.dh.DhMixinPlugin",
+  "mixins": [
+    "AdjacencyDecodeProbeMixin",
+    "ExecutorNameAccessor",
+    "FetchSplitProbeMixin",
+    "FullDataSourceV2RepoMixin",
+    "FullDataUpdatePropagatorV2Mixin",
+    "GeneratorBusyMixin",
+    "IdleDimensionGenMixin",
+    "GpuSideQuadMixin",
+    "GpuTrialCaptureMixin",
+    "LodQuadBuilderAccessor",
+    "LodQuadTreeAccessor",
+    "QuadBuildProbeMixin",
+    "QuadCountProbeMixin",
+    "PropagateCoalesceMixin",
+    "QuadMergeProbeMixin",
+    "RenderSectionProbeMixin",
+    "ReloadCoalesceMixin",
+    "RenderThreadBudgetMixin",
+    "RepoWriteInvalidationMixin",
+    "RetrievalQueueDepthMixin",
+    "RetrievalQueueLimitMixin",
+    "SaveDelayMixin",
+    "SchedulerPriorityMixin",
+    "SectionLoadProbeMixin",
+    "SkipCpuSideQuadMixin",
+    "SqliteTuningMixin",
+    "TransformProbeMixin",
+    "WorldGenSpeedGateMixin",
+    "WorldGeneratorInjectorAccessor",
+    "WorldGenerationQueueMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

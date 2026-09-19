@@ -19,7 +19,19 @@ public class AeroWorldConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
     public  static final ModConfigSpec         SPEC;
 
+    public static final ModConfigSpec.BooleanValue DH_OVERRIDE_ENABLED;
+    public static final ModConfigSpec.IntValue     DH_THROUGHPUT_LOG_INTERVAL_SEC;
+
     static {
+        BUILDER.push("distant_horizons");
+        DH_OVERRIDE_ENABLED = BUILDER
+                .comment("Enable AeroWorld analytical IDhApiWorldGenerator override for Distant Horizons")
+                .define("dhOverrideEnabled", true);
+        DH_THROUGHPUT_LOG_INTERVAL_SEC = BUILDER
+                .comment("Interval in seconds to log DH SeedGen throughput statistics")
+                .defineInRange("throughputLogIntervalSec", 30, 5, 3600);
+        BUILDER.pop();
+
         SPEC = BUILDER.build();
     }
 

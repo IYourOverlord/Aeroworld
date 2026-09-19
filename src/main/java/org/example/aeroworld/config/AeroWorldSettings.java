@@ -39,13 +39,19 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 public record AeroWorldSettings(
         Layer2Settings layer2,
         Layer3Settings layer3,
-        Layer4Settings layer4
+        Layer4Settings layer4,
+        DhOverrideSettings dhOverride
 ) {
+    public AeroWorldSettings(Layer2Settings layer2, Layer3Settings layer3, Layer4Settings layer4) {
+        this(layer2, layer3, layer4, DhOverrideSettings.DEFAULT);
+    }
+
     /** Полностью дефолтные настройки — используются при создании нового мира через world_preset. */
     public static final AeroWorldSettings DEFAULT = new AeroWorldSettings(
             Layer2Settings.DEFAULT,
             Layer3Settings.DEFAULT,
-            Layer4Settings.DEFAULT
+            Layer4Settings.DEFAULT,
+            DhOverrideSettings.DEFAULT
     );
 
     // ── Codec ─────────────────────────────────────────────────────────────────
@@ -55,6 +61,8 @@ public record AeroWorldSettings(
             Layer3Settings.CODEC.optionalFieldOf("layer3", Layer3Settings.DEFAULT)
                     .forGetter(AeroWorldSettings::layer3),
             Layer4Settings.CODEC.optionalFieldOf("layer4", Layer4Settings.DEFAULT)
-                    .forGetter(AeroWorldSettings::layer4)
+                    .forGetter(AeroWorldSettings::layer4),
+            DhOverrideSettings.CODEC.optionalFieldOf("dh_override", DhOverrideSettings.DEFAULT)
+                    .forGetter(AeroWorldSettings::dhOverride)
     ).apply(instance, AeroWorldSettings::new));
 }

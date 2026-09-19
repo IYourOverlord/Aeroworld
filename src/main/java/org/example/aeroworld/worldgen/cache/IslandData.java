@@ -130,4 +130,12 @@ public final class IslandData {
     public int centerY() {
         return (bottomY + topY) / 2;
     }
+
+    /**
+     * Эффективный радиус LOD-bounding-box острова (для Layer 3 учитывает внешнее кольцо или полуоси).
+     */
+    public double getEffectiveRadius() {
+        if (ringRadii != null) return ringRadii[5];
+        return (ellipsoidAxes != null) ? Math.max(ellipsoidAxes[0], ellipsoidAxes[2]) : radius;
+    }
 }

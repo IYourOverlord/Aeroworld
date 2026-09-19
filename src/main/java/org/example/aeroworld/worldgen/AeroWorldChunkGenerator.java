@@ -106,6 +106,9 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     public HighIslandGenerator getHighIslands()   { return highIslands; }
     public UpperIslandGenerator getUpperIslands() { return upperIslands; }
     public Layer1TerrainGenerator getLayer1Terrain() { return layer1Terrain; }
+    public AeroWorldSettings getSettings() { return settings; }
+    public AeroBiomeSource getAeroBiomeSource() { return aeroSource.get(); }
+    public boolean isSeedInitialized() { return seedInitialized; }
 
     private long seedFrom(RandomState randomState) {
         return randomState.getOrCreateRandomFactory(
@@ -113,7 +116,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 .at(0, 0, 0).nextLong();
     }
 
-    private synchronized void initializeWithSeed(long seed) {
+    public synchronized void initializeWithSeed(long seed) {
         if (seedInitialized && worldSeed == seed) return;
         worldSeed       = seed;
         seedInitialized = true;
@@ -160,15 +163,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         return src != null ? src : super.getBiomeSource();
     }
 
-    /**
-     * Эффективный радиус LOD-bounding-box острова Layer 3 для грубых
-     * {@code getBaseHeight}/{@code getBaseColumn} проверок: для планет с
-     * кольцами (см. {@code IslandData.ringRadii}) это внешняя граница
-     * третьего кольца, иначе — макс. горизонтальная полуось эллипсоида.
-     */
-    private static double highIslandEffectiveRadius(IslandData d) {
-        if (d.ringRadii != null) return d.ringRadii[5];
-        return (d.ellipsoidAxes != null) ? Math.max(d.ellipsoidAxes[0], d.ellipsoidAxes[2]) : d.radius;
+    public static double highIslandEffectiveRadius(IslandData d) {
+        return d.getEffectiveRadius();
     }
 
     @Override public int getMinY()     { return -64; }
@@ -179,52 +175,11 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     public int getBaseHeight(int x, int z, Heightmap.Types type,
                              LevelHeightAccessor level, RandomState random) {
         init(random);
-
         int levelMax = level.getMinBuildHeight() + level.getHeight() - 1;
-        int chunkX = x >> 4, chunkZ = z >> 4;
-
-        // Layer 4 (Y 1900..2031)
-        if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
-            }
-        }
-        // Layer 3 (Y 1000..1100)
-        if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                double effR = highIslandEffectiveRadius(d);
-                if (dx * dx + dz * dz <= effR * effR) return d.topY + 1;
-            }
-        }
-        // Layer 2 (Y 300..400)
-        if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz <= d.radius * d.radius) return d.topY + 1;
-            }
-        }
-
-        // Layer 1
-        if (layer1Terrain != null) {
-            if (type == Heightmap.Types.OCEAN_FLOOR || type == Heightmap.Types.OCEAN_FLOOR_WG) {
-                return layer1Terrain.getHeight(x, z);
-            } else {
-                return layer1Terrain.getTopmostHeight(x, z);
-            }
-        }
-
-        return Layer1TerrainGenerator.SEA_LEVEL;
+        return org.example.aeroworld.worldgen.column.AeroColumnModel.getBaseHeight(
+                x, z, type, level.getMinBuildHeight(), levelMax,
+                layer1Terrain, lowerIslands, highIslands, upperIslands
+        );
     }
 
     @Override
@@ -237,70 +192,20 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         int levelMax = minY + height - 1;
 
         BlockState[] states = new BlockState[height];
-        for (int i = 0; i < height; i++) {
-            states[i] = BS_AIR_SENTINEL;
-        }
+        java.util.Arrays.fill(states, BS_AIR_SENTINEL);
 
-        // Layer 1
-        if (layer1Terrain != null && minY <= Layer1TerrainGenerator.MAX_Y) {
-            int surfaceY = layer1Terrain.getHeight(x, z);
-            int seaLevel = Layer1TerrainGenerator.SEA_LEVEL;
-            boolean hasCave = surfaceY >= seaLevel;
-            int caveTop = hasCave ? layer1Terrain.computeCaveTop(x, z) : Integer.MIN_VALUE;
-            int caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
+        java.util.List<org.example.aeroworld.worldgen.column.AeroColumnModel.Span> spans =
+                org.example.aeroworld.worldgen.column.AeroColumnModel.buildSpans(
+                        x, z, minY, levelMax,
+                        layer1Terrain, lowerIslands, highIslands, upperIslands,
+                        null, false
+                );
 
-            for (int y = minY; y <= surfaceY && y <= levelMax; y++) {
-                if (hasCave && y >= caveBottom && y <= caveTop) {
-                    continue;
-                }
-                int idx = y - minY;
-                if (idx >= 0 && idx < states.length) {
-                    states[idx] = BS_STONE;
-                }
-            }
-            if (surfaceY < seaLevel) {
-                for (int y = surfaceY + 1; y <= seaLevel && y <= levelMax; y++) {
-                    int idx = y - minY;
-                    if (idx >= 0 && idx < states.length) {
-                        states[idx] = BS_WATER;
-                    }
-                }
-            }
-        }
-
-        // Layer 2–4
-        if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
-            int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz > d.radius * d.radius) continue;
-                for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }
-            }
-        }
-        if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
-            int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                double effR = highIslandEffectiveRadius(d);
-                if (dx * dx + dz * dz > effR * effR) continue;
-                for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }
-            }
-        }
-        if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
-            int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
-                double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz > d.radius * d.radius) continue;
-                for (int y = d.bottomY; y <= d.topY; y++) { int idx = y - minY; if (idx >= 0 && idx < states.length) states[idx] = BS_STONE; }
+        for (org.example.aeroworld.worldgen.column.AeroColumnModel.Span span : spans) {
+            int start = Math.max(0, span.bottomY() - minY);
+            int end = Math.min(height - 1, span.topY() - minY);
+            for (int i = start; i <= end; i++) {
+                states[i] = span.state();
             }
         }
 
