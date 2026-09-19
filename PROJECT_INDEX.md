@@ -149,7 +149,7 @@ worldgen/
 
 ## 3. Жизненный цикл генерации чанка
 
-Инициализация ленивая: `init(randomState)` / `initializeWithSeed(seed)` (`synchronized`; seed из `RandomState` через `aeroworld:seed_probe` либо из `ChunkGeneratorStructureState.getLevelSeed()`).
+Инициализация: единый источник истины — сид мира. `initializeWithSeed(seed)` (`synchronized`) вызывается из `createState` (переопределён), `createStructures`, `applyCarvers` и DH-биндинга и помечает сид как мировой (`seedFromWorld`). `init(randomState)` использует `aeroworld:seed_probe` только как fallback, пока мировой сид не получен, и никогда не перезаписывает мировой сид.
 
 1. **`createBiomes`**: `init`, затем `super.createBiomes` (ванильный `fillBiomesFromNoise` по всем 131 секциям с `AeroBiomeSource`; ваниль создаёт `NoiseChunk`). `AeroBiomeSource` сэмплирует шум и delegate ровно 1 раз на XZ-колонку (16 раз на чанк), кэшируя результат в ThreadLocal-таблице.
 2. **`createStructures`**: `super.createStructures`, затем для каждого `StructureStart` из `getAllStarts()` и `getAllReferences()` вызывается `StructureSupportValidator.validate`. Категория определяется по фактическому слою в центре bounding box. Отклонённые старты заменяются на `INVALID_START`.

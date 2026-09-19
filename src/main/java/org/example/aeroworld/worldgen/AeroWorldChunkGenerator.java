@@ -80,6 +80,8 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
     private volatile long    worldSeed       = 12345L;
     private volatile boolean seedInitialized = false;
+    /** true, если worldSeed получен от реального сида мира; такой сид никогда не перезаписывается seed_probe. */
+    private volatile boolean seedFromWorld   = false;
     private volatile RandomState lastRandomState = null;
 
     private static final BlockState BS_AIR_SENTINEL = Blocks.AIR.defaultBlockState();
@@ -116,7 +118,13 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
                 .at(0, 0, 0).nextLong();
     }
 
+    /** Единая точка входа для реального сида мира. */
     public synchronized void initializeWithSeed(long seed) {
+        seedFromWorld = true;
+        applySeed(seed);
+    }
+
+    private void applySeed(long seed) {
         if (seedInitialized && worldSeed == seed) return;
         worldSeed       = seed;
         seedInitialized = true;
@@ -148,8 +156,20 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
     private void init(RandomState randomState) {
         if (randomState == lastRandomState) return;
-        initializeWithSeed(seedFrom(randomState));
         lastRandomState = randomState;
+        if (seedFromWorld) return;
+        synchronized (this) {
+            if (!seedFromWorld) applySeed(seedFrom(randomState));
+        }
+    }
+
+    @Override
+    public ChunkGeneratorStructureState createState(
+            net.minecraft.core.HolderLookup<net.minecraft.world.level.levelgen.structure.StructureSet> structureSets,
+            RandomState randomState, long seed) {
+        initializeWithSeed(seed);
+        lastRandomState = randomState;
+        return super.createState(structureSets, randomState, seed);
     }
 
     @Override

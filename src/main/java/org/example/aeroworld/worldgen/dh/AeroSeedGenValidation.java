@@ -37,9 +37,7 @@ public class AeroSeedGenValidation {
             return 0;
         }
 
-        if (!aeroGen.isSeedInitialized()) {
-            aeroGen.initializeWithSeed(level.getSeed());
-        }
+        aeroGen.initializeWithSeed(level.getSeed());
 
         source.sendSuccess(() -> Component.literal(String.format("Starting SeedGen validation for %d columns...", sampleCount)), true);
 
