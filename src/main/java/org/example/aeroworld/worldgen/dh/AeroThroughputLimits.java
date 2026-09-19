@@ -69,8 +69,12 @@ public class AeroThroughputLimits {
                     double sectionsPerSec = elapsedSec > 0 ? (sections / elapsedSec) : 0.0;
                     double chunksPerSec = elapsedSec > 0 ? (chunks / elapsedSec) : 0.0;
 
-                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({:.1f} chunks/s, {:.1f} sections/s) over last {:.1f}s | Total chunks: {}",
-                            chunks, chunksPerSec, sectionsPerSec, elapsedSec, totalChunksGenerated.get());
+                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {}",
+                            chunks,
+                            String.format(java.util.Locale.ROOT, "%.1f", chunksPerSec),
+                            String.format(java.util.Locale.ROOT, "%.1f", sectionsPerSec),
+                            String.format(java.util.Locale.ROOT, "%.1f", elapsedSec),
+                            totalChunksGenerated.get());
                 }
             }
         }

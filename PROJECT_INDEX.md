@@ -63,7 +63,7 @@ org.example.aeroworld
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
 │   │   ├── LodQuadTreeAccessor.java                     - аксессор методов LodQuadTree
 │   │   ├── ReloadCoalesceMixin.java                     - дебаунс и дедлайн каскадных перезагрузок деревьев LOD
-│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE)
+│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель canQueueRetrievalNow(Z)Z
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SchedulerPriorityMixin.java                  - приоритет рендера над генерацией в PriorityTaskPicker
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
@@ -103,7 +103,7 @@ worldgen/
 ├── carver/SinkholeCarver.java         - карстовые воронки (НЕ ВЫЗЫВАЕТСЯ: applyCarvers пустой)
 ├── column/
 │   ├── AeroColumnModel.java           - единое ядро столбцовой генерации: аналитический расчёт спанов [bottomY..topY, state, biome]
-│   └── AeroColumnWriter.java          - конвертер спанов AeroColumnModel в структуры DhApiTerrainDataPoint с кэшированием обёрток
+│   └── AeroColumnWriter.java          - конвертер спанов AeroColumnModel в DhApiTerrainDataPoint (detailLevel=0, эксклюзивный topY, воздух в пустотах, порядок сверху вниз) с кэшированием обёрток
 ├── dh/
 │   ├── AeroFastDistantTerrain.java    - пороги detailLevel для раздельного упрощения геометрии слоёв
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках

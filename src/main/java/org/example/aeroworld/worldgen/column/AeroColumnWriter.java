@@ -107,18 +107,61 @@ public class AeroColumnWriter {
 
     /**
      * Конвертирует список span'ов в список DhApiTerrainDataPoint для колонки.
+     * <p>
+     * Формат DH (см. LodDataBuilder.validateOrThrowApiDataColumn): все точки блочного размера
+     * (detailLevel = 0), верхняя граница эксклюзивная, точки идут сверху вниз без пропусков
+     * и пересечений, пустоты заполнены воздухом. Span'ы AeroColumnModel имеют инклюзивный topY,
+     * поэтому здесь они переводятся в полуоткрытые интервалы [bottomY, topY + 1) и дополняются
+     * воздухом на всём диапазоне [minY, maxY].
      */
-    public List<DhApiTerrainDataPoint> toDataPoints(List<AeroColumnModel.Span> spans, byte detailLevel) {
-        if (spans.isEmpty()) {
+    public List<DhApiTerrainDataPoint> toDataPoints(List<AeroColumnModel.Span> spans, int minY, int maxY) {
+        int top = maxY + 1;
+        if (top <= minY) {
             return List.of();
         }
-        List<DhApiTerrainDataPoint> points = new ArrayList<>(spans.size());
+        IDhApiBlockStateWrapper air = getBlockStateWrapper(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        if (air == null) {
+            return List.of();
+        }
+        if (fallbackBiomeWrapper == null) {
+            initFallbacks();
+        }
+
+        List<DhApiTerrainDataPoint> points = new ArrayList<>(spans.size() * 2 + 1);
+
+        if (spans.isEmpty()) {
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, minY, top, air, getFallbackBiome()));
+            return points;
+        }
+
+        // Спаны отсортированы по возрастанию bottomY и не пересекаются (mergeSpans).
+        // Строим снизу вверх, затем разворачиваем в порядок сверху вниз.
+        int cursor = minY;
+        IDhApiBiomeWrapper lastBiome = getBiomeWrapper(spans.get(0));
         for (int i = 0; i < spans.size(); i++) {
             AeroColumnModel.Span span = spans.get(i);
-            IDhApiBlockStateWrapper bsw = getBlockStateWrapper(span.state());
-            IDhApiBiomeWrapper bw = getBiomeWrapper(span);
-            points.add(DhApiTerrainDataPoint.create(detailLevel, 0, 15, span.bottomY(), span.topY(), bsw, bw));
+            int bottom = Math.max(span.bottomY(), cursor);
+            int spanTop = Math.min(span.topY() + 1, top);
+            if (spanTop <= bottom) {
+                continue;
+            }
+            IDhApiBiomeWrapper biome = getBiomeWrapper(span);
+            if (bottom > cursor) {
+                points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor, bottom, air, lastBiome));
+            }
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, bottom, spanTop, getBlockStateWrapper(span.state()), biome));
+            cursor = spanTop;
+            lastBiome = biome;
         }
+        if (cursor < top) {
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor, top, air, lastBiome));
+        }
+
+        java.util.Collections.reverse(points);
         return points;
+    }
+
+    private IDhApiBiomeWrapper getFallbackBiome() {
+        return fallbackBiomeWrapper;
     }
 }

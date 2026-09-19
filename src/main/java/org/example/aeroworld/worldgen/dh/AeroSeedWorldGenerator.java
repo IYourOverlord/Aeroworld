@@ -27,6 +27,9 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AeroSeedWorldGenerator.class);
 
+    /** Реальная высота измерения (data/aeroworld/dimension_type/aeroworld.json: min_y=-64, height=2096 -> Y -64..2031). */
+    private static final int WORLD_HEIGHT = 2096;
+
     private final AeroWorldChunkGenerator generator;
     private final IDhApiLevelWrapper levelWrapper;
     private final AeroColumnWriter columnWriter;
@@ -55,7 +58,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         return CompletableFuture.runAsync(() -> {
             try {
                 int minY = generator.getMinY();
-                int maxY = minY + generator.getGenDepth() - 1;
+                int maxY = minY + WORLD_HEIGHT - 1;
 
                 var l1Terrain = generator.getLayer1Terrain();
                 var lower = generator.getLowerIslands();
@@ -83,7 +86,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                                         aeroBiomeSource, true
                                 );
 
-                                List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, detailLevel);
+                                List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, minY, maxY);
                                 chunk.setDataPoints(lx, lz, points);
                             }
                         }

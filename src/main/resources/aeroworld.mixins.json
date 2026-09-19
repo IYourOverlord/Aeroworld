@@ -7,14 +7,12 @@
   "mixins": [
     "BatchGenerationEnvironmentNeoforgeMixin",
     "ExecutorNameAccessor",
-    "LodQuadTreeAccessor",
     "RetrievalQueueLimitMixin",
     "GeneratorBusyMixin",
     "WorldGenSpeedGateMixin",
     "SchedulerPriorityMixin",
     "SaveDelayMixin",
-    "SqliteTuningMixin",
-    "ReloadCoalesceMixin"
+    "SqliteTuningMixin"
   ],
   "client": [],
   "server": [],
