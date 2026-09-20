@@ -148,8 +148,6 @@ public class AeroBiomeSource extends BiomeSource {
             hasDD = cache.hasDeepDark[slot];
             ddBiome = cache.deepDarkBiomes[slot];
         } else {
-            islandBiome = delegateWithSafety(x, 20, z, sampler, true);
-
             double wx = x * 4.0;
             double wz = z * 4.0;
 
@@ -157,13 +155,15 @@ public class AeroBiomeSource extends BiomeSource {
             hasDD = dd > DEEP_DARK_THRESHOLD;
             ddBiome = hasDD ? findAeroBiome("deep_dark").orElse(null) : null;
 
+            double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+            double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+            String islandName = resolveIslandBiome(temp, humid);
+            islandBiome = findAeroBiome(islandName).orElseGet(() -> delegateWithSafety(x, 20, z, sampler, true));
+
             Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
             double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
             double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
             double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
-
-            double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-            double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
 
             String biomeName = resolveLayer1Biome(cont, eros, ridge, temp, humid);
             layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
