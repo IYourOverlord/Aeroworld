@@ -1,0 +1,234 @@
+diff --git a/PROJECT_INDEX.md b/PROJECT_INDEX.md
+index 7686345..70f8d3e 100644
+--- a/PROJECT_INDEX.md
++++ b/PROJECT_INDEX.md
+@@ -2,7 +2,7 @@
+ 
+ Мод для Minecraft 1.21.1 (NeoForge 21.1.228, Java 21, ModDevGradle 2.0.141, `mod_version` 1.0.12). Кастомное измерение с многослойной генерацией: поверхность + три слоя парящих островов, разделённых большими пустыми зазорами (зазоры являются частью дизайна: до островов должно быть трудно добраться).
+ 
+-Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizonsApi-*.jar`, `DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` и класс `Layer3StructurePlacer` удалены; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
++Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizonsApi-*.jar`, `DistantHorizons-3_3_1-1_21_1-fabric-neoforge.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` и класс `Layer3StructurePlacer` удалены; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
+ 
+ Пакет: `org.example.aeroworld`. Корень исходников: `src/main/java/org/example/aeroworld/`.
+ 
+@@ -57,15 +57,13 @@ org.example.aeroworld
+ │                                        блоков (чанки +-2) на Y 250..450 и вызывает trigger() рефлексией
+ ├── mixin/
+ │   ├── dh/                            - миксины оптимизации throughput и исправления багов Distant Horizons
+-│   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча
++│   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча (таргет DH 3.3.x: DhChunkGenerator_neoforge.generateChunks)
+ │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
+-│   │   ├── ExecutorNameAccessor.java                    - аксессор имени потока ThreadPoolExecutor
+ │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
+ │   │   ├── LodQuadTreeAccessor.java                     - аксессор методов LodQuadTree
+ │   │   ├── ReloadCoalesceMixin.java                     - дебаунс и дедлайн каскадных перезагрузок деревьев LOD
+-│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель canQueueRetrievalNow(Z)Z
++│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
+ │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
+-│   │   ├── SchedulerPriorityMixin.java                  - приоритет рендера над генерацией в PriorityTaskPicker
+ │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
+ │   │   └── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
+ │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld
+@@ -264,6 +262,20 @@ worldgen/
+   `FullDataSourceV2.updateFromDataSource()` прокидывает флаг в агрегированный источник
+   (guard detail < 15), и грубые LOD-уровни строятся.
+ 
++### Миграция на Distant Horizons 3.3.1 (краш при создании мира):
++- `RetrievalQueueLimitMixin`: константа 20 больше не внутри `canQueueRetrievalNow(Z)Z`, она перенесена в
++  `GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I` (static). Отсутствие цели с `defaultRequire = 1`
++  давало `InjectionError: Critical injection failure` и краш при загрузке DH. Хендлер теперь static.
++- `BatchGenerationEnvironmentNeoforgeMixin`: класс DH переименован в `DhChunkGenerator_neoforge`, метод
++  `generateEvent` -> `generateChunks(ChunkGenEvent_neoforge)`. Добавился третий вызов `getIterator` (ordinal 2,
++  выдача результата батча), он не редиректится.
++- `SchedulerPriorityMixin` и `ExecutorNameAccessor` удалены: компаратор в `PriorityTaskPicker` теперь двухаргументный
++  (сначала priority, затем runtime), а DH сам создаёт `Render Loader` с priority 6 против 5 у `World Gen`.
++- Без изменений (сверены по байткоду 3.3.1): `GeneratorBusyMixin`, `WorldGenSpeedGateMixin`, `SaveDelayMixin`,
++  `SqliteTuningMixin`, `LodDataBuilderApplyToParentMixin` (API-путь `createFromApiChunkData` по-прежнему не ставит
++  `applyToParent`), `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`, вся API-часть SeedGen.
++- В `libs/` должен лежать только один `DistantHorizons-*.jar` (3.3.1), старый 3.2.0-b удалить.
++
+ ### Мёртвый код и известные ограничения:
+ - `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).
+ - `Layer1FlatGenerator.setVanillaSource`: no-op метод.
+diff --git a/src/main/java/org/example/aeroworld/mixin/dh/BatchGenerationEnvironmentNeoforgeMixin.java b/src/main/java/org/example/aeroworld/mixin/dh/BatchGenerationEnvironmentNeoforgeMixin.java
+index d44210e..9651dbf 100644
+--- a/src/main/java/org/example/aeroworld/mixin/dh/BatchGenerationEnvironmentNeoforgeMixin.java
++++ b/src/main/java/org/example/aeroworld/mixin/dh/BatchGenerationEnvironmentNeoforgeMixin.java
+@@ -8,6 +8,12 @@ import org.spongepowered.asm.mixin.injection.Redirect;
+ import java.util.Iterator;
+ 
+ /**
++ * DH 3.3.x: BatchGenerationEnvironment_neoforge переименован в DhChunkGenerator_neoforge,
++ * generateEvent() -> generateChunks(ChunkGenEvent_neoforge). Ниже в тексте старые имена
++ * (BatchGenerationEnvironment / generateEvent) означают их. В generateChunks() три вызова
++ * getIterator: ordinal 0 (extraRadius 0) и ordinal 1 (extraRadius 8) расширяются,
++ * ordinal 2 (выдача результата батча) остаётся без изменений.
++ *
+  * DH ставит MAX_WORLD_GEN_CHUNK_BORDER_NEEDED = 0, из-за чего
+  * DhLitWorldGenRegion генерируется без запаса вокруг батча чанков
+  * (refSize = widthInChunks - 1, без border). Многослойные структуры
+@@ -53,7 +59,7 @@ import java.util.Iterator;
+  * читаются/создаются наравне с чанками самого батча, и
+  * fallbackChunkGetterFunc больше не встречает отсутствующих ключей.
+  */
+-@Mixin(targets = "com.seibel.distanthorizons.common.wrappers.worldGeneration.BatchGenerationEnvironment_neoforge", remap = false)
++@Mixin(targets = "com.seibel.distanthorizons.common.wrappers.worldGeneration.DhChunkGenerator_neoforge", remap = false)
+ public abstract class BatchGenerationEnvironmentNeoforgeMixin
+ {
+ 	/**
+@@ -65,10 +71,10 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
+ 	private static final int AEROWORLD_WORLD_GEN_BORDER = 4;
+ 
+ 	@Redirect(
+-			method = "generateEvent",
++			method = "generateChunks",
+ 			at = @At(
+ 					value = "FIELD",
+-					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/BatchGenerationEnvironment_neoforge;MAX_WORLD_GEN_CHUNK_BORDER_NEEDED:I",
++					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/DhChunkGenerator_neoforge;MAX_WORLD_GEN_CHUNK_BORDER_NEEDED:I",
+ 					opcode = org.objectweb.asm.Opcodes.GETSTATIC
+ 			),
+ 			remap = false
+@@ -87,7 +93,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
+ 	 * тоже попали в chunkWrappersByDhPos.
+ 	 */
+ 	@Redirect(
+-			method = "generateEvent",
++			method = "generateChunks",
+ 			at = @At(
+ 					value = "INVOKE",
+ 					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/ChunkPosGenStream_neoforge;getIterator(IIII)Ljava/util/Iterator;",
+@@ -108,7 +114,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
+ 	 * по той же причине.
+ 	 */
+ 	@Redirect(
+-			method = "generateEvent",
++			method = "generateChunks",
+ 			at = @At(
+ 					value = "INVOKE",
+ 					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/ChunkPosGenStream_neoforge;getIterator(IIII)Ljava/util/Iterator;",
+diff --git a/src/main/java/org/example/aeroworld/mixin/dh/DhWorldGenBorderMixinPlugin.java b/src/main/java/org/example/aeroworld/mixin/dh/DhWorldGenBorderMixinPlugin.java
+index e74e402..2030ac6 100644
+--- a/src/main/java/org/example/aeroworld/mixin/dh/DhWorldGenBorderMixinPlugin.java
++++ b/src/main/java/org/example/aeroworld/mixin/dh/DhWorldGenBorderMixinPlugin.java
+@@ -19,7 +19,7 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
+ 	 * Класс DH, используемый ТОЛЬКО для обнаружения наличия Distant Horizons
+ 	 * на classpath. Это НЕ класс-таргет ни одного из наших миксинов.
+ 	 *
+-	 * ВАЖНО: нельзя использовать здесь {@code BatchGenerationEnvironment_neoforge}
++	 * ВАЖНО: нельзя использовать здесь {@code DhChunkGenerator_neoforge}
+ 	 * (таргет {@code BatchGenerationEnvironmentNeoforgeMixin}): вызов
+ 	 * {@code Class.forName(name, false, ...)} в onLoad() полностью загружает
+ 	 * (линкует) класс до того, как Mixin успеет применить трансформацию, из-за
+diff --git a/src/main/java/org/example/aeroworld/mixin/dh/ExecutorNameAccessor.java b/src/main/java/org/example/aeroworld/mixin/dh/ExecutorNameAccessor.java
+deleted file mode 100644
+index 5918293..0000000
+--- a/src/main/java/org/example/aeroworld/mixin/dh/ExecutorNameAccessor.java
++++ /dev/null
+@@ -1,10 +0,0 @@
+-package org.example.aeroworld.mixin.dh;
+-
+-import org.spongepowered.asm.mixin.Mixin;
+-import org.spongepowered.asm.mixin.gen.Accessor;
+-
+-@Mixin(targets = "com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker$Executor", remap = false)
+-public interface ExecutorNameAccessor {
+-    @Accessor("name")
+-    String aeroworld$name();
+-}
+diff --git a/src/main/java/org/example/aeroworld/mixin/dh/RetrievalQueueLimitMixin.java b/src/main/java/org/example/aeroworld/mixin/dh/RetrievalQueueLimitMixin.java
+index 84d9475..f17652a 100644
+--- a/src/main/java/org/example/aeroworld/mixin/dh/RetrievalQueueLimitMixin.java
++++ b/src/main/java/org/example/aeroworld/mixin/dh/RetrievalQueueLimitMixin.java
+@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
+ @Mixin(targets = "com.seibel.distanthorizons.core.file.fullDatafile.GeneratedFullDataSourceProvider", remap = false)
+ public class RetrievalQueueLimitMixin {
+ 
+-    @ModifyConstant(method = "canQueueRetrievalNow(Z)Z", constant = @Constant(intValue = 20))
+-    private int aeroworld$deepenRetrievalLimit(int requestsPerThread) {
++    @ModifyConstant(method = "getMaxRetrievalQueueCount()I", constant = @Constant(intValue = 20))
++    private static int aeroworld$deepenRetrievalLimit(int requestsPerThread) {
+         return requestsPerThread * AeroThroughputLimits.QUEUE_SCALE;
+     }
+ }
+\ No newline at end of file
+diff --git a/src/main/java/org/example/aeroworld/mixin/dh/SchedulerPriorityMixin.java b/src/main/java/org/example/aeroworld/mixin/dh/SchedulerPriorityMixin.java
+deleted file mode 100644
+index e0e86f1..0000000
+--- a/src/main/java/org/example/aeroworld/mixin/dh/SchedulerPriorityMixin.java
++++ /dev/null
+@@ -1,30 +0,0 @@
+-package org.example.aeroworld.mixin.dh;
+-
+-import com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker;
+-import org.example.aeroworld.worldgen.dh.AeroThroughputLimits;
+-import org.spongepowered.asm.mixin.Mixin;
+-import org.spongepowered.asm.mixin.injection.At;
+-import org.spongepowered.asm.mixin.injection.Inject;
+-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+-
+-/**
+- * Повышает приоритет "Render Loader" исполнителя в планировщике DH,
+- * уменьшая его учётное время выполнения при сортировке очереди задач.
+- * Это заставляет DH чаще выбирать рендер-загрузку вместо генерации,
+- * снижая визуальные задержки при быстрой аналитической генерации.
+- */
+-@Mixin(targets = "com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker", remap = false)
+-public class SchedulerPriorityMixin {
+-
+-    private static final String RENDER_LOADER = "Render Loader";
+-
+-    @Inject(method = "lambda$getExecutorIteratorSortedByShortestTotalRunTime$0",
+-            at = @At("RETURN"), cancellable = true)
+-    private static void aeroworld$favourRendering(
+-            PriorityTaskPicker.Executor executor,
+-            CallbackInfoReturnable<Long> info) {
+-        if (RENDER_LOADER.equals(((ExecutorNameAccessor) executor).aeroworld$name())) {
+-            info.setReturnValue(info.getReturnValueJ() / AeroThroughputLimits.RENDER_PRIORITY);
+-        }
+-    }
+-}
+diff --git a/src/main/java/org/example/aeroworld/worldgen/dh/AeroSeedWorldGenerator.java b/src/main/java/org/example/aeroworld/worldgen/dh/AeroSeedWorldGenerator.java
+index 3af32f4..e8ca1cb 100644
+--- a/src/main/java/org/example/aeroworld/worldgen/dh/AeroSeedWorldGenerator.java
++++ b/src/main/java/org/example/aeroworld/worldgen/dh/AeroSeedWorldGenerator.java
+@@ -21,7 +21,7 @@ import java.util.function.Consumer;
+  * Аналитический генератор мира для Distant Horizons (IDhApiWorldGenerator override).
+  *
+  * Генерирует LOD-данные напрямую по seed и математической модели слоёв AeroColumnModel,
+- * полностью минуя штатный батчевый chunk-gen DH (BatchGenerationEnvironment).
++ * полностью минуя штатный батчевый chunk-gen DH (DhChunkGenerator).
+  */
+ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
+ 
+diff --git a/src/main/java/org/example/aeroworld/worldgen/dh/AeroThroughputLimits.java b/src/main/java/org/example/aeroworld/worldgen/dh/AeroThroughputLimits.java
+index 74d1328..3a9b694 100644
+--- a/src/main/java/org/example/aeroworld/worldgen/dh/AeroThroughputLimits.java
++++ b/src/main/java/org/example/aeroworld/worldgen/dh/AeroThroughputLimits.java
+@@ -20,7 +20,6 @@ public class AeroThroughputLimits {
+     public static final int QUEUE_SCALE = 4;
+     public static final int IN_FLIGHT_SCALE = 4;
+     public static final int RENDER_YIELD_QUEUE = Integer.MAX_VALUE;
+-    public static final int RENDER_PRIORITY = 2;
+     public static final int SAVE_DELAY_MS = 10000;
+     public static final String SQLITE_SYNC = "NORMAL";
+ 
+diff --git a/src/main/resources/aeroworld.mixins.json b/src/main/resources/aeroworld.mixins.json
+index 5064ed5..551d00f 100644
+--- a/src/main/resources/aeroworld.mixins.json
++++ b/src/main/resources/aeroworld.mixins.json
+@@ -6,14 +6,12 @@
+   "plugin": "org.example.aeroworld.mixin.dh.DhWorldGenBorderMixinPlugin",
+   "mixins": [
+     "BatchGenerationEnvironmentNeoforgeMixin",
+-    "ExecutorNameAccessor",
+     "LodDataBuilderApplyToParentMixin",
+     "LodRenderSectionAdjDiagMixin",
+     "TranslucentAdjWallMixin",
+     "RetrievalQueueLimitMixin",
+     "GeneratorBusyMixin",
+     "WorldGenSpeedGateMixin",
+-    "SchedulerPriorityMixin",
+     "SaveDelayMixin",
+     "SqliteTuningMixin"
+   ],

@@ -8,6 +8,12 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import java.util.Iterator;
 
 /**
+ * DH 3.3.x: BatchGenerationEnvironment_neoforge переименован в DhChunkGenerator_neoforge,
+ * generateEvent() -> generateChunks(ChunkGenEvent_neoforge). Ниже в тексте старые имена
+ * (BatchGenerationEnvironment / generateEvent) означают их. В generateChunks() три вызова
+ * getIterator: ordinal 0 (extraRadius 0) и ordinal 1 (extraRadius 8) расширяются,
+ * ordinal 2 (выдача результата батча) остаётся без изменений.
+ *
  * DH ставит MAX_WORLD_GEN_CHUNK_BORDER_NEEDED = 0, из-за чего
  * DhLitWorldGenRegion генерируется без запаса вокруг батча чанков
  * (refSize = widthInChunks - 1, без border). Многослойные структуры
@@ -53,7 +59,7 @@ import java.util.Iterator;
  * читаются/создаются наравне с чанками самого батча, и
  * fallbackChunkGetterFunc больше не встречает отсутствующих ключей.
  */
-@Mixin(targets = "com.seibel.distanthorizons.common.wrappers.worldGeneration.BatchGenerationEnvironment_neoforge", remap = false)
+@Mixin(targets = "com.seibel.distanthorizons.common.wrappers.worldGeneration.DhChunkGenerator_neoforge", remap = false)
 public abstract class BatchGenerationEnvironmentNeoforgeMixin
 {
 	/**
@@ -65,10 +71,10 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 	private static final int AEROWORLD_WORLD_GEN_BORDER = 4;
 
 	@Redirect(
-			method = "generateEvent",
+			method = "generateChunks",
 			at = @At(
 					value = "FIELD",
-					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/BatchGenerationEnvironment_neoforge;MAX_WORLD_GEN_CHUNK_BORDER_NEEDED:I",
+					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/DhChunkGenerator_neoforge;MAX_WORLD_GEN_CHUNK_BORDER_NEEDED:I",
 					opcode = org.objectweb.asm.Opcodes.GETSTATIC
 			),
 			remap = false
@@ -87,7 +93,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 	 * тоже попали в chunkWrappersByDhPos.
 	 */
 	@Redirect(
-			method = "generateEvent",
+			method = "generateChunks",
 			at = @At(
 					value = "INVOKE",
 					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/ChunkPosGenStream_neoforge;getIterator(IIII)Ljava/util/Iterator;",
@@ -108,7 +114,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 	 * по той же причине.
 	 */
 	@Redirect(
-			method = "generateEvent",
+			method = "generateChunks",
 			at = @At(
 					value = "INVOKE",
 					target = "Lcom/seibel/distanthorizons/common/wrappers/worldGeneration/ChunkPosGenStream_neoforge;getIterator(IIII)Ljava/util/Iterator;",

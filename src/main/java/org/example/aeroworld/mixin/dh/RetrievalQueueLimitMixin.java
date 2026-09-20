@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
 @Mixin(targets = "com.seibel.distanthorizons.core.file.fullDatafile.GeneratedFullDataSourceProvider", remap = false)
 public class RetrievalQueueLimitMixin {
 
-    @ModifyConstant(method = "canQueueRetrievalNow(Z)Z", constant = @Constant(intValue = 20))
-    private int aeroworld$deepenRetrievalLimit(int requestsPerThread) {
+    @ModifyConstant(method = "getMaxRetrievalQueueCount()I", constant = @Constant(intValue = 20))
+    private static int aeroworld$deepenRetrievalLimit(int requestsPerThread) {
         return requestsPerThread * AeroThroughputLimits.QUEUE_SCALE;
     }
 }

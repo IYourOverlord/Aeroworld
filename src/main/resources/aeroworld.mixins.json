@@ -6,14 +6,12 @@
   "plugin": "org.example.aeroworld.mixin.dh.DhWorldGenBorderMixinPlugin",
   "mixins": [
     "BatchGenerationEnvironmentNeoforgeMixin",
-    "ExecutorNameAccessor",
     "LodDataBuilderApplyToParentMixin",
     "LodRenderSectionAdjDiagMixin",
     "TranslucentAdjWallMixin",
     "RetrievalQueueLimitMixin",
     "GeneratorBusyMixin",
     "WorldGenSpeedGateMixin",
-    "SchedulerPriorityMixin",
     "SaveDelayMixin",
     "SqliteTuningMixin"
   ],

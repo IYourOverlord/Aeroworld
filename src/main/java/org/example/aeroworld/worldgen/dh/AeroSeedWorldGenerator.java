@@ -21,7 +21,7 @@ import java.util.function.Consumer;
  * Аналитический генератор мира для Distant Horizons (IDhApiWorldGenerator override).
  *
  * Генерирует LOD-данные напрямую по seed и математической модели слоёв AeroColumnModel,
- * полностью минуя штатный батчевый chunk-gen DH (BatchGenerationEnvironment).
+ * полностью минуя штатный батчевый chunk-gen DH (DhChunkGenerator).
  */
 public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
 

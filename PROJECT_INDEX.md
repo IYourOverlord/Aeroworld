@@ -2,7 +2,7 @@
 
 Мод для Minecraft 1.21.1 (NeoForge 21.1.228, Java 21, ModDevGradle 2.0.141, `mod_version` 1.0.12). Кастомное измерение с многослойной генерацией: поверхность + три слоя парящих островов, разделённых большими пустыми зазорами (зазоры являются частью дизайна: до островов должно быть трудно добраться).
 
-Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizonsApi-*.jar`, `DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` и класс `Layer3StructurePlacer` удалены; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
+Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizonsApi-*.jar`, `DistantHorizons-3_3_1-1_21_1-fabric-neoforge.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` и класс `Layer3StructurePlacer` удалены; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
 
 Пакет: `org.example.aeroworld`. Корень исходников: `src/main/java/org/example/aeroworld/`.
 
@@ -57,15 +57,13 @@ org.example.aeroworld
 │                                        блоков (чанки +-2) на Y 250..450 и вызывает trigger() рефлексией
 ├── mixin/
 │   ├── dh/                            - миксины оптимизации throughput и исправления багов Distant Horizons
-│   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча
+│   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча (таргет DH 3.3.x: DhChunkGenerator_neoforge.generateChunks)
 │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
-│   │   ├── ExecutorNameAccessor.java                    - аксессор имени потока ThreadPoolExecutor
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
 │   │   ├── LodQuadTreeAccessor.java                     - аксессор методов LodQuadTree
 │   │   ├── ReloadCoalesceMixin.java                     - дебаунс и дедлайн каскадных перезагрузок деревьев LOD
-│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель canQueueRetrievalNow(Z)Z
+│   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
-│   │   ├── SchedulerPriorityMixin.java                  - приоритет рендера над генерацией в PriorityTaskPicker
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
 │   │   └── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
 │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld
@@ -263,6 +261,20 @@ worldgen/
   `applyToParent = TRUE` на возвращаемый источник (зеркально vanilla `createFromChunk`).
   `FullDataSourceV2.updateFromDataSource()` прокидывает флаг в агрегированный источник
   (guard detail < 15), и грубые LOD-уровни строятся.
+
+### Миграция на Distant Horizons 3.3.1 (краш при создании мира):
+- `RetrievalQueueLimitMixin`: константа 20 больше не внутри `canQueueRetrievalNow(Z)Z`, она перенесена в
+  `GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I` (static). Отсутствие цели с `defaultRequire = 1`
+  давало `InjectionError: Critical injection failure` и краш при загрузке DH. Хендлер теперь static.
+- `BatchGenerationEnvironmentNeoforgeMixin`: класс DH переименован в `DhChunkGenerator_neoforge`, метод
+  `generateEvent` -> `generateChunks(ChunkGenEvent_neoforge)`. Добавился третий вызов `getIterator` (ordinal 2,
+  выдача результата батча), он не редиректится.
+- `SchedulerPriorityMixin` и `ExecutorNameAccessor` удалены: компаратор в `PriorityTaskPicker` теперь двухаргументный
+  (сначала priority, затем runtime), а DH сам создаёт `Render Loader` с priority 6 против 5 у `World Gen`.
+- Без изменений (сверены по байткоду 3.3.1): `GeneratorBusyMixin`, `WorldGenSpeedGateMixin`, `SaveDelayMixin`,
+  `SqliteTuningMixin`, `LodDataBuilderApplyToParentMixin` (API-путь `createFromApiChunkData` по-прежнему не ставит
+  `applyToParent`), `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`, вся API-часть SeedGen.
+- В `libs/` должен лежать только один `DistantHorizons-*.jar` (3.3.1), старый 3.2.0-b удалить.
 
 ### Мёртвый код и известные ограничения:
 - `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).

@@ -19,7 +19,7 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 	 * Класс DH, используемый ТОЛЬКО для обнаружения наличия Distant Horizons
 	 * на classpath. Это НЕ класс-таргет ни одного из наших миксинов.
 	 *
-	 * ВАЖНО: нельзя использовать здесь {@code BatchGenerationEnvironment_neoforge}
+	 * ВАЖНО: нельзя использовать здесь {@code DhChunkGenerator_neoforge}
 	 * (таргет {@code BatchGenerationEnvironmentNeoforgeMixin}): вызов
 	 * {@code Class.forName(name, false, ...)} в onLoad() полностью загружает
 	 * (линкует) класс до того, как Mixin успеет применить трансформацию, из-за
