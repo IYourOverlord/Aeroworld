@@ -412,6 +412,42 @@ public class Layer1TerrainGenerator {
         }
     }
 
+    /** Верхний блок поверхности и подповерхностный слой (3 блока под ним). */
+    public record SurfaceBlocks(BlockState top, BlockState under) {}
+
+    /**
+     * Единая логика выбора материала поверхности колонки Layer 1. Используется и реальной
+     * генерацией ({@link #buildSurface}), и LOD-моделью {@code AeroColumnModel}.
+     */
+    public static SurfaceBlocks surfaceBlocks(BiomeSurfaceInfo info, int surfaceY) {
+        BlockState topBlock = BS_GRASS;
+        BlockState underBlock = BS_DIRT;
+
+        if (surfaceY < SEA_LEVEL) {
+            if (surfaceY <= SEA_LEVEL - 8) {
+                topBlock = BS_GRAVEL;
+                underBlock = BS_GRAVEL;
+            } else {
+                topBlock = BS_SAND;
+                underBlock = BS_SANDSTONE;
+            }
+        } else if (info.type() != SurfaceType.DEFAULT) {
+            if (info.type() == SurfaceType.COLD) {
+                if (surfaceY >= 60) {
+                    topBlock = BS_SNOW_BLOCK;
+                    underBlock = BS_STONE;
+                }
+            } else {
+                topBlock = info.type().top;
+                underBlock = info.type().under;
+            }
+        } else if (surfaceY >= 60) {
+            topBlock = BS_SNOW_BLOCK;
+            underBlock = BS_STONE;
+        }
+        return new SurfaceBlocks(topBlock, underBlock);
+    }
+
     public enum SurfaceType {
         DEFAULT(BS_GRASS, BS_DIRT),
         DESERT(BS_SAND, BS_SANDSTONE),
@@ -443,6 +479,23 @@ public class Layer1TerrainGenerator {
 
     private BiomeSurfaceInfo classifyBiome(Holder<Biome> holder) {
         String path = holder.unwrapKey().map(k -> k.location().getPath()).orElse("plains");
+        return classifyPath(path);
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, BiomeSurfaceInfo> PATH_INFO_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
+
+    /** Классификация поверхности по имени биома ("aeroworld:desert" или "desert") — для LOD-генератора. */
+    public static BiomeSurfaceInfo surfaceInfoForBiomeName(String biomeName) {
+        if (biomeName == null) {
+            return PATH_INFO_CACHE.computeIfAbsent("plains", Layer1TerrainGenerator::classifyPath);
+        }
+        int colon = biomeName.indexOf(':');
+        String path = colon >= 0 ? biomeName.substring(colon + 1) : biomeName;
+        return PATH_INFO_CACHE.computeIfAbsent(path, Layer1TerrainGenerator::classifyPath);
+    }
+
+    private static BiomeSurfaceInfo classifyPath(String path) {
         boolean warm = path.contains("warm");
         boolean frozen = path.contains("frozen");
         boolean isCold = path.contains("snowy") || frozen;
@@ -496,41 +549,9 @@ public class Layer1TerrainGenerator {
 
                 boolean underWater = surfaceY < SEA_LEVEL;
 
-                BlockState topBlock = BS_GRASS;
-                BlockState underBlock = BS_DIRT;
-
-                if (underWater) {
-                    if (surfaceY <= SEA_LEVEL - 8) {
-                        // Глубокое дно — гравий или песок
-                        topBlock = BS_GRAVEL;
-                        underBlock = BS_GRAVEL;
-                    } else {
-                        // Мелководье — песок
-                        topBlock = BS_SAND;
-                        underBlock = BS_SANDSTONE;
-                    }
-                } else if (info.type != SurfaceType.DEFAULT) {
-                    if (info.type == SurfaceType.COLD) {
-                        if (surfaceY >= 60) {
-                            topBlock = BS_SNOW_BLOCK;
-                            underBlock = BS_STONE;
-                        } else {
-                            topBlock = BS_GRASS;
-                            underBlock = BS_DIRT;
-                        }
-                    } else {
-                        topBlock = info.type.top;
-                        underBlock = info.type.under;
-                    }
-                } else if (surfaceY >= 50) {
-                    if (surfaceY >= 60) {
-                        topBlock = BS_SNOW_BLOCK;
-                        underBlock = BS_STONE;
-                    } else {
-                        topBlock = BS_GRASS;
-                        underBlock = BS_DIRT;
-                    }
-                }
+                SurfaceBlocks surfaceBlocks = surfaceBlocks(info, surfaceY);
+                BlockState topBlock = surfaceBlocks.top();
+                BlockState underBlock = surfaceBlocks.under();
 
                 // Заменяем верхние 3-4 блока
                 int depth = 3;

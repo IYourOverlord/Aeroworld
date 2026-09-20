@@ -153,14 +153,14 @@ worldgen/
 
 1. **`createBiomes`**: `init`, затем `super.createBiomes` (ванильный `fillBiomesFromNoise` по всем 131 секциям с `AeroBiomeSource`; ваниль создаёт `NoiseChunk`). `AeroBiomeSource` сэмплирует шум и delegate ровно 1 раз на XZ-колонку (16 раз на чанк), кэшируя результат в ThreadLocal-таблице.
 2. **`createStructures`**: `super.createStructures`, затем для каждого `StructureStart` из `getAllStarts()` и `getAllReferences()` вызывается `StructureSupportValidator.validate`. Категория определяется по фактическому слою в центре bounding box. Отклонённые старты заменяются на `INVALID_START`.
-   - `NetherFortressStructureMixin`: в AeroWorld смещает собранные части крепости вертикально в диапазон Y -55..-50 пещеры Layer 1.
-   - `EndCityStructureMixin`: принудительно центрирует End City на вершине сферы планеты Layer 3 (`BodyType.PLANET`) и удаляет пивсы корабля.
+    - `NetherFortressStructureMixin`: в AeroWorld смещает собранные части крепости вертикально в диапазон Y -55..-50 пещеры Layer 1.
+    - `EndCityStructureMixin`: принудительно центрирует End City на вершине сферы планеты Layer 3 (`BodyType.PLANET`) и удаляет пивсы корабля.
 3. **`fillFromNoise`**: запись через `SectionDirectChunkWriter` (`LevelChunkSection.setBlockState(..., false)` без мониторов, с корректным обновлением `nonEmptyBlockCount`), последовательно в потоке чанка.
-   - Layer 1: `fillTerrain` через `Layer1ColumnCache` (бедрок, deepslate ниже -8, переход в -8..0, stone выше, пропуск полостей пещеры без повторных вызовов шума по Y, вода до `SEA_LEVEL = 0`), затем `decorateCaveCeiling`, `decorateCaveFloor`.
-   - Layer 2: `lowerIslands.fillChunk` (grass/dirt/stone, стволы, сталактиты, мосты), затем `Layer2StructurePlacer.placeForChunk`.
-   - Layer 3: `highIslands.fillChunk` (полые метеориты с кратерами из basalt/smooth_basalt/blackstone и планеты из end_stone с кольцами астероидов).
-   - Layer 4: `upperIslands.fillChunk` (купол и щупальца медуз).
-   - Финализация: пакетный прайминг `Heightmap.primeHeightmaps(chunk, Set.of(OCEAN_FLOOR_WG, WORLD_SURFACE_WG))`.
+    - Layer 1: `fillTerrain` через `Layer1ColumnCache` (бедрок, deepslate ниже -8, переход в -8..0, stone выше, пропуск полостей пещеры без повторных вызовов шума по Y, вода до `SEA_LEVEL = 0`), затем `decorateCaveCeiling`, `decorateCaveFloor`.
+    - Layer 2: `lowerIslands.fillChunk` (grass/dirt/stone, стволы, сталактиты, мосты), затем `Layer2StructurePlacer.placeForChunk`.
+    - Layer 3: `highIslands.fillChunk` (полые метеориты с кратерами из basalt/smooth_basalt/blackstone и планеты из end_stone с кольцами астероидов).
+    - Layer 4: `upperIslands.fillChunk` (купол и щупальца медуз).
+    - Финализация: пакетный прайминг `Heightmap.primeHeightmaps(chunk, Set.of(OCEAN_FLOOR_WG, WORLD_SURFACE_WG))`.
 4. **`applyCarvers`**: пустой, быстрая проверка сида (`if (!seedInitialized || worldSeed != seed) initializeWithSeed(seed)`). Ванильных пещер/каньонов нет, `SinkholeCarver` не вызывается.
 5. **`buildSurface`**: `layer1Terrain.buildSurface`, ванильные SurfaceRules не применяются. Использует `Layer1ColumnCache` и кэш `surfaceInfoCache` (`SurfaceType`, `BiomeSurfaceInfo` — O(1) без парсинга строк). Под водой гравий (глубина >= 8) или песок/песчаник; кораллы в биомах с "warm", ламинария, морская трава.
 6. **`applyBiomeDecoration`** по порядку: `super` (ванильные фичи) -> `Layer1OreFilter` -> `clearVanillaVegetationInCentralZone` (внутренние 60% радиуса островов Layer 2, скан topY..topY+16) -> `placeTreesInRegion` (листва) -> Vault/Trial для Layer 2, 3, 4 -> `AncientCityIslandSupportPlacer`.
@@ -189,10 +189,10 @@ worldgen/
 3. **Биомы.** `AeroBiomeSource` с `ThreadLocal<BiomeColumnCache>` (64 слота direct-mapped) — все 17 октав шума Layer 1 и `delegate.getNoiseBiome` на quart y=20 сэмплируются ровно 1 раз на XZ-колонку (16 раз на чанк вместо 8384). Мемоизация `vanilla -> aero` через `ConcurrentHashMap<Holder<Biome>, Holder<Biome>>`. quart y > 75: клон `aeroworld:<path>`; океаны, `dripstone_caves`, `lush_caves`, `deep_dark` -> `aeroworld:plains`. quart y <= 75: `aeroworld:<name>` через `AeroBiomeRegistryCache`. Y -64..-8: пятна `aeroworld:deep_dark` для Ancient City. `possibleBiomes()` = 58 клонов + биомы ванильного пресета.
    Для аналитического пути добавлены прямые методы `getLayer1BiomeName(x, z)`, `isDeepDark(x, z)`, `getIslandBiomeName(x, z)`, `findAeroBiome(name)`.
 4. **Интеграция с Distant Horizons (SeedGen Override).**
-   - Реализована мягкая зависимость: при отсутствии DH на classpath (`ClassNotFoundException`) оверрайд тихо отключается без падения игры (`AeroSeedWorldGenBinding.registerIfDhPresent()`).
-   - Плагин миксинов `DhWorldGenBorderMixinPlugin` загружает миксины пакета `org.example.aeroworld.mixin.dh` только если класс `com.seibel.distanthorizons.core.Initializer` присутствует.
-   - Оверрайд регистрируется в `DhApiLevelLoadEvent` только для генераторов `instanceof AeroWorldChunkGenerator` и при включённом тумблере в конфигурации (`dhOverrideEnabled`). При несовместимости выполняется stand-down, и DH возвращается к штатному батчингу.
-   - Throughput-миксины оптимизируют очереди, приоритизацию рендера над генерацией и транзакции SQLite базы LOD.
+    - Реализована мягкая зависимость: при отсутствии DH на classpath (`ClassNotFoundException`) оверрайд тихо отключается без падения игры (`AeroSeedWorldGenBinding.registerIfDhPresent()`).
+    - Плагин миксинов `DhWorldGenBorderMixinPlugin` загружает миксины пакета `org.example.aeroworld.mixin.dh` только если класс `com.seibel.distanthorizons.core.Initializer` присутствует.
+    - Оверрайд регистрируется в `DhApiLevelLoadEvent` только для генераторов `instanceof AeroWorldChunkGenerator` и при включённом тумблере в конфигурации (`dhOverrideEnabled`). При несовместимости выполняется stand-down, и DH возвращается к штатному батчингу.
+    - Throughput-миксины оптимизируют очереди, приоритизацию рендера над генерацией и транзакции SQLite базы LOD.
 5. **Руды.** `remove_ores.json` действует только на 6 биомов из `#aeroworld:aero_biomes` (meadow, plains, sunflower_plains, alpine_meadow, autumn_forest, heather_moor). Остальные ~52 биома чистит `Layer1OreFilter`.
 6. **Структуры.** Валидация только в `createStructures`. `ancient_city` принимается всегда и получает платформу. WATER допускаются на Layer 1 без проверки опоры, на островах отклоняются. `end_city` принудительно центрируется на планетах Layer 3, `fortress` смещается в главную пещеру Layer 1.
 7. **Команды.** `findIsland2/3/4`: спиральный обход ячеек `IslandPlacer` нужного слоя, телепорт на `topY + 5`. `validateSeedGen [count]`: сверка вывода столбцовой модели с `getBaseColumn`.
@@ -267,5 +267,5 @@ worldgen/
 ### Мёртвый код и известные ограничения:
 - `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).
 - `Layer1FlatGenerator.setVanillaSource`: no-op метод.
-- В `AeroColumnModel` на данный момент используется цилиндрическая аппроксимация островов слоёв 2, 3 и 4 (аналогично старому `getBaseColumn`); точная геометрия (`IslandShape.isSolid`, эллипсоиды) и пороги `AeroFastDistantTerrain` по detailLevel выделены под следующий этап доработки.
+- `AeroColumnModel` (LOD-модель): слой 1 получает поверхность по биому/высоте через `Layer1TerrainGenerator.surfaceBlocks` (трава/песок/снег/подзол/гравий + 3 подповерхностных блока, единая логика с `buildSurface`); острова слоя 2 — перевёрнутый конус (`getDeformedBottomY`) с травой/землёй сверху, слоя 3 — эллипсоид (`getEllipsoidTop/BottomY`), слоя 4 — купол (`getCapTop/BottomY`). Не отражены в LOD: щупальца слоя 4, кольца планет, полость метеорита, мосты, деревья, растительность. `getBaseHeight` для островов всё ещё использует цилиндр (расхождение с `getBaseColumn`).
 - Валидация `/aeroworld validateSeedGen 10000` и замеры производительности throughput (секции/сек) подготовлены в коде, но требуют запуска и фиксации результатов в работающей тестовой среде с DH.

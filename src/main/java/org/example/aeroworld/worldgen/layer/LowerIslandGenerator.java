@@ -873,7 +873,9 @@ public class LowerIslandGenerator {
                 wx, wz, d.cx, d.cz, d.radius, NOISE_DEFORM,
                 d.shapeNoiseIntensity, d.shapeProfile);
 
-        if (!shape.isSolid(d.bottomY, d.bottomY, d.topY, xz)) return d.topY + 1;
+        // Форма острова — перевёрнутый конус: радиус на bottomY равен 0, поэтому проверять нужно
+        // верхний блок (solid-диапазон колонки непрерывен и заканчивается на topY).
+        if (!shape.isSolid(d.topY, d.bottomY, d.topY, xz)) return d.topY + 1;
 
         int lo = d.bottomY, hi = d.topY;
         while (lo < hi) {

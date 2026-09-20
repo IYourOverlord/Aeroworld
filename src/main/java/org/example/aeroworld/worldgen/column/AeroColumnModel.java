@@ -37,6 +37,17 @@ public final class AeroColumnModel {
 
     private static final BlockState BS_STONE = Blocks.STONE.defaultBlockState();
     private static final BlockState BS_WATER = Blocks.WATER.defaultBlockState();
+    private static final BlockState BS_GRASS = Blocks.GRASS_BLOCK.defaultBlockState();
+    private static final BlockState BS_DIRT = Blocks.DIRT.defaultBlockState();
+
+    /** Толщина подповерхностного слоя под верхним блоком (как в реальной генерации). */
+    private static final int SUBSURFACE_DEPTH = 3;
+    /** Запас по XZ для деформации края островов слоя 2 (LowerIslandGenerator.NOISE_DEFORM). */
+    private static final double LAYER2_NOISE_MARGIN = 18.0;
+    /** Запас по XZ для края острова слоя 3 (шум деформации эллипсоида). */
+    private static final double LAYER3_NOISE_MARGIN = 32.0;
+    /** Запас по XZ для купола слоя 4 (UpperIslandGenerator.CAP_NOISE_DEF). */
+    private static final double LAYER4_NOISE_MARGIN = 8.0;
 
     private AeroColumnModel() {}
 
@@ -99,6 +110,11 @@ public final class AeroColumnModel {
             int caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
 
             int stoneTop = Math.min(surfaceY, levelMax);
+            Layer1TerrainGenerator.SurfaceBlocks surface = null;
+            if (stoneTop >= minY && stoneTop == surfaceY) {
+                surface = Layer1TerrainGenerator.surfaceBlocks(
+                        Layer1TerrainGenerator.surfaceInfoForBiomeName(layer1BiomeName), surfaceY);
+            }
             if (stoneTop >= minY) {
                 if (hasCave && caveBottom <= caveTop) {
                     int lowerTop = Math.min(caveBottom - 1, stoneTop);
@@ -114,10 +130,10 @@ public final class AeroColumnModel {
                     }
                     int upperBottom = Math.max(caveTop + 1, minY);
                     if (stoneTop >= upperBottom) {
-                        spans.add(new Span(upperBottom, stoneTop, BS_STONE, layer1BiomeName, layer1BiomeHolder));
+                        addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, layer1BiomeName, layer1BiomeHolder);
                     }
                 } else {
-                    spans.add(new Span(minY, stoneTop, BS_STONE, layer1BiomeName, layer1BiomeHolder));
+                    addSurfaceColumn(spans, minY, stoneTop, BS_STONE, surface, layer1BiomeName, layer1BiomeHolder);
                 }
             }
 
@@ -138,12 +154,20 @@ public final class AeroColumnModel {
                 long packed = centres.getLong(i);
                 IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz > d.radius * d.radius) continue;
+                double reach = d.radius + LAYER2_NOISE_MARGIN;
+                if (dx * dx + dz * dz >= reach * reach) continue;
 
-                int bY = Math.max(d.bottomY, minY);
-                int tY = Math.min(d.topY, levelMax);
+                // Остров — перевёрнутый конус с плоским верхом: solid-диапазон колонки [bottom..d.topY].
+                int isBottom = lowerIslands.getDeformedBottomY(x, z, d);
+                if (isBottom > d.topY) continue; // колонка вне острова
+                int isTop = d.topY;
+
+                int bY = Math.max(isBottom, minY);
+                int tY = Math.min(isTop, levelMax);
                 if (tY >= bY) {
-                    spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
+                    Layer1TerrainGenerator.SurfaceBlocks grass = isTop <= levelMax
+                            ? new Layer1TerrainGenerator.SurfaceBlocks(BS_GRASS, BS_DIRT) : null;
+                    addSurfaceColumn(spans, bY, tY, BS_STONE, grass, islandBiomeName, islandBiomeHolder);
                 }
             }
         }
@@ -156,11 +180,15 @@ public final class AeroColumnModel {
                 long packed = centres.getLong(i);
                 IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
-                double effR = d.getEffectiveRadius();
-                if (dx * dx + dz * dz > effR * effR) continue;
+                double reach = d.getEffectiveRadius() + LAYER3_NOISE_MARGIN;
+                if (dx * dx + dz * dz >= reach * reach) continue;
 
-                int bY = Math.max(d.bottomY, minY);
-                int tY = Math.min(d.topY, levelMax);
+                int bodyTop = highIslands.getEllipsoidTopY(x, z, d);
+                int bodyBottom = highIslands.getEllipsoidBottomY(x, z, d);
+                if (bodyTop < bodyBottom) continue; // колонка вне тела
+
+                int bY = Math.max(bodyBottom, minY);
+                int tY = Math.min(bodyTop, levelMax);
                 if (tY >= bY) {
                     spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
                 }
@@ -175,10 +203,15 @@ public final class AeroColumnModel {
                 long packed = centres.getLong(i);
                 IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
-                if (dx * dx + dz * dz > d.radius * d.radius) continue;
+                double reach = d.radius + LAYER4_NOISE_MARGIN;
+                if (dx * dx + dz * dz >= reach * reach) continue;
 
-                int bY = Math.max(d.bottomY, minY);
-                int tY = Math.min(d.topY, levelMax);
+                int capTop = upperIslands.getCapTopY(x, z, d);
+                int capBottom = upperIslands.getCapBottomY(x, z, d);
+                if (capTop < capBottom) continue; // колонка вне купола
+
+                int bY = Math.max(capBottom, minY);
+                int tY = Math.min(capTop, levelMax);
                 if (tY >= bY) {
                     spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
                 }
@@ -186,6 +219,28 @@ public final class AeroColumnModel {
         }
 
         return mergeSpans(spans);
+    }
+
+    /**
+     * Добавляет вертикальный сегмент [bottom..top] с поверхностным покрытием: верхний блок
+     * {@code surface.top()} и {@link #SUBSURFACE_DEPTH} блока {@code surface.under()} под ним,
+     * ниже основной материал. При {@code surface == null} добавляется сплошной сегмент.
+     */
+    private static void addSurfaceColumn(List<Span> spans, int bottom, int top, BlockState base,
+                                         @Nullable Layer1TerrainGenerator.SurfaceBlocks surface,
+                                         @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
+        if (surface == null) {
+            spans.add(new Span(bottom, top, base, biomeName, biomeHolder));
+            return;
+        }
+        int underBottom = Math.max(bottom, top - SUBSURFACE_DEPTH);
+        if (underBottom - 1 >= bottom) {
+            spans.add(new Span(bottom, underBottom - 1, base, biomeName, biomeHolder));
+        }
+        if (top - 1 >= underBottom) {
+            spans.add(new Span(underBottom, top - 1, surface.under(), biomeName, biomeHolder));
+        }
+        spans.add(new Span(top, top, surface.top(), biomeName, biomeHolder));
     }
 
     /**

@@ -6,6 +6,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * ФИКС: дальние LOD не отображались при генерации через API-оверрайд SeedGen.
@@ -30,6 +34,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(targets = "com.seibel.distanthorizons.core.dataObjects.transformers.LodDataBuilder", remap = false)
 public abstract class LodDataBuilderApplyToParentMixin {
 
+	private static final Logger AERO_LOGGER = LoggerFactory.getLogger("AeroWorld/ApplyToParent");
+	private static final AtomicLong AERO_COUNTER = new AtomicLong();
+
 	@Inject(
 			method = "createFromApiChunkData",
 			at = @At("RETURN"),
@@ -41,6 +48,10 @@ public abstract class LodDataBuilderApplyToParentMixin {
 		FullDataSourceV2 source = cir.getReturnValue();
 		if (source != null) {
 			source.applyToParent = Boolean.TRUE;
+			long n = AERO_COUNTER.incrementAndGet();
+			if (n == 1 || n % 100000 == 0) {
+				AERO_LOGGER.info("[AeroWorld] applyToParent=TRUE set on {} API data sources (pos={})", n, source.getPos());
+			}
 		}
 	}
 }
