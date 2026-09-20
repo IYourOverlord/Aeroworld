@@ -268,10 +268,22 @@ public class AeroBiomeSource extends BiomeSource {
         return "bamboo_jungle";
     }
 
+    /**
+     * Округляет блочную координату к сетке кварт-ячеек (4 блока), в точности как
+     * ванильное хранилище биомов чанка ({@code ChunkAccess.getNoiseBiome(quartX, quartY, quartZ)}
+     * -> {@link #getNoiseBiome} -> {@code wx = quartX * 4.0}). Без этого округления
+     * аналитический путь ({@code AeroColumnModel}, Distant Horizons SeedGen) сэмплирует климатический
+     * шум по точной блочной координате и вблизи порогов {@link #resolveLayer1Biome}/{@link #resolveIslandBiome}
+     * может получить другую категорию биома, чем реально сгенерированный чанк с тем же XZ.
+     */
+    private static double quartSnap(int blockCoord) {
+        return (blockCoord >> 2) << 2;
+    }
+
     public String getLayer1BiomeName(int blockX, int blockZ) {
         Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
-        double wx = blockX;
-        double wz = blockZ;
+        double wx = quartSnap(blockX);
+        double wz = quartSnap(blockZ);
         double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
         double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
         double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
@@ -283,15 +295,15 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     public boolean isDeepDark(int blockX, int blockZ) {
-        double wx = blockX;
-        double wz = blockZ;
+        double wx = quartSnap(blockX);
+        double wz = quartSnap(blockZ);
         double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
         return dd > DEEP_DARK_THRESHOLD;
     }
 
     public String getIslandBiomeName(int blockX, int blockZ) {
-        double wx = blockX;
-        double wz = blockZ;
+        double wx = quartSnap(blockX);
+        double wz = quartSnap(blockZ);
         double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
         double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
         return resolveIslandBiome(temp, humid);
@@ -327,7 +339,7 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     private Holder<Biome> delegateWithSafety(int x, int y, int z, Climate.Sampler sampler,
-                                              boolean excludeForIslands) {
+                                             boolean excludeForIslands) {
         Holder<Biome> vanilla = delegate.getNoiseBiome(x, y, z, sampler);
         if (!excludeForIslands) {
             return vanilla;
