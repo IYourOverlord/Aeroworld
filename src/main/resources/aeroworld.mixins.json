@@ -8,6 +8,8 @@
     "BatchGenerationEnvironmentNeoforgeMixin",
     "ExecutorNameAccessor",
     "LodDataBuilderApplyToParentMixin",
+    "LodRenderSectionAdjDiagMixin",
+    "TranslucentAdjWallMixin",
     "RetrievalQueueLimitMixin",
     "GeneratorBusyMixin",
     "WorldGenSpeedGateMixin",
