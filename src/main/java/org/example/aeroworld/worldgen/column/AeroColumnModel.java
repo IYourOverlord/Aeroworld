@@ -110,10 +110,11 @@ public final class AeroColumnModel {
             int caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
 
             int stoneTop = Math.min(surfaceY, levelMax);
+            Layer1TerrainGenerator.BiomeSurfaceInfo surfaceInfo =
+                    Layer1TerrainGenerator.surfaceInfoForBiomeName(layer1BiomeName);
             Layer1TerrainGenerator.SurfaceBlocks surface = null;
             if (stoneTop >= minY && stoneTop == surfaceY) {
-                surface = Layer1TerrainGenerator.surfaceBlocks(
-                        Layer1TerrainGenerator.surfaceInfoForBiomeName(layer1BiomeName), surfaceY);
+                surface = Layer1TerrainGenerator.surfaceBlocks(surfaceInfo, surfaceY);
             }
             if (stoneTop >= minY) {
                 if (hasCave && caveBottom <= caveTop) {
@@ -130,10 +131,10 @@ public final class AeroColumnModel {
                     }
                     int upperBottom = Math.max(caveTop + 1, minY);
                     if (stoneTop >= upperBottom) {
-                        addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, layer1BiomeName, layer1BiomeHolder);
+                        addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
                     }
                 } else {
-                    addSurfaceColumn(spans, minY, stoneTop, BS_STONE, surface, layer1BiomeName, layer1BiomeHolder);
+                    addSurfaceColumn(spans, minY, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
                 }
             }
 
@@ -223,20 +224,35 @@ public final class AeroColumnModel {
 
     /**
      * Добавляет вертикальный сегмент [bottom..top] с поверхностным покрытием: верхний блок
-     * {@code surface.top()} и {@link #SUBSURFACE_DEPTH} блока {@code surface.under()} под ним,
+     * {@code surface.top()} и подповерхностный слой под ним (3 блока по умолчанию,
+     * 15 для бэдлендов с elevation bands, 8 для stony/karst с прожилками),
      * ниже основной материал. При {@code surface == null} добавляется сплошной сегмент.
      */
     private static void addSurfaceColumn(List<Span> spans, int bottom, int top, BlockState base,
                                          @Nullable Layer1TerrainGenerator.SurfaceBlocks surface,
                                          @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
+        addSurfaceColumn(spans, bottom, top, base, surface, null, biomeName, biomeHolder);
+    }
+
+    private static void addSurfaceColumn(List<Span> spans, int bottom, int top, BlockState base,
+                                         @Nullable Layer1TerrainGenerator.SurfaceBlocks surface,
+                                         @Nullable Layer1TerrainGenerator.BiomeSurfaceInfo info,
+                                         @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
         if (surface == null) {
             spans.add(new Span(bottom, top, base, biomeName, biomeHolder));
             return;
         }
-        int underBottom = Math.max(bottom, top - SUBSURFACE_DEPTH);
+        boolean isBadlands = info != null && info.type() == Layer1TerrainGenerator.SurfaceType.BADLANDS;
+        boolean isStoneBands = info != null && (info.type() == Layer1TerrainGenerator.SurfaceType.STONY
+                || info.type() == Layer1TerrainGenerator.SurfaceType.KARST);
+        int depth = isBadlands ? 15 : (isStoneBands ? 8 : SUBSURFACE_DEPTH);
+        int underBottom = Math.max(bottom, top - depth);
+
         if (underBottom - 1 >= bottom) {
             spans.add(new Span(bottom, underBottom - 1, base, biomeName, biomeHolder));
         }
+        // Для бэдлендов/горных прожилок LOD использует один репрезентативный блок бэнда
+        // ponytail: LOD не эмитит per-Y бэнды — один блок surface.under() (= band at surfaceY-1)
         if (top - 1 >= underBottom) {
             spans.add(new Span(underBottom, top - 1, surface.under(), biomeName, biomeHolder));
         }

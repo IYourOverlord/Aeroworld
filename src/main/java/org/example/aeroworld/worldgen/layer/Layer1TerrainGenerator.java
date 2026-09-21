@@ -42,6 +42,61 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_CALCITE = Blocks.CALCITE.defaultBlockState();
     private static final BlockState BS_BASALT = Blocks.BASALT.defaultBlockState();
     private static final BlockState BS_BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState();
+    private static final BlockState BS_TUFF = Blocks.TUFF.defaultBlockState();
+
+    // Цветная терракота для elevation bands бэдлендов
+    private static final BlockState BS_ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
+    private static final BlockState BS_YELLOW_TERRACOTTA = Blocks.YELLOW_TERRACOTTA.defaultBlockState();
+    private static final BlockState BS_BROWN_TERRACOTTA = Blocks.BROWN_TERRACOTTA.defaultBlockState();
+    private static final BlockState BS_WHITE_TERRACOTTA = Blocks.WHITE_TERRACOTTA.defaultBlockState();
+    private static final BlockState BS_LIGHT_GRAY_TERRACOTTA = Blocks.LIGHT_GRAY_TERRACOTTA.defaultBlockState();
+    private static final BlockState BS_RED_TERRACOTTA = Blocks.RED_TERRACOTTA.defaultBlockState();
+
+    /** Глубина замены поверхности для бэдлендов (вместо стандартных 3 блоков). */
+    private static final int BADLANDS_DEPTH = 15;
+
+    /**
+     * Детерминированный паттерн цветных полос терракоты по Y (32 элемента, зацикленный).
+     * Приближение к ванильному бэдлендсу без шумовой деформации.
+     */
+    private static final BlockState[] BADLANDS_BANDS = {
+            BS_TERRACOTTA,            BS_TERRACOTTA,
+            BS_ORANGE_TERRACOTTA,     BS_ORANGE_TERRACOTTA,
+            BS_TERRACOTTA,            BS_YELLOW_TERRACOTTA,
+            BS_YELLOW_TERRACOTTA,     BS_TERRACOTTA,
+            BS_LIGHT_GRAY_TERRACOTTA, BS_TERRACOTTA,
+            BS_WHITE_TERRACOTTA,      BS_WHITE_TERRACOTTA,
+            BS_BROWN_TERRACOTTA,      BS_BROWN_TERRACOTTA,
+            BS_TERRACOTTA,            BS_RED_TERRACOTTA,
+            BS_TERRACOTTA,            BS_ORANGE_TERRACOTTA,
+            BS_TERRACOTTA,            BS_TERRACOTTA,
+            BS_ORANGE_TERRACOTTA,     BS_TERRACOTTA,
+            BS_YELLOW_TERRACOTTA,     BS_TERRACOTTA,
+            BS_LIGHT_GRAY_TERRACOTTA, BS_TERRACOTTA,
+            BS_WHITE_TERRACOTTA,      BS_TERRACOTTA,
+            BS_BROWN_TERRACOTTA,      BS_TERRACOTTA,
+            BS_RED_TERRACOTTA,        BS_TERRACOTTA,
+    };
+
+    /**
+     * Паттерн горных прожилок по Y для STONY/KARST биомов (16 элементов, зацикленный).
+     */
+    private static final BlockState[] STONY_BANDS = {
+            BS_STONE,    BS_STONE,    BS_STONE,    BS_CALCITE,
+            BS_STONE,    BS_STONE,    BS_TUFF,     BS_STONE,
+            BS_CALCITE,  BS_STONE,    BS_STONE,    BS_STONE,
+            BS_TUFF,     BS_STONE,    BS_STONE,    BS_STONE,
+    };
+
+    /** Возвращает блок цветной терракоты по Y-координатному паттерну бэдлендов. */
+    public static BlockState getBadlandsBand(int y) {
+        return BADLANDS_BANDS[(y & 0x7FFF_FFFF) % BADLANDS_BANDS.length];
+    }
+
+    /** Возвращает блок горных прожилок по Y-координатному паттерну. */
+    public static BlockState getStoneskyBand(int y) {
+        return STONY_BANDS[(y & 0x7FFF_FFFF) % STONY_BANDS.length];
+    }
 
     private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
     private static final BlockState BS_KELP_PLANT = Blocks.KELP_PLANT.defaultBlockState();
@@ -418,6 +473,7 @@ public class Layer1TerrainGenerator {
     /**
      * Единая логика выбора материала поверхности колонки Layer 1. Используется и реальной
      * генерацией ({@link #buildSurface}), и LOD-моделью {@code AeroColumnModel}.
+     * Для бэдлендов {@code under} берётся из elevation-band паттерна по {@code surfaceY}.
      */
     public static SurfaceBlocks surfaceBlocks(BiomeSurfaceInfo info, int surfaceY) {
         BlockState topBlock = BS_GRASS;
@@ -437,6 +493,12 @@ public class Layer1TerrainGenerator {
                     topBlock = BS_SNOW_BLOCK;
                     underBlock = BS_STONE;
                 }
+            } else if (info.type() == SurfaceType.BADLANDS) {
+                topBlock = BS_RED_SAND;
+                underBlock = getBadlandsBand(surfaceY - 1);
+            } else if (info.type() == SurfaceType.STONY || info.type() == SurfaceType.KARST) {
+                topBlock = info.type().top;
+                underBlock = getStoneskyBand(surfaceY - 1);
             } else {
                 topBlock = info.type().top;
                 underBlock = info.type().under;
@@ -551,10 +613,12 @@ public class Layer1TerrainGenerator {
 
                 SurfaceBlocks surfaceBlocks = surfaceBlocks(info, surfaceY);
                 BlockState topBlock = surfaceBlocks.top();
-                BlockState underBlock = surfaceBlocks.under();
 
-                // Заменяем верхние 3-4 блока
-                int depth = 3;
+                // Глубина замены зависит от типа поверхности
+                boolean hasBands = info.type() == SurfaceType.BADLANDS;
+                boolean hasStoneskyBands = info.type() == SurfaceType.STONY || info.type() == SurfaceType.KARST;
+                int depth = hasBands ? BADLANDS_DEPTH : (hasStoneskyBands ? 8 : 3);
+
                 pos.set(wx, surfaceY, wz);
                 chunk.setBlockState(pos, topBlock, false);
 
@@ -562,7 +626,10 @@ public class Layer1TerrainGenerator {
                     int y = surfaceY - d;
                     if (y > MIN_Y + BEDROCK_LAYERS) {
                         pos.set(wx, y, wz);
-                        chunk.setBlockState(pos, underBlock, false);
+                        BlockState bandBlock = hasBands ? getBadlandsBand(y)
+                                : hasStoneskyBands ? getStoneskyBand(y)
+                                : surfaceBlocks.under();
+                        chunk.setBlockState(pos, bandBlock, false);
                     }
                 }
 

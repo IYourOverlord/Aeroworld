@@ -6,7 +6,7 @@
 
 Пакет: `org.example.aeroworld`. Корень исходников: `src/main/java/org/example/aeroworld/`.
 
-Индекс сверен с кодовой базой 2026-09-19. Список расхождений и актуальный статус см. раздел 8.
+Индекс сверен с кодовой базой 2026-09-22. Список расхождений и актуальный статус см. раздел 8.
 
 ---
 
@@ -56,15 +56,16 @@ org.example.aeroworld
 │   └── SpawnerProximityHandler.java   - раз в 20 тиков ищет physical_structures:structure_spawner в радиусе 10
 │                                        блоков (чанки +-2) на Y 250..450 и вызывает trigger() рефлексией
 ├── mixin/
-│   ├── dh/                            - миксины оптимизации throughput и исправления багов Distant Horizons
+│   ├── dh/                            - миксины оптимизации throughput, исправления багов и диагностики Distant Horizons
 │   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча (таргет DH 3.3.x: DhChunkGenerator_neoforge.generateChunks)
 │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
-│   │   ├── LodQuadTreeAccessor.java                     - аксессор методов LodQuadTree
-│   │   ├── ReloadCoalesceMixin.java                     - дебаунс и дедлайн каскадных перезагрузок деревьев LOD
+│   │   ├── LodDataBuilderApplyToParentMixin.java        - выставление applyToParent = TRUE в createFromApiChunkData для построения грубых уровней LOD
+│   │   ├── LodRenderSectionAdjDiagMixin.java            - диагностика швов на границах секций LOD (getRenderSourceForPos), счётчик пустых соседей
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
+│   │   ├── TranslucentAdjWallMixin.java                 - скрытие паразитных вертикальных граней воды на стыках с неготовыми соседними секциями
 │   │   └── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
 │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld
 │       ├── EndCityStructureAccessor.java     - аксессор ванильного generatePieces в EndCityStructure
@@ -107,8 +108,7 @@ worldgen/
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках
 │   ├── AeroSeedWorldGenBinding.java   - слушатель DhApiLevelLoadEvent, регистрация оверрайда и stand-down логика
 │   ├── AeroSeedWorldGenerator.java    - реализация IDhApiWorldGenerator (EDhApiWorldGeneratorReturnType.API_CHUNKS)
-│   ├── AeroThroughputLimits.java      - счётчик чанков и секций, периодический отчёт производительности (chunks/s, sections/s)
-│   └── ReloadCoalescer.java           - дебаунс (50ms) и максимальный дедлайн (200ms) для объединения запросов reload
+│   └── AeroThroughputLimits.java      - счётчик чанков и секций, периодический отчёт производительности (chunks/s, sections/s)
 ├── feature/
 │   ├── Layer1OreFilter.java           - в applyBiomeDecoration заменяет руду на камень/сланец в секциях Y <= 320
 │   └── vault/                         - Vault и Trial Spawner на островах всех трёх слоёв
@@ -135,7 +135,8 @@ worldgen/
 │   ├── StructureCategory.java         - SURFACE, ISLAND, UNDERGROUND, WATER, SKY_FLOATING, DENY
 │   ├── StructureCategoryResolver.java - deny-список, токены путей, resolveForActualLayer
 │   ├── StructureSupportValidator.java - вызывается ТОЛЬКО из createStructures
-│   ├── SupportSample.java, ValidationResult.java
+│   ├── SupportSample.java             - record сэмпла неудачной опоры структуры (x, z)
+│   ├── ValidationResult.java          - результат валидации структуры (accepted, rejectionReason, supportRatio)
 │   └── TerrainColumnSampler.java      - опора под структурой, глубина скана 24
 └── util/
     ├── ChunkAccessWriter.java         - через ChunkAccess.setBlockState (утилитарный)
@@ -220,19 +221,20 @@ worldgen/
 
 ## 7. Прочие файлы
 
-- `AeroWorld_DH_SeedGen_TZ.md`: детальное техническое задание на реализацию аналитического DH SeedGen оверрайда и throughput-миксинов.
+- `PROGRESS.md`: последовательный трекер задач по воспроизведению функционала SeedGen (деревья, поверхности, миксины DH).
+- `AGENTS.md`: системные правила для разработки и рефакторинга в репозитории.
 - `README.md`: историческое описание патча Vault/Trial для Layer 3.
 - `build.gradle`: `options.encoding = 'UTF-8'` обязателен из-за кириллицы в исходниках. Зависимости включают `compileOnly` библиотеки DH и Physical Structures.
 
 ---
 
-## 8. Расхождения и статус кодовой базы (2026-09-19)
+## 8. Расхождения и статус кодовой базы (2026-09-22)
 
-### Добавленные компоненты, отсутствовавшие в старом индексе:
-1. Пакет `org.example.aeroworld.mixin.dh`: 11 файлов интеграции, аксессоров и тюнинга Distant Horizons.
+### Добавленные и актуализированные компоненты:
+1. Пакет `org.example.aeroworld.mixin.dh`: 10 файлов интеграции, диагностики и тюнинга Distant Horizons (включая `LodDataBuilderApplyToParentMixin`, `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`). Удалены устаревшие/неиспользуемые `LodQuadTreeAccessor` и `ReloadCoalesceMixin`.
 2. Пакет `org.example.aeroworld.mixin.structure`: миксины End City и Nether Fortress для корректного позиционирования в слоях AeroWorld.
 3. Пакет `org.example.aeroworld.worldgen.column`: `AeroColumnModel` (единое аналитическое ядро) и `AeroColumnWriter` (конвертер span -> DH).
-4. Пакет `org.example.aeroworld.worldgen.dh`: `AeroSeedWorldGenerator`, `AeroSeedWorldGenBinding`, `AeroThroughputLimits`, `AeroFastDistantTerrain`, `ReloadCoalescer`, `AeroSeedGenValidation`.
+4. Пакет `org.example.aeroworld.worldgen.dh`: `AeroSeedWorldGenerator`, `AeroSeedWorldGenBinding`, `AeroThroughputLimits`, `AeroFastDistantTerrain`, `AeroSeedGenValidation`.
 5. Конфигурации: `DhOverrideSettings.java`, `Layer3BodySettings.java`, обновлённый `AeroWorldConfig.java` с клиентскими настройками DH-оверрайда.
 6. Модели и энумы: `BodyType.java` (планеты и метеориты Layer 3).
 7. Рефакторинг: `getBaseColumn` и `getBaseHeight` в `AeroWorldChunkGenerator` переведены на делегирование в `AeroColumnModel`.
