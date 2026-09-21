@@ -92,7 +92,33 @@ public final class AeroWorldCommands {
                         .executes(ctx -> org.example.aeroworld.worldgen.dh.AeroSeedGenValidation.runValidation(ctx, 1000))
                         .then(Commands.argument("count", com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, 100000))
                                 .executes(ctx -> org.example.aeroworld.worldgen.dh.AeroSeedGenValidation.runValidation(
-                                        ctx, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "count"))))));
+                                        ctx, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "count")))))
+                .then(Commands.literal("DHopt")
+                        .then(Commands.literal("enable")
+                                .executes(ctx -> runDhOpt(ctx, true)))
+                        .then(Commands.literal("disable")
+                                .executes(ctx -> runDhOpt(ctx, false)))));
+    }
+
+    /**
+     * {@code /aeroworld DHopt enable|disable} — включает/выключает упрощение геометрии
+     * {@link org.example.aeroworld.worldgen.dh.AeroFastDistantTerrain} на дальних LOD
+     * Distant Horizons (SeedGen override). Аналитическая модель ({@code AeroColumnModel})
+     * остаётся активной в любом случае — переключается только coarse-упрощение слоёв 2–4.
+     * <p>
+     * Глобальный флаг, не привязан к конкретному измерению/сессии генератора: DH API не
+     * позволяет снять уже зарегистрированный {@code IDhApiWorldGenerator}-оверрайд, поэтому
+     * переключатель реализован как статическое состояние внутри {@code AeroFastDistantTerrain},
+     * а не через пересоздание генератора.
+     */
+    private static int runDhOpt(CommandContext<CommandSourceStack> ctx, boolean enable) {
+        CommandSourceStack source = ctx.getSource();
+        org.example.aeroworld.worldgen.dh.AeroFastDistantTerrain.setEnabled(enable);
+
+        source.sendSuccess(() -> Component.literal(
+                "[AeroWorld] DH SeedGen coarse-упрощение (AeroFastDistantTerrain): " +
+                        (enable ? "включено" : "отключено") + "."), true);
+        return 1;
     }
 
     private static int runForcePlacePending(CommandContext<CommandSourceStack> ctx) {

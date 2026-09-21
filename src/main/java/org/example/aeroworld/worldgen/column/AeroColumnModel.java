@@ -149,7 +149,7 @@ public final class AeroColumnModel {
         // ── 2. Layer 2 (Y 400..500) ──────────────────────────────────────────
         if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
+            LongArrayList centres = lowerIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
@@ -175,7 +175,7 @@ public final class AeroColumnModel {
         // ── 3. Layer 3 (Y 1000..1100) ────────────────────────────────────────
         if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
+            LongArrayList centres = highIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
@@ -198,7 +198,7 @@ public final class AeroColumnModel {
         // ── 4. Layer 4 (Y 1900..2031) ────────────────────────────────────────
         if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
             int chunkX = x >> 4, chunkZ = z >> 4;
-            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
+            LongArrayList centres = upperIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
@@ -292,7 +292,7 @@ public final class AeroColumnModel {
 
         // Layer 4 (Y 1900..2031)
         if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = upperIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, upperIslands.getSearchRadius());
+            LongArrayList centres = upperIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
@@ -303,7 +303,7 @@ public final class AeroColumnModel {
 
         // Layer 3 (Y 1000..1100)
         if (highIslands != null && levelMax >= HighIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = highIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, highIslands.getSearchRadius());
+            LongArrayList centres = highIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = highIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
@@ -315,7 +315,7 @@ public final class AeroColumnModel {
 
         // Layer 2 (Y 400..500)
         if (lowerIslands != null && levelMax >= LowerIslandGenerator.LAYER_MIN_Y) {
-            LongArrayList centres = lowerIslands.getPlacer().getIslandCentresForChunk(chunkX, chunkZ, lowerIslands.getSearchRadius());
+            LongArrayList centres = lowerIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
                 long packed = centres.getLong(i);
                 IslandData d = lowerIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));

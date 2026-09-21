@@ -579,6 +579,12 @@ public class HighIslandGenerator {
     /** Радиус поиска ячеек для этого слоя. Используется TerrainColumnSampler. */
     public int getSearchRadius() { return searchRadius; }
 
+    /** Центры островов чанка из общего {@link ChunkIslandCache} (хит при повторном запросе). */
+    public LongArrayList getCachedIslandCentresForChunk(int chunkX, int chunkZ) {
+        return chunkCache.get(LAYER_ID, chunkX, chunkZ,
+                key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
+    }
+
     // ── Форма шара / эллипсоида (ядро; для LOD/вспомогательных запросов) ──────
 
     /**

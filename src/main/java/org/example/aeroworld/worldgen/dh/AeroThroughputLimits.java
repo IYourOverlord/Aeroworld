@@ -19,8 +19,8 @@ public class AeroThroughputLimits {
 
     public static final int QUEUE_SCALE = 4;
     public static final int IN_FLIGHT_SCALE = 4;
-    public static final int RENDER_YIELD_QUEUE = Integer.MAX_VALUE;
-    public static final int SAVE_DELAY_MS = 10000;
+    public static final int RENDER_YIELD_QUEUE = 200;
+    public static final int SAVE_DELAY_MS = 1000;
     public static final String SQLITE_SYNC = "NORMAL";
 
     public static int distantHorizonsThreadCount() {

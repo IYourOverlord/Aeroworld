@@ -88,21 +88,40 @@ public class AeroColumnWriter {
             biomeName = "aeroworld:plains";
         }
         final String finalName = biomeName;
-        return biomeCache.computeIfAbsent(finalName, name -> {
-            if (wrapperFactory != null) {
-                if (span.biomeHolder() != null) {
-                    try {
-                        return wrapperFactory.getBiomeWrapper(new Object[]{span.biomeHolder()}, levelWrapper);
-                    } catch (Throwable ignored) {}
-                }
+
+        IDhApiBiomeWrapper cached = biomeCache.get(finalName);
+        if (cached != null) {
+            return cached;
+        }
+
+        IDhApiBiomeWrapper resolved = null;
+        if (wrapperFactory != null) {
+            if (span.biomeHolder() != null) {
                 try {
-                    return wrapperFactory.getBiomeWrapper(name, levelWrapper);
+                    resolved = wrapperFactory.getBiomeWrapper(new Object[]{span.biomeHolder()}, levelWrapper);
+                } catch (Throwable ignored) {}
+            }
+            if (resolved == null) {
+                try {
+                    resolved = wrapperFactory.getBiomeWrapper(finalName, levelWrapper);
                 } catch (Throwable t) {
-                    LOGGER.debug("Failed to wrap biome {}: {}", name, t.getMessage());
+                    LOGGER.debug("Failed to wrap biome {}: {}", finalName, t.getMessage());
                 }
             }
-            return fallbackBiomeWrapper;
-        });
+        }
+
+        if (resolved != null) {
+            // Cache only successful resolutions. A miss here usually means
+            // AeroBiomeSource.findAeroBiome hadn't resolved a Holder yet and
+            // the DH wrapper factory also couldn't resolve the name (registry
+            // not warmed up / race with world init on the first SeedGen
+            // worker call). Caching the fallback would permanently poison
+            // this biome name for the rest of the session, painting every
+            // future column with this biome using the wrong (fallback) tint.
+            biomeCache.put(finalName, resolved);
+            return resolved;
+        }
+        return fallbackBiomeWrapper;
     }
 
     /**

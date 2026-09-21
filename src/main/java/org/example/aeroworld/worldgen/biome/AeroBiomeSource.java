@@ -361,7 +361,19 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     public Optional<Holder<Biome>> findAeroBiome(String path) {
-        return aeroBiomeNameCache.computeIfAbsent(path, this::lookupAeroBiome);
+        Optional<Holder<Biome>> cached = aeroBiomeNameCache.get(path);
+        if (cached != null) {
+            return cached;
+        }
+        Optional<Holder<Biome>> resolved = lookupAeroBiome(path);
+        // Only cache successful resolutions: a miss usually means the biome
+        // registry / AeroBiomeRegistryCache wasn't warmed up yet (e.g. first
+        // DH SeedGen worker call racing world init). Caching Optional.empty()
+        // here would permanently poison this biome name for the whole session.
+        if (resolved.isPresent()) {
+            aeroBiomeNameCache.put(path, resolved);
+        }
+        return resolved;
     }
 
     private Optional<Holder<Biome>> lookupAeroBiome(String path) {

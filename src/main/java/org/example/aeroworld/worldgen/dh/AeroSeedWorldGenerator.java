@@ -49,6 +49,19 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         return EDhApiWorldGeneratorReturnType.API_CHUNKS;
     }
 
+    /**
+     * DH API docs: валидация каждого DhApiChunk — "should be disabled during release".
+     * При {@code true} (дефолт интерфейса) каждый столбец каждого чанка прогоняется через
+     * {@code generateApiChunks -> LodDataBuilder.createFromApiChunkData -> validateOrThrowApiDataColumn}
+     * и gap-проверку дата-поинтов — дорого для аналитического генератора (до 131 секции на столбец).
+     * Отключение — чистый выигрыш throughput; корректность формата проверяется отдельно
+     * командой {@code /aeroworld validateSeedGen} (AeroSeedGenValidation) и на dev-конфигурации.
+     */
+    @Override
+    public boolean runApiValidation() {
+        return false;
+    }
+
     @Override
     public CompletableFuture<Void> generateApiChunks(
             int chunkX, int chunkZ, int genRequestWidth,
@@ -61,10 +74,22 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 int maxY = minY + WORLD_HEIGHT - 1;
 
                 var l1Terrain = generator.getLayer1Terrain();
-                var lower = generator.getLowerIslands();
-                var high = generator.getHighIslands();
-                var upper = generator.getUpperIslands();
                 var aeroBiomeSource = generator.getAeroBiomeSource();
+
+                // ── По-слойное упрощение на дальних LOD (AeroFastDistantTerrain) ──
+                // При detailLevel >= порога слоя генератор этого слоя заменяется на null,
+                // и AeroColumnModel.buildSpans просто пропускает его геометрию (остров
+                // исчезает на дальних LOD, оставляя лишь Layer 1 + силуэты ближних слоёв).
+                // ВАЖНО: на текущем пути API_CHUNKS DH всегда запрашивает detailLevel=0
+                // (AeroSeedWorldGenerator не переопределяет getLargestDataDetailLevel(),
+                // поэтому все задачи сплитятся вниз до SECTION_BLOCK_DETAIL_LEVEL = 4×4 чанка,
+                // см. WorldGenerationQueue.canGenerateDetailLevel). Значит с дефолтными
+                // порогами (4/5/6) упрощение сейчас не срабатывает — оно станет активным,
+                // если в будущем добавить coarse-генерацию (override getLargestDataDetailLevel
+                // + субдискретизация столбцов в этом методе).
+                var lower = fastTerrain.isLayer2Coarse(detailLevel) ? null : generator.getLowerIslands();
+                var high  = fastTerrain.isLayer3Coarse(detailLevel) ? null : generator.getHighIslands();
+                var upper = fastTerrain.isLayer4Coarse(detailLevel) ? null : generator.getUpperIslands();
 
                 int endChunkX = chunkX + genRequestWidth;
                 int endChunkZ = chunkZ + genRequestWidth;

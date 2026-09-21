@@ -230,6 +230,12 @@ public class UpperIslandGenerator {
     /** Радиус поиска ячеек для этого слоя. Используется TerrainColumnSampler. */
     public int getSearchRadius() { return searchRadius; }
 
+    /** Центры островов чанка из общего {@link ChunkIslandCache} (хит при повторном запросе). */
+    public LongArrayList getCachedIslandCentresForChunk(int chunkX, int chunkZ) {
+        return chunkCache.get(LAYER_ID, chunkX, chunkZ,
+                key -> placer.getIslandCentresForChunk(chunkX, chunkZ, searchRadius));
+    }
+
     // ── Форма шапки
     /** XZ-deformation for cap: precomputed once per column. */
     private static final class CapXZCache {

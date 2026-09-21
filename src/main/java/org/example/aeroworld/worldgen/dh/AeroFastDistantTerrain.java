@@ -9,6 +9,23 @@ import org.example.aeroworld.config.DhOverrideSettings;
  */
 public class AeroFastDistantTerrain {
 
+    /**
+     * Глобальный runtime-переключатель упрощения геометрии для DH SeedGen,
+     * управляемый командой {@code /aeroworld DHopt enable|disable}.
+     * <p>
+     * {@code volatile}, а не final/per-instance: {@link org.example.aeroworld.worldgen.dh.AeroSeedWorldGenerator}
+     * создаётся один раз при регистрации оверрайда ({@code DhApi.worldGenOverrides.registerWorldGeneratorOverride})
+     * и живёт до перезапуска сервера — DH API не даёт способа пересоздать или отменить регистрацию оверрайда
+     * (см. {@code IDhApiWorldGeneratorOverrideRegister}, там нет {@code unregister}). Поэтому переключение
+     * должно происходить внутри уже существующего объекта, без его пересоздания — статический флаг,
+     * читаемый на каждый вызов {@code isLayerNCoarse}, это обеспечивает без блокировок и без держания
+     * ссылки на активный {@code AeroSeedWorldGenerator} в команде.
+     */
+    private static volatile boolean ENABLED = true;
+
+    public static void setEnabled(boolean enabled) { ENABLED = enabled; }
+    public static boolean isEnabled() { return ENABLED; }
+
     private final int layer2Threshold;
     private final int layer3Threshold;
     private final int layer4Threshold;
@@ -20,15 +37,15 @@ public class AeroFastDistantTerrain {
     }
 
     public boolean isLayer2Coarse(byte detailLevel) {
-        return detailLevel >= layer2Threshold;
+        return ENABLED && detailLevel >= layer2Threshold;
     }
 
     public boolean isLayer3Coarse(byte detailLevel) {
-        return detailLevel >= layer3Threshold;
+        return ENABLED && detailLevel >= layer3Threshold;
     }
 
     public boolean isLayer4Coarse(byte detailLevel) {
-        return detailLevel >= layer4Threshold;
+        return ENABLED && detailLevel >= layer4Threshold;
     }
 
     public int getLayer2Threshold() { return layer2Threshold; }
