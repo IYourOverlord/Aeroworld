@@ -69,6 +69,7 @@ public class LodRenderSectionAdjDiagMixin {
             }
             AERO_LOGGER.info("[AeroWorld] Adjacent lookups: {} total, {} null, {} empty | empty/total per detail level:{}",
                     total, AERO_NULL.get(), AERO_EMPTY.get(), perLevel);
+            org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.logSummary();
         }
     }
 }

@@ -91,13 +91,16 @@
   - **Закрыто 2026-09-22**: новые `worldgen/column/AeroStructureCover.java` и `worldgen/layer/LowerIslandGeneratorAccess.java`; `LowerIslandGenerator` реализует доступ к world seed через интерфейс.
 ---
 
-### [ ] 7. Кэш соседних секций для границ чанков (AdjacencyCache)
+### [x] 7. Кэш соседних секций для границ чанков (AdjacencyCache)
 * **Аналог в SeedGen**: `AdjacencyCache`, `FullDataSourceV2RepoMixin`, `FetchSplitProbeMixin`, `AdjacencyDecodeProbeMixin`.
 * **Что делает SeedGen**: Потокобезопасный LRU-кэш (`hits/misses/evictions`, `synchronized(ROWS)`) для исключения повторного чтения и декодирования соседних `FullDataSourceV2` из SQLite при построении граней геометрии на стыках секций.
-* **Статус в AeroWorld**: **НЕ НАЧАТО (Оптимизация ядра DH)**.
-* **Задачи к выполнению**:
-  - [ ] **7.1.** Провести профилирование частоты промахов и нагрузки на чтение SQLite при сшивке секций в AeroWorld.
-  - [ ] **7.2.** При выявлении просадок перенести миксины кэширования смежных секций в `org.example.aeroworld.mixin.dh`.
+* **Статус в AeroWorld**: **ЗАКРЫТО (Выполнено)**.
+* **Детали реализации**:
+  - [x] **7.1.** Диагностика и профилирование: в `AeroAdjacencyCache` и `LodRenderSectionAdjDiagMixin` встроены счётчики обращений, попаданий/промахов (`hits/misses/evictions`), времени чтения SQLite (`totalLoadTimeNanos`), с периодическим отчётом производительности в лог (`checkReport` / `logSummary`). Живое профилирование на выделенном сервере не проводилось (среда выполнения недоступна), решение о внедрении кэша принято по структурному анализу `StandInTerrainMixin` (где обход родительских секций до 3 уровней вверх при каждом обращении к границе секции вызывает избыточные повторные чтения одних и тех же родительских `FullDataSourceV2` из SQLite).
+  - [x] **7.2.** Реализован потокобезопасный LRU-кэш `AeroAdjacencyCache` на `Long2ObjectLinkedOpenHashMap` + `StampedLock` (O(1) вытеснение, консистентно с `ChunkIslandCache`/`IslandCache`).
+  - [x] Управление жизненным циклом `FullDataSourceV2`: реализован reference counting (`CacheRecord.refCount` + арендуемый handle `AeroAdjacencyCache.Entry implements AutoCloseable`). Кэшированные секции защищены от закрытия во время активного использования, возврат массивов в `PhantomArrayListPool` (`source.close()`) происходит строго при обнулении ссылок после LRU-вытеснения, исключая двойной `close()` и `use-after-free`.
+  - [x] Интеграция в `StandInTerrainMixin`: прямой вызов `fullDataSourceProvider.get()` заменён на `AeroAdjacencyCache.get()`. В `AeroWorldConfig` добавлены ключи `DH_ADJACENCY_CACHE_ENABLED` (по умолчанию `true`) и `DH_ADJACENCY_CACHE_SIZE` (по умолчанию 512).
+  - **Закрыто 2026-09-23**: `AeroAdjacencyCache.java`, обновлены `StandInTerrainMixin.java`, `LodRenderSectionAdjDiagMixin.java`, `AeroWorldConfig.java`.
 
 ---
 

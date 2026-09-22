@@ -21,6 +21,8 @@ public class AeroWorldConfig {
 
     public static final ModConfigSpec.BooleanValue DH_OVERRIDE_ENABLED;
     public static final ModConfigSpec.IntValue     DH_THROUGHPUT_LOG_INTERVAL_SEC;
+    public static final ModConfigSpec.BooleanValue DH_ADJACENCY_CACHE_ENABLED;
+    public static final ModConfigSpec.IntValue     DH_ADJACENCY_CACHE_SIZE;
 
     static {
         BUILDER.push("distant_horizons");
@@ -30,6 +32,12 @@ public class AeroWorldConfig {
         DH_THROUGHPUT_LOG_INTERVAL_SEC = BUILDER
                 .comment("Interval in seconds to log DH SeedGen throughput statistics")
                 .defineInRange("throughputLogIntervalSec", 30, 5, 3600);
+        DH_ADJACENCY_CACHE_ENABLED = BUILDER
+                .comment("Enable LRU caching of decoded FullDataSourceV2 neighbor sections at chunk borders")
+                .define("adjacencyCacheEnabled", true);
+        DH_ADJACENCY_CACHE_SIZE = BUILDER
+                .comment("Maximum number of decoded FullDataSourceV2 sections retained in the adjacency cache")
+                .defineInRange("adjacencyCacheSize", 512, 16, 8192);
         BUILDER.pop();
 
         SPEC = BUILDER.build();

@@ -7,6 +7,7 @@ import com.seibel.distanthorizons.core.enums.EDhDirection;
 import com.seibel.distanthorizons.core.file.fullDatafile.V2.FullDataSourceProviderV2;
 import com.seibel.distanthorizons.core.pos.DhSectionPos;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
+import org.example.aeroworld.worldgen.dh.AeroAdjacencyCache;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -49,7 +50,7 @@ public class StandInTerrainMixin {
         }
 
         long currentParentPos = targetPos;
-        FullDataSourceV2 validParent = null;
+        AeroAdjacencyCache.Entry validParentEntry = null;
         int steps = 0;
 
         while (steps < MAX_PARENT_STEPS
@@ -57,19 +58,27 @@ public class StandInTerrainMixin {
             currentParentPos = DhSectionPos.getParentPos(currentParentPos);
             steps++;
 
-            FullDataSourceV2 candidate = this.fullDataSourceProvider.get(currentParentPos);
-            if (candidate != null && !candidate.isEmpty) {
-                validParent = candidate;
-                break;
-            } else if (candidate != null) {
-                candidate.close();
+            final long parentPosToLoad = currentParentPos;
+            AeroAdjacencyCache.Entry candidateEntry = AeroAdjacencyCache.get(
+                    parentPosToLoad,
+                    () -> this.fullDataSourceProvider.get(parentPosToLoad)
+            );
+            if (candidateEntry != null) {
+                FullDataSourceV2 candidate = candidateEntry.get();
+                if (candidate != null && !candidate.isEmpty) {
+                    validParentEntry = candidateEntry;
+                    break;
+                } else {
+                    candidateEntry.release();
+                }
             }
         }
 
-        if (validParent == null) {
+        if (validParentEntry == null) {
             return;
         }
 
+        FullDataSourceV2 validParent = validParentEntry.get();
         try {
             // Собираем стек позиций от targetPos до currentParentPos
             long[] intermediatePositions = new long[steps];
@@ -108,7 +117,7 @@ public class StandInTerrainMixin {
         } catch (Throwable ignored) {
             // В случае любой ошибки оставляем исходный результат
         } finally {
-            validParent.close();
+            validParentEntry.release();
         }
     }
 }
