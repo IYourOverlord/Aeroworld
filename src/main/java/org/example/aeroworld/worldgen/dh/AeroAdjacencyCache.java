@@ -56,12 +56,18 @@ public final class AeroAdjacencyCache {
     private static final class CacheRecord {
         final long pos;
         final FullDataSourceV2 source;
+        final long createdTimeMs;
         final AtomicInteger refCount = new AtomicInteger(1);
         final AtomicBoolean closed = new AtomicBoolean(false);
 
         CacheRecord(long pos, FullDataSourceV2 source) {
             this.pos = pos;
             this.source = source;
+            this.createdTimeMs = System.currentTimeMillis();
+        }
+
+        boolean isExpired(long now, long ttlMs) {
+            return ttlMs > 0 && (now - createdTimeMs) > ttlMs;
         }
 
         void retain() {
@@ -156,11 +162,23 @@ public final class AeroAdjacencyCache {
         try {
             CacheRecord record = MAP.get(pos);
             if (record != null) {
-                MAP.putAndMoveToLast(pos, record);
-                record.retain();
-                CACHE_HITS.incrementAndGet();
-                WINDOW_HITS.incrementAndGet();
-                return new Entry(record, record.source);
+                long now = System.currentTimeMillis();
+                long ttlSec = AeroWorldConfig.DH_ADJACENCY_CACHE_TTL_SEC != null
+                        ? AeroWorldConfig.DH_ADJACENCY_CACHE_TTL_SEC.get()
+                        : 10;
+                long ttlMs = ttlSec * 1000L;
+                if (record.isExpired(now, ttlMs)) {
+                    MAP.remove(pos);
+                    record.release();
+                    CACHE_EVICTIONS.incrementAndGet();
+                    WINDOW_EVICTIONS.incrementAndGet();
+                } else {
+                    MAP.putAndMoveToLast(pos, record);
+                    record.retain();
+                    CACHE_HITS.incrementAndGet();
+                    WINDOW_HITS.incrementAndGet();
+                    return new Entry(record, record.source);
+                }
             }
         } finally {
             LOCK.unlockWrite(stamp);
@@ -192,13 +210,23 @@ public final class AeroAdjacencyCache {
         try {
             CacheRecord existing = MAP.get(pos);
             if (existing != null) {
-                // Другой поток уже загрузил эту секцию: закрываем дубликат и возвращаем кэшированную
-                closeDirectly(loaded, pos);
-                MAP.putAndMoveToLast(pos, existing);
-                existing.retain();
-                CACHE_HITS.incrementAndGet();
-                WINDOW_HITS.incrementAndGet();
-                return new Entry(existing, existing.source);
+                long now = System.currentTimeMillis();
+                long ttlSec = AeroWorldConfig.DH_ADJACENCY_CACHE_TTL_SEC != null
+                        ? AeroWorldConfig.DH_ADJACENCY_CACHE_TTL_SEC.get()
+                        : 10;
+                long ttlMs = ttlSec * 1000L;
+                if (!existing.isExpired(now, ttlMs)) {
+                    // Другой поток уже загрузил актуальную секцию: закрываем дубликат и возвращаем кэшированную
+                    closeDirectly(loaded, pos);
+                    MAP.putAndMoveToLast(pos, existing);
+                    existing.retain();
+                    CACHE_HITS.incrementAndGet();
+                    WINDOW_HITS.incrementAndGet();
+                    return new Entry(existing, existing.source);
+                } else {
+                    MAP.remove(pos);
+                    existing.release();
+                }
             }
 
             CacheRecord record = new CacheRecord(pos, loaded);

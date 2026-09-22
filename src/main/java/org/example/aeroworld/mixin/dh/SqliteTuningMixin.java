@@ -72,4 +72,28 @@ public abstract class SqliteTuningMixin {
             return "?";
         }
     }
+
+    @Inject(method = "save", at = @At("HEAD"))
+    private void aeroworld$invalidateCacheOnSave(com.seibel.distanthorizons.core.sql.dto.IBaseDTO<?> dto, CallbackInfo ci) {
+        if (dto != null && ((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo) {
+            Object key = dto.getKey();
+            if (key instanceof Long pos) {
+                org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.invalidate(pos);
+            }
+        }
+    }
+
+    @Inject(method = "deleteWithKey", at = @At("HEAD"))
+    private void aeroworld$invalidateCacheOnDelete(Object key, CallbackInfo ci) {
+        if (((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo && key instanceof Long pos) {
+            org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.invalidate(pos);
+        }
+    }
+
+    @Inject(method = "deleteAll", at = @At("HEAD"))
+    private void aeroworld$clearCacheOnDeleteAll(CallbackInfo ci) {
+        if (((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo) {
+            org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.clear();
+        }
+    }
 }
