@@ -29,7 +29,7 @@ import javax.annotation.Nullable;
 import org.example.aeroworld.worldgen.column.AeroTreeCover;
 
 
-public class LowerIslandGenerator {
+public class LowerIslandGenerator implements LowerIslandGeneratorAccess {
 
     public static final int LAYER_MIN_Y   = 400;
     public static final int LAYER_MAX_Y   = 500;
@@ -411,6 +411,10 @@ public class LowerIslandGenerator {
 
     /** Форма острова этого слоя. Используется Layer2VaultTrialPlacer для поиска точек внутри тела острова. */
     public IslandShape getShape() { return shape; }
+
+    /** @inheritDoc */
+    @Override
+    public long worldSeed() { return seed; }
 
     // ── Очистка ванильной растительности в центре острова ─────────────────────
 

@@ -214,6 +214,16 @@ public final class AeroColumnModel {
                             ? new Layer1TerrainGenerator.SurfaceBlocks(BS_GRASS, BS_DIRT) : null;
                     addSurfaceColumn(spans, bY, tY, BS_STONE, grass, islandBiomeName, islandBiomeHolder);
 
+                    // Структуры Layer 2 на LOD: Tank21 на RICH-островах (6.3)
+                    AeroStructureCover.StructureColumn tank = AeroStructureCover.sampleLayer2RichStructure(
+                            lowerIslands.worldSeed(), x, z, d, lowerIslands);
+                    if (tank != null) {
+                        int sb = Math.max(minY, tank.bottomY());
+                        int st = Math.min(levelMax, tank.topY());
+                        if (st >= sb) {
+                            spans.add(new Span(sb, st, tank.state(), islandBiomeName, islandBiomeHolder));
+                        }
+                    }
                     // Деревья Layer 2 на LOD
                     if (sampleBiomes && isTop <= levelMax) {
                         AeroTreeCover.TreeSpans tree = lowerIslands.sampleTreeColumn(x, z, d, isTop);
@@ -258,8 +268,22 @@ public final class AeroColumnModel {
                 if (tY >= bY) {
                     spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
                 }
+                // Структуры Layer 3 на LOD: End City на планетах (6.3).
+                // Город стоит в 9×9-силуэте по центру планеты — такие колонки
+                // всегда лежат внутри тела, поэтому семплим после отсечения
+                // колонок вне эллипсоида; вне силуэта вернётся null.
+                AeroStructureCover.StructureColumn city = AeroStructureCover.sampleLayer3PlanetStructure(
+                        x, z, d, highIslands);
+                if (city != null) {
+                    int sb = Math.max(minY, city.bottomY());
+                    int st = Math.min(levelMax, city.topY());
+                    if (st >= sb) {
+                        spans.add(new Span(sb, st, city.state(), islandBiomeName, islandBiomeHolder));
+                    }
+                }
             }
         }
+
 
         // ── 4. Layer 4 (Y 1900..2031) ────────────────────────────────────────
         if (upperIslands != null && levelMax >= UpperIslandGenerator.LAYER_MIN_Y) {

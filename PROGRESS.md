@@ -80,15 +80,15 @@
 
 ---
 
-### [ ] 6. Структуры на дальнем LOD
+### [x] 6. Структуры на дальнем LOD
 * **Аналог в SeedGen**: `StructureCover`, `Structures`, `TreeTemplate.Column`.
 * **Что делает SeedGen**: Детерминированно по site-хешу (`solve`) проверяет наличие структуры в регионе, тестирует уклон рельефа (`isFlatEnough`) и накладывает предзаписанный вертикальный шаблон блоков структуры поверх рельефа.
-* **Статус в AeroWorld**: **НЕ НАЧАТО (Низкий приоритет, опционально)**.
+* **Статус в AeroWorld**: **ЗАКРЫТО (Выполнено)**.
 * **Задачи к выполнению**:
-  - [ ] **6.1.** Оценить необходимость отображения крупных структур (древние города, платформы, крепости) на сверхдальних LOD.
-  - [ ] **6.2.** Реализация легковесного детерминированного чекера `AeroStructureCover.solve(chunkX, chunkZ)`.
-  - [ ] **6.3.** Наложение колоночных шаблонов структуры поверх спанов `AeroColumnModel`.
-
+  - [x] **6.1.** Оценка видимости структур на top-down LOD: критичны End City (планеты Layer 3, открытое небо) и Tank21 (RICH-острова Layer 2); Ancient City / Fortress / Bastion скрыты под массивом Layer 1, Vault/Trial — одиночные блоки. Оверлей строится только для первых двух.
+  - [x] **6.2.** Реализован `AeroStructureCover.solve(chunkX, chunkZ, highIslands, lowerIslands)` — детерминированный чекер по тем же предикатам, что реальный спавн (`BodyType.PLANET` для End City; не-архипелажный остров + `Layer2VaultTrialPlacer.pickTierStatic == RICH` для Tank21).
+  - [x] **6.3.** Колоночные шаблоны наложены на спаны `AeroColumnModel.buildSpans`: End City — основание END_STONE_BRICKS 9×9 + ствол PURPUR 3×3 до startY+36 (стартовая высота та же, что в `EndCityStructureMixin`: ellipsoidTopY + 16); Tank21 — IRON 5×5 / GRAY_CONCRETE 13×13 от плоской вершины RICH-острова. Спаны структур сливаются с рельефом через `mergeSpans`.
+  - **Закрыто 2026-09-22**: новые `worldgen/column/AeroStructureCover.java` и `worldgen/layer/LowerIslandGeneratorAccess.java`; `LowerIslandGenerator` реализует доступ к world seed через интерфейс.
 ---
 
 ### [ ] 7. Кэш соседних секций для границ чанков (AdjacencyCache)
