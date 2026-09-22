@@ -39,6 +39,9 @@ public final class AeroColumnModel {
     private static final BlockState BS_WATER = Blocks.WATER.defaultBlockState();
     private static final BlockState BS_GRASS = Blocks.GRASS_BLOCK.defaultBlockState();
     private static final BlockState BS_DIRT = Blocks.DIRT.defaultBlockState();
+    private static final BlockState BS_ICE = Blocks.ICE.defaultBlockState();
+    private static final BlockState BS_KELP_PLANT = Blocks.KELP_PLANT.defaultBlockState();
+    private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
 
     /** Толщина подповерхностного слоя под верхним блоком (как в реальной генерации). */
     private static final int SUBSURFACE_DEPTH = 3;
@@ -136,13 +139,54 @@ public final class AeroColumnModel {
                 } else {
                     addSurfaceColumn(spans, minY, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
                 }
+
+                // Деревья Layer 1 на LOD
+                if (sampleBiomes && stoneTop == surfaceY && surfaceY >= seaLevel) {
+                    AeroTreeCover.TreeSpans tree = AeroTreeCover.sampleLayer1(
+                            layer1Terrain.getSeed(), x, z, surfaceY, layer1BiomeName, layer1Terrain);
+                    if (tree != null) {
+                        if (tree.hasTrunk()) {
+                            int tb = Math.max(minY, tree.trunkBottom());
+                            int tt = Math.min(levelMax, tree.trunkTop());
+                            if (tt >= tb) {
+                                spans.add(new Span(tb, tt, tree.log(), layer1BiomeName, layer1BiomeHolder));
+                            }
+                        }
+                        if (tree.hasCanopy()) {
+                            int cb = Math.max(minY, tree.canopyBottom());
+                            int ct = Math.min(levelMax, tree.canopyTop());
+                            if (ct >= cb) {
+                                spans.add(new Span(cb, ct, tree.leaves(), layer1BiomeName, layer1BiomeHolder));
+                            }
+                        }
+                    }
+                }
             }
 
             if (surfaceY < seaLevel) {
                 int waterBottom = Math.max(surfaceY + 1, minY);
                 int waterTop = Math.min(seaLevel, levelMax);
                 if (waterTop >= waterBottom) {
-                    spans.add(new Span(waterBottom, waterTop, BS_WATER, layer1BiomeName, layer1BiomeHolder));
+                    boolean frozen = surfaceInfo.isFrozenOcean();
+
+                    // Подводная растительность (kelp/seagrass)
+                    int vegHeight = layer1Terrain.sampleKelpHeight(x, z, surfaceY, frozen);
+                    int vegBottom = waterBottom;
+                    int vegTop = Math.min(surfaceY + vegHeight, waterTop - 1);
+                    if (vegHeight > 0 && vegTop >= vegBottom) {
+                        BlockState vegBlock = vegHeight == 1 ? BS_SEAGRASS : BS_KELP_PLANT;
+                        spans.add(new Span(vegBottom, vegTop, vegBlock, layer1BiomeName, layer1BiomeHolder));
+                        waterBottom = vegTop + 1; // вода начинается выше растительности
+                    }
+
+                    if (frozen && waterTop == seaLevel) {
+                        if (waterTop > waterBottom) {
+                            spans.add(new Span(waterBottom, waterTop - 1, BS_WATER, layer1BiomeName, layer1BiomeHolder));
+                        }
+                        spans.add(new Span(waterTop, waterTop, BS_ICE, layer1BiomeName, layer1BiomeHolder));
+                    } else if (waterTop >= waterBottom) {
+                        spans.add(new Span(waterBottom, waterTop, BS_WATER, layer1BiomeName, layer1BiomeHolder));
+                    }
                 }
             }
         }
@@ -169,6 +213,27 @@ public final class AeroColumnModel {
                     Layer1TerrainGenerator.SurfaceBlocks grass = isTop <= levelMax
                             ? new Layer1TerrainGenerator.SurfaceBlocks(BS_GRASS, BS_DIRT) : null;
                     addSurfaceColumn(spans, bY, tY, BS_STONE, grass, islandBiomeName, islandBiomeHolder);
+
+                    // Деревья Layer 2 на LOD
+                    if (sampleBiomes && isTop <= levelMax) {
+                        AeroTreeCover.TreeSpans tree = lowerIslands.sampleTreeColumn(x, z, d, isTop);
+                        if (tree != null) {
+                            if (tree.hasTrunk()) {
+                                int tb = Math.max(minY, tree.trunkBottom());
+                                int tt = Math.min(levelMax, tree.trunkTop());
+                                if (tt >= tb) {
+                                    spans.add(new Span(tb, tt, tree.log(), islandBiomeName, islandBiomeHolder));
+                                }
+                            }
+                            if (tree.hasCanopy()) {
+                                int cb = Math.max(minY, tree.canopyBottom());
+                                int ct = Math.min(levelMax, tree.canopyTop());
+                                if (ct >= cb) {
+                                    spans.add(new Span(cb, ct, tree.leaves(), islandBiomeName, islandBiomeHolder));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

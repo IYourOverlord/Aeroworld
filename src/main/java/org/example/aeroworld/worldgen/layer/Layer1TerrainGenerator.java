@@ -38,6 +38,7 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState();
     private static final BlockState BS_GRAVEL = Blocks.GRAVEL.defaultBlockState();
     private static final BlockState BS_SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState();
+    private static final BlockState BS_ICE = Blocks.ICE.defaultBlockState();
     private static final BlockState BS_PODZOL = Blocks.PODZOL.defaultBlockState();
     private static final BlockState BS_CALCITE = Blocks.CALCITE.defaultBlockState();
     private static final BlockState BS_BASALT = Blocks.BASALT.defaultBlockState();
@@ -587,6 +588,26 @@ public class Layer1TerrainGenerator {
     }
 
     /**
+     * Возвращает высоту kelp-стебля для LOD-столбца (0 = нет kelp, >0 = высота от дна).
+     * Воспроизводит логику {@link #placeUnderwaterFeatures} детерминированно.
+     * Seagrass возвращается как высота 1 при отсутствии kelp.
+     */
+    public int sampleKelpHeight(int wx, int wz, int surfaceY, boolean isFrozenOcean) {
+        int waterDepth = SEA_LEVEL - surfaceY;
+        if (waterDepth < 2) return 0;
+
+        double veg = oceanVegNoise.fbm2D(wx * 0.03, wz * 0.03, 3, 2.0, 0.5);
+        if (veg > 0.35 && waterDepth >= 6 && !isFrozenOcean) {
+            int kelpHeight = 3 + (int) (detailNoise.noise2D(wx * 0.1, wz * 0.1) * 8.0);
+            return Math.max(2, Math.min(kelpHeight, waterDepth - 2));
+        }
+        if (veg > 0.10 && surfaceY + 1 < SEA_LEVEL) {
+            return 1; // seagrass
+        }
+        return 0;
+    }
+
+    /**
      * Накладывает слой поверхности в зависимости от биома (песок, трава, снег, терракота и т.д.).
      */
     public void buildSurface(ChunkAccess chunk, BiFunction<Integer, Integer, Holder<Biome>> biomeGetter) {
@@ -631,6 +652,12 @@ public class Layer1TerrainGenerator {
                                 : surfaceBlocks.under();
                         chunk.setBlockState(pos, bandBlock, false);
                     }
+                }
+
+                // Лёд на поверхности воды для frozen-биомов
+                if (underWater && info.isFrozenOcean()) {
+                    pos.set(wx, SEA_LEVEL, wz);
+                    chunk.setBlockState(pos, BS_ICE, false);
                 }
 
                 // Подводная растительность и коралловые рифы

@@ -65,6 +65,7 @@ org.example.aeroworld
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
+│   │   ├── StandInTerrainMixin.java                     - устранение дыр рендера LOD каскадным downsample родительских секций
 │   │   ├── TranslucentAdjWallMixin.java                 - скрытие паразитных вертикальных граней воды на стыках с неготовыми соседними секциями
 │   │   └── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
 │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld

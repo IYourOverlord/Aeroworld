@@ -25,6 +25,8 @@ import org.example.aeroworld.config.Layer2Settings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.StampedLock;
+import javax.annotation.Nullable;
+import org.example.aeroworld.worldgen.column.AeroTreeCover;
 
 
 public class LowerIslandGenerator {
@@ -529,6 +531,56 @@ public class LowerIslandGenerator {
             if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, log);
         }
         return surfaceY + trunkHeight;
+    }
+
+    /**
+     * Семплирует наличие дерева Layer 2 для колонки (wx, wz).
+     * Воспроизводит точную геометрию деревьев острова из placeTrunk и placeTreesInRegion.
+     */
+    @Nullable
+    public AeroTreeCover.TreeSpans sampleTreeColumn(int wx, int wz, IslandData d, int surfaceY) {
+        if (surfaceY < 0) return null;
+        int leafRadius = 2;
+
+        for (int dlx = -leafRadius; dlx <= leafRadius; dlx++) {
+            for (int dlz = -leafRadius; dlz <= leafRadius; dlz++) {
+                int tx = wx - dlx;
+                int tz = wz - dlz;
+                double dx = tx - d.cx;
+                double dz = tz - d.cz;
+                double distSq = dx * dx + dz * dz;
+                if (!isInTreeEdgeBand(distSq, d.radius)) continue;
+
+                double tn = treeNoise.noise2D(tx * 0.18, tz * 0.18);
+                if (tn < 0.55) continue;
+
+                double typeSample = treeNoise.noise2D(tx * 0.07 + 500, tz * 0.07 + 500);
+                boolean isBirch = typeSample > 0.3;
+                int trunkHeight = 4 + (int)((treeNoise.noise2D(tx * 0.31, tz * 0.31) + 1.0) * 0.5 * 3);
+
+                BlockState leaves = isBirch ? BS_BIRCH_LEAVES : BS_OAK_LEAVES;
+                BlockState log = isBirch ? BS_BIRCH_LOG : BS_OAK_LOG;
+
+                // Срез углов листа (±2, ±2)
+                if (Math.abs(dlx) == leafRadius && Math.abs(dlz) == leafRadius) continue;
+
+                int topLog = surfaceY + trunkHeight;
+                int cBottom = topLog - 1;
+                int cTop = topLog + leafRadius;
+
+                int trunkBottom = -1, trunkTop = -1;
+                if (dlx == 0 && dlz == 0) {
+                    trunkBottom = surfaceY + 1;
+                    trunkTop = cBottom - 1;
+                }
+
+                return new AeroTreeCover.TreeSpans(
+                        trunkBottom, trunkTop, log,
+                        cBottom, cTop, leaves
+                );
+            }
+        }
+        return null;
     }
 
     /**

@@ -13,7 +13,8 @@
     "GeneratorBusyMixin",
     "WorldGenSpeedGateMixin",
     "SaveDelayMixin",
-    "SqliteTuningMixin"
+    "SqliteTuningMixin",
+    "StandInTerrainMixin"
   ],
   "client": [],
   "server": [],
