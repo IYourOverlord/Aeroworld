@@ -18,7 +18,9 @@ public class WorldGenSpeedGateMixin {
     @Inject(method = "worldGenThreadsCanRun", at = @At("HEAD"), cancellable = true)
     private static void aeroworld$yieldToRendering(CallbackInfoReturnable<Boolean> info) {
         PriorityTaskPicker.Executor renderLoader = ThreadPoolUtil.getRenderLoadingExecutor();
-        boolean renderingIsBehind = renderLoader != null && renderLoader.getQueueSize() > AeroThroughputLimits.RENDER_YIELD_QUEUE;
+        int queueSize = renderLoader != null ? renderLoader.getQueueSize() : 0;
+        boolean renderingIsBehind = renderLoader != null && queueSize > AeroThroughputLimits.RENDER_YIELD_QUEUE;
+        AeroThroughputLimits.recordRenderGateCheck(renderingIsBehind, queueSize);
         if (renderingIsBehind) {
             info.setReturnValue(false);
         }

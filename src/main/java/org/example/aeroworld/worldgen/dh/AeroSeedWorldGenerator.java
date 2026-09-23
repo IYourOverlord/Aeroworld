@@ -7,6 +7,7 @@ import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
 import com.seibel.distanthorizons.api.objects.data.DhApiChunk;
 import com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
+import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.column.AeroColumnModel;
 import org.example.aeroworld.worldgen.column.AeroColumnWriter;
 import org.slf4j.Logger;
@@ -94,11 +95,21 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 int endChunkX = chunkX + genRequestWidth;
                 int endChunkZ = chunkZ + genRequestWidth;
 
+                // Один Layer1ColumnCache на поток-исполнитель этой задачи: заполняется
+                // один раз на чанк (256 вызовов getHeight/computeCaveTop/computeCaveBottom)
+                // вместо повторного пересчёта тех же ~25 октав шума на каждую из 256 колонок
+                // при последующих обращениях AeroColumnModel.buildSpans.
+                Layer1ColumnCache columnCache = l1Terrain != null ? new Layer1ColumnCache() : null;
+
                 for (int cx = chunkX; cx < endChunkX; cx++) {
                     for (int cz = chunkZ; cz < endChunkZ; cz++) {
                         DhApiChunk chunk = DhApiChunk.create(cx, cz, minY, maxY);
                         int baseBlockX = cx << 4;
                         int baseBlockZ = cz << 4;
+
+                        if (columnCache != null) {
+                            columnCache.initForChunk(cx, cz, l1Terrain);
+                        }
 
                         for (int lx = 0; lx < 16; lx++) {
                             int bx = baseBlockX + lx;
@@ -108,7 +119,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                                 List<AeroColumnModel.Span> spans = AeroColumnModel.buildSpans(
                                         bx, bz, minY, maxY,
                                         l1Terrain, lower, high, upper,
-                                        aeroBiomeSource, true
+                                        aeroBiomeSource, true, columnCache
                                 );
 
                                 List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, minY, maxY);

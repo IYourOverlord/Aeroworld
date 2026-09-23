@@ -25,13 +25,11 @@ public class StandInTerrainMixin {
     @Shadow private IClientLevelWrapper clientLevelWrapper;
     @Shadow private FullDataSourceProviderV2 fullDataSourceProvider;
 
-    private static final int MAX_PARENT_STEPS = 3;
-
     @Inject(method = "getRenderSourceForPos(JLcom/seibel/distanthorizons/core/enums/EDhDirection;)"
             + "Lcom/seibel/distanthorizons/core/dataObjects/render/ColumnRenderSource;",
             at = @At("RETURN"), cancellable = true)
     private void aeroworld$standInTerrain(long pos, EDhDirection direction,
-                                         CallbackInfoReturnable<ColumnRenderSource> cir) {
+                                          CallbackInfoReturnable<ColumnRenderSource> cir) {
         ColumnRenderSource source = cir.getReturnValue();
         if (source != null && !source.isEmpty()) {
             return;
@@ -53,8 +51,7 @@ public class StandInTerrainMixin {
         AeroAdjacencyCache.Entry validParentEntry = null;
         int steps = 0;
 
-        while (steps < MAX_PARENT_STEPS
-                && DhSectionPos.getDetailLevel(currentParentPos) < FullDataSourceProviderV2.ROOT_SECTION_DETAIL_LEVEL) {
+        while (DhSectionPos.getDetailLevel(currentParentPos) < FullDataSourceProviderV2.ROOT_SECTION_DETAIL_LEVEL) {
             currentParentPos = DhSectionPos.getParentPos(currentParentPos);
             steps++;
 

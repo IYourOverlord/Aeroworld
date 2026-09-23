@@ -22,7 +22,10 @@ public class GeneratorBusyMixin {
         }
         int allowed = AeroThroughputLimits.distantHorizonsThreadCount() * AeroThroughputLimits.IN_FLIGHT_SCALE;
         WorldGenerationQueue self = (WorldGenerationQueue) (Object) this;
-        if (self.getInProgressTaskCount() <= allowed) {
+        int inProgress = self.getInProgressTaskCount();
+        boolean stillBusy = inProgress > allowed;
+        AeroThroughputLimits.recordBacklogGateCheck(stillBusy, inProgress, allowed);
+        if (!stillBusy) {
             info.setReturnValue(false);
         }
     }

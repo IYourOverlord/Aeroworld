@@ -9,6 +9,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import org.example.aeroworld.worldgen.biome.AeroBiomeSource;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
+import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
@@ -87,6 +88,28 @@ public final class AeroColumnModel {
             @Nullable AeroBiomeSource aeroBiomeSource,
             boolean sampleBiomes
     ) {
+        return buildSpans(x, z, minY, levelMax, layer1Terrain, lowerIslands, highIslands,
+                upperIslands, aeroBiomeSource, sampleBiomes, null);
+    }
+
+    /**
+     * Тот же расчёт, но с опциональным {@link Layer1ColumnCache}: если он инициализирован
+     * под чанк, содержащий (x, z), surfaceY/caveTop/caveBottom берутся из кэша вместо
+     * повторного вычисления ~25 октав шума в {@link Layer1TerrainGenerator#getHeight}
+     * на каждую колонку. Кэш не покрывает соседние колонки, запрашиваемые
+     * {@link AeroTreeCover#sampleLayer1} за границами чанка — там расчёт остаётся прямым.
+     */
+    public static List<Span> buildSpans(
+            int x, int z,
+            int minY, int levelMax,
+            @Nullable Layer1TerrainGenerator layer1Terrain,
+            @Nullable LowerIslandGenerator lowerIslands,
+            @Nullable HighIslandGenerator highIslands,
+            @Nullable UpperIslandGenerator upperIslands,
+            @Nullable AeroBiomeSource aeroBiomeSource,
+            boolean sampleBiomes,
+            @Nullable Layer1ColumnCache columnCache
+    ) {
         List<Span> spans = new ArrayList<>(8);
 
         String layer1BiomeName = null;
@@ -106,11 +129,24 @@ public final class AeroColumnModel {
 
         // ── 1. Layer 1 (поверхность + океан + пещера) ─────────────────────────
         if (layer1Terrain != null && minY <= Layer1TerrainGenerator.MAX_Y) {
-            int surfaceY = layer1Terrain.getHeight(x, z);
+            int surfaceY;
             int seaLevel = Layer1TerrainGenerator.SEA_LEVEL;
-            boolean hasCave = surfaceY >= seaLevel;
-            int caveTop = hasCave ? layer1Terrain.computeCaveTop(x, z) : Integer.MIN_VALUE;
-            int caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
+            boolean hasCave;
+            int caveTop;
+            int caveBottom;
+
+            if (columnCache != null && columnCache.isForChunk(x >> 4, z >> 4)) {
+                int idx = ((x & 15) << 4) | (z & 15);
+                surfaceY = columnCache.surfaceY[idx];
+                hasCave = surfaceY >= seaLevel;
+                caveTop = hasCave ? columnCache.caveTop[idx] : Integer.MIN_VALUE;
+                caveBottom = hasCave ? columnCache.caveBottom[idx] : Integer.MAX_VALUE;
+            } else {
+                surfaceY = layer1Terrain.getHeight(x, z);
+                hasCave = surfaceY >= seaLevel;
+                caveTop = hasCave ? layer1Terrain.computeCaveTop(x, z) : Integer.MIN_VALUE;
+                caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
+            }
 
             int stoneTop = Math.min(surfaceY, levelMax);
             Layer1TerrainGenerator.BiomeSurfaceInfo surfaceInfo =
