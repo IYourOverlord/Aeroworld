@@ -73,6 +73,19 @@ public abstract class SqliteTuningMixin {
         }
     }
 
+    @Inject(method = "close", at = @At("HEAD"))
+    private void aeroworld$checkpointOnClose(CallbackInfo ci) {
+        try {
+            Connection conn = ((AbstractDhRepo<?, ?>) (Object) this).getConnection();
+            if (conn == null || conn.isClosed()) return;
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+            }
+        } catch (Throwable ignored) {
+            // Не ронять сервер при изменениях DH API — требование §3.9
+        }
+    }
+
     @Inject(method = "save", at = @At("HEAD"))
     private void aeroworld$invalidateCacheOnSave(com.seibel.distanthorizons.core.sql.dto.IBaseDTO<?> dto, CallbackInfo ci) {
         if (dto != null && ((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo) {

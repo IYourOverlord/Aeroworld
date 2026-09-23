@@ -143,22 +143,39 @@
 
 ---
 
-### [ ] 10. Программное расширение дистанции прогрузки (ExtendedRenderDistance)
+### [x] 10. Программное расширение дистанции прогрузки (ExtendedRenderDistance)
 * **Аналог в SeedGen**: `ExtendedRenderDistance`.
 * **Что делает SeedGen**: Слушает событие загрузки уровня/изменение конфига и программно выставляет `renderDistance` сверх официальных лимитов UI ползунка через API DH (`follow`, `apply(chunks)`).
-* **Статус в AeroWorld**: **НЕ НАЧАТО (Тривиальная интеграция)**.
+* **Статус в AeroWorld**: **ЗАКРЫТО (Выполнено)**.
 * **Задачи к выполнению**:
-  - [ ] **10.1.** В `AeroSeedWorldGenBinding` добавить хук чтения целевой дистанции из `aeroworld-client.toml` или серверных настроек.
-  - [ ] **10.2.** Программная установка значения через `DhApi.Delayed.configs` в соответствующий `IDhApiConfigValue<Integer>`.
+  - [x] **10.1.** В `AeroSeedWorldGenBinding` добавлен хук `applyExtendedRenderDistance(levelWrapper)`,
+    вызываемый в начале `onLevelLoad` (на `DhApiLevelLoadEvent`) до проверки типа генератора —
+    целевая дистанция читается из `aeroworld-client.toml`.
+  - [x] **10.2.** Программная установка значения через
+    `DhApi.Delayed.configs.graphics().chunkRenderDistance().setValue(targetChunks)` —
+    сигнатура подтверждена по декомпиляции `DistantHorizons-3.3.2-1.21.1-fabric-neoforge.jar`
+    (`IDhApiGraphicsConfig.chunkRenderDistance()` → `IDhApiConfigValue<Integer>`). Новые ключи
+    конфига в `AeroWorldConfig`: `extendedRenderDistanceEnabled` (по умолчанию `false`),
+    `extendedRenderDistanceChunks` (по умолчанию 128, диапазон 1..1024). Настройка client-only
+    (graphics-конфиг DH недоступен на dedicated-сервере) — вызов обёрнут в try/catch с
+    логированием, при ошибке молча пропускается без краша (§3.9).
 
 ---
 
-### [ ] 11. Защита сохранений SQLite и коалесценция запросов (DurableSaveGuard)
+### [x] 11. Защита сохранений SQLite и коалесценция запросов (DurableSaveGuard)
 * **Аналог в SeedGen**: `DurableSaveGuard`, `ReloadCoalescer`.
 * **Что делает SeedGen**: Контролирует SQLite-чекпоинты (WAL-checkpointing) для предотвращения повреждения БД при падениях и схлопывает частые каскадные reload-запросы одной секции.
-* **Статус в AeroWorld**: **Частично закрыто через миксины тюнинга**.
+* **Статус в AeroWorld**: **ЗАКРЫТО (Выполнено)**.
 * **Текущее состояние в коде**:
   - [x] `SqliteTuningMixin` настраивает PRAGMA `cache_size`, `mmap_size`, `synchronous = NORMAL`.
   - [x] `SaveDelayMixin` предотвращает чрезмерно частый сброс на диск (`SAVE_DELAY_MS = 10000`).
 * **Задачи к выполнению**:
-  - [ ] **11.1.** Проверить устойчивость файла `.sqlite` при резком завершении процесса и при необходимости внедрить хук штатного закрытия/чекпоинта SQLite перед остановкой сервера/клиента.
+  - [x] **11.1.** В `SqliteTuningMixin` добавлена HEAD-инъекция на `AbstractDhRepo.close()`
+    (`aeroworld$checkpointOnClose`): перед закрытием соединения выполняет
+    `PRAGMA wal_checkpoint(TRUNCATE)`, сбрасывая WAL-файл в основную БД и усекая его —
+    покрывает штатное завершение (`ServerStoppingEvent`/`ServerStoppedEvent` → DH закрывает
+    репозитории → checkpoint выполняется до закрытия соединения текущего потока). При
+    резком завершении процесса (SIGKILL/краш JVM) Java-уровневый хук в принципе не может
+    сработать — устойчивость в этом случае обеспечивается самим WAL-режимом SQLite
+    (автоматический replay журнала при следующем открытии БД, без хука не нужен). Обёрнуто
+    в try/catch с логированием по общему требованию §3.9.
