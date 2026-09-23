@@ -26,6 +26,8 @@ public class AeroWorldConfig {
     public static final ModConfigSpec.IntValue     DH_ADJACENCY_CACHE_TTL_SEC;
     public static final ModConfigSpec.BooleanValue DH_COMPLETE_SECTION_CACHE_ENABLED;
     public static final ModConfigSpec.IntValue     DH_COMPLETE_SECTION_CACHE_SIZE;
+    public static final ModConfigSpec.BooleanValue DH_EXTENDED_RENDER_DISTANCE_ENABLED;
+    public static final ModConfigSpec.IntValue     DH_EXTENDED_RENDER_DISTANCE_CHUNKS;
 
     static {
         BUILDER.push("distant_horizons");
@@ -50,6 +52,12 @@ public class AeroWorldConfig {
         DH_COMPLETE_SECTION_CACHE_SIZE = BUILDER
                 .comment("Maximum number of confirmed fully-generated section positions retained in the complete-section cache")
                 .defineInRange("completeSectionCacheSize", 4096, 128, 65536);
+        DH_EXTENDED_RENDER_DISTANCE_ENABLED = BUILDER
+                .comment("Programmatically push DH chunk render distance beyond the vanilla UI slider limit on level load")
+                .define("extendedRenderDistanceEnabled", false);
+        DH_EXTENDED_RENDER_DISTANCE_CHUNKS = BUILDER
+                .comment("Target DH chunk render distance in chunks, applied via DhApi when extendedRenderDistanceEnabled is true")
+                .defineInRange("extendedRenderDistanceChunks", 128, 1, 1024);
         BUILDER.pop();
 
         SPEC = BUILDER.build();

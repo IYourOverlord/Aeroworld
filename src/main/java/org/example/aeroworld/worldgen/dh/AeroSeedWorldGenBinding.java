@@ -45,6 +45,26 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
         }
     }
 
+    /**
+     * Программно выставляет DH chunk render distance сверх лимита UI-ползунка
+     * через {@code DhApi.Delayed.configs.graphics().chunkRenderDistance()}.
+     * Client-only настройка: на dedicated-сервере DH не хранит graphics-конфиг,
+     * поэтому вызов оборачивается в try/catch и молча пропускается (3.9).
+     */
+    private static void applyExtendedRenderDistance(IDhApiLevelWrapper levelWrapper) {
+        if (!AeroWorldConfig.DH_EXTENDED_RENDER_DISTANCE_ENABLED.get()) {
+            return;
+        }
+        try {
+            int targetChunks = AeroWorldConfig.DH_EXTENDED_RENDER_DISTANCE_CHUNKS.get();
+            DhApi.Delayed.configs.graphics().chunkRenderDistance().setValue(targetChunks);
+            LOGGER.info("[AeroWorld] Extended DH render distance to {} chunks for {}.",
+                    targetChunks, levelWrapper.getDimensionName());
+        } catch (Throwable t) {
+            LOGGER.warn("[AeroWorld] Failed to apply extended DH render distance (client-only config, likely dedicated server):", t);
+        }
+    }
+
     @Override
     public void onLevelLoad(DhApiEventParam<EventParam> eventParam) {
         long startTime = System.currentTimeMillis();
@@ -54,6 +74,8 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
             }
 
             IDhApiLevelWrapper levelWrapper = eventParam.value.levelWrapper;
+            applyExtendedRenderDistance(levelWrapper);
+
             Object mcObj = levelWrapper.getWrappedMcObject();
             if (!(mcObj instanceof ServerLevel serverLevel)) {
                 LOGGER.debug("[AeroWorld] Level {} wrapped object is not ServerLevel (was {}), standing down.",
