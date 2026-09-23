@@ -24,6 +24,8 @@ public class AeroWorldConfig {
     public static final ModConfigSpec.BooleanValue DH_ADJACENCY_CACHE_ENABLED;
     public static final ModConfigSpec.IntValue     DH_ADJACENCY_CACHE_SIZE;
     public static final ModConfigSpec.IntValue     DH_ADJACENCY_CACHE_TTL_SEC;
+    public static final ModConfigSpec.BooleanValue DH_COMPLETE_SECTION_CACHE_ENABLED;
+    public static final ModConfigSpec.IntValue     DH_COMPLETE_SECTION_CACHE_SIZE;
 
     static {
         BUILDER.push("distant_horizons");
@@ -42,6 +44,12 @@ public class AeroWorldConfig {
         DH_ADJACENCY_CACHE_TTL_SEC = BUILDER
                 .comment("Time-to-live (TTL) in seconds for entries in adjacency cache (0 to disable TTL)")
                 .defineInRange("adjacencyCacheTtlSec", 10, 0, 3600);
+        DH_COMPLETE_SECTION_CACHE_ENABLED = BUILDER
+                .comment("Enable caching of confirmed fully-generated DH sections to skip repeated quad-tree status scans")
+                .define("completeSectionCacheEnabled", true);
+        DH_COMPLETE_SECTION_CACHE_SIZE = BUILDER
+                .comment("Maximum number of confirmed fully-generated section positions retained in the complete-section cache")
+                .defineInRange("completeSectionCacheSize", 4096, 128, 65536);
         BUILDER.pop();
 
         SPEC = BUILDER.build();

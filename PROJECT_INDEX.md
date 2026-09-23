@@ -105,6 +105,8 @@ worldgen/
 │   ├── AeroColumnModel.java           - единое ядро столбцовой генерации: аналитический расчёт спанов [bottomY..topY, state, biome]
 │   └── AeroColumnWriter.java          - конвертер спанов AeroColumnModel в DhApiTerrainDataPoint (detailLevel=0, эксклюзивный topY, воздух в пустотах, порядок сверху вниз) с кэшированием обёрток
 ├── dh/
+│   ├── AeroAdjacencyCache.java        - LRU-кэш декодированных FullDataSourceV2 соседних секций (StandInTerrain)
+│   ├── AeroCompleteSectionCache.java  - LRU-кэш подтверждённо полных секций, закорачивает getPositionsToRetrieve
 │   ├── AeroFastDistantTerrain.java    - пороги detailLevel для раздельного упрощения геометрии слоёв
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках
 │   ├── AeroSeedWorldGenBinding.java   - слушатель DhApiLevelLoadEvent, регистрация оверрайда и stand-down логика

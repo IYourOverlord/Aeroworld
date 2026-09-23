@@ -79,6 +79,7 @@ public abstract class SqliteTuningMixin {
             Object key = dto.getKey();
             if (key instanceof Long pos) {
                 org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.invalidate(pos);
+                org.example.aeroworld.worldgen.dh.AeroCompleteSectionCache.invalidate(pos);
             }
         }
     }
@@ -87,6 +88,7 @@ public abstract class SqliteTuningMixin {
     private void aeroworld$invalidateCacheOnDelete(Object key, CallbackInfo ci) {
         if (((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo && key instanceof Long pos) {
             org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.invalidate(pos);
+            org.example.aeroworld.worldgen.dh.AeroCompleteSectionCache.invalidate(pos);
         }
     }
 
@@ -94,6 +96,7 @@ public abstract class SqliteTuningMixin {
     private void aeroworld$clearCacheOnDeleteAll(CallbackInfo ci) {
         if (((Object) this) instanceof com.seibel.distanthorizons.core.sql.repo.FullDataSourceV2Repo) {
             org.example.aeroworld.worldgen.dh.AeroAdjacencyCache.clear();
+            org.example.aeroworld.worldgen.dh.AeroCompleteSectionCache.clear();
         }
     }
 }

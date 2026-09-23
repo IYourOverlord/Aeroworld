@@ -14,7 +14,8 @@
     "WorldGenSpeedGateMixin",
     "SaveDelayMixin",
     "SqliteTuningMixin",
-    "StandInTerrainMixin"
+    "StandInTerrainMixin",
+    "CompleteSectionCacheMixin"
   ],
   "client": [],
   "server": [],

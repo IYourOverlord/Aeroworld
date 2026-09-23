@@ -105,12 +105,31 @@
 
 ---
 
-### [ ] 8. Кэш полностью сгенерированных секций (CompleteSectionCache)
+### [x] 8. Кэш полностью сгенерированных секций (CompleteSectionCache)
 * **Аналог в SeedGen**: `CompleteSectionCache`.
 * **Что делает SeedGen**: LRU-кэш битовых масок секций, подтверждающий полную готовность всех дочерних уровней секции и исключающий повторные обходы дерева квадрантов.
-* **Статус в AeroWorld**: **НЕ НАЧАТО (Оптимизация ядра DH)**.
+* **Статус в AeroWorld**: **ЗАКРЫТО (Выполнено)**.
 * **Задачи к выполнению**:
-  - [ ] **8.1.** Анализ необходимости миксина в пайплайне проверок статуса секций DH.
+  - [x] **8.1.** Анализ необходимости миксина в пайплайне проверок статуса секций DH: точка
+    входа найдена по декомпиляции `DistantHorizons-3.3.2-1.21.1-fabric-neoforge.jar` (CFR) —
+    `GeneratedFullDataSourceProvider.getPositionsToRetrieve(pos, generatorDetailLevel)`.
+    Вызывается на каждом тике `LodQuadTree` (`updateAllRenderSections` →
+    `tryQueuePosForRetrieval`) для каждой близкой world-gen секции, включая уже
+    подтверждённо готовые: на каждый вызов читает `repo.getColumnGenerationStepForPos` из
+    SQLite и сканирует до 4096 байт generation-step колонок — классический повторный обход
+    дерева квадрантов без результата, который и описывает `CompleteSectionCache` в SeedGen.
+  - **Закрыто 2026-09-23**: реализован `worldgen/dh/AeroCompleteSectionCache.java` —
+    потокобезопасный LRU-кэш (`Long2ByteLinkedOpenHashMap` + `StampedLock`, консистентно с
+    `AeroAdjacencyCache`/`ChunkIslandCache`) подтверждённых пар (pos, generatorDetailLevel).
+    `mixin/dh/CompleteSectionCacheMixin.java` на `GeneratedFullDataSourceProvider`:
+    HEAD-инъекция закорачивает вызов пустым списком при подтверждённой полноте секции;
+    RETURN-инъекция фиксирует в кэше пустой результат оригинального вызова. Инвалидация по
+    позиции переиспользует существующие хуки `SqliteTuningMixin` на
+    `AbstractDhRepo.save`/`deleteWithKey`/`deleteAll` (тот же механизм, что и для
+    `AeroAdjacencyCache`, п.7). Новые ключи конфига в `AeroWorldConfig`:
+    `completeSectionCacheEnabled` (по умолчанию `true`), `completeSectionCacheSize`
+    (по умолчанию 4096). Весь код обращения к `com.seibel.distanthorizons.*` обёрнут в
+    try/catch (§3.9).
 
 ---
 
