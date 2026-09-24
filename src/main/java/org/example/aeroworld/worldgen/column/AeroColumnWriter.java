@@ -134,6 +134,20 @@ public class AeroColumnWriter {
      * воздухом на всём диапазоне [minY, maxY].
      */
     public List<DhApiTerrainDataPoint> toDataPoints(List<AeroColumnModel.Span> spans, int minY, int maxY) {
+        return toDataPoints(spans, minY, maxY, 0);
+    }
+
+    /**
+     * @param yOffset вычитается из bottom/top перед {@code DhApiTerrainDataPoint.create}.
+     * Путь {@code DhApiChunk.setDataPoints} (generateApiChunks) сам нормализует Y вычитанием
+     * {@code chunk.bottomYBlockPos} внутри DH ({@code LodDataBuilder.createFromApiChunkData}),
+     * поэтому там нужен {@code yOffset=0} (абсолютные Y). Путь
+     * {@code IDhApiFullDataSource.setApiDataPointColumn} (generateLod) такой нормализации не делает —
+     * внутри DH он паkует список с offset=0 (см. {@code convertApiDataPointListToPackedLongArray}),
+     * значит bottomYBlockPos/topYBlockPos обязаны прийти уже относительными к минимальной высоте
+     * измерения — там нужен {@code yOffset=minY}.
+     */
+    public List<DhApiTerrainDataPoint> toDataPoints(List<AeroColumnModel.Span> spans, int minY, int maxY, int yOffset) {
         int top = maxY + 1;
         if (top <= minY) {
             return List.of();
@@ -149,7 +163,7 @@ public class AeroColumnWriter {
         List<DhApiTerrainDataPoint> points = new ArrayList<>(spans.size() * 2 + 1);
 
         if (spans.isEmpty()) {
-            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, minY, top, air, getFallbackBiome()));
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, minY - yOffset, top - yOffset, air, getFallbackBiome()));
             return points;
         }
 
@@ -166,14 +180,14 @@ public class AeroColumnWriter {
             }
             IDhApiBiomeWrapper biome = getBiomeWrapper(span);
             if (bottom > cursor) {
-                points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor, bottom, air, lastBiome));
+                points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor - yOffset, bottom - yOffset, air, lastBiome));
             }
-            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, bottom, spanTop, getBlockStateWrapper(span.state()), biome));
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, bottom - yOffset, spanTop - yOffset, getBlockStateWrapper(span.state()), biome));
             cursor = spanTop;
             lastBiome = biome;
         }
         if (cursor < top) {
-            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor, top, air, lastBiome));
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor - yOffset, top - yOffset, air, lastBiome));
         }
 
         java.util.Collections.reverse(points);
