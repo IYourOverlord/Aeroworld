@@ -19,7 +19,7 @@ public class AeroThroughputLimits {
     public static final int SECTIONS_PER_CHUNK = 131;
 
     public static final int QUEUE_SCALE = 4;
-    public static final int IN_FLIGHT_SCALE = 16;
+    public static final int IN_FLIGHT_SCALE = 4;
     public static final int RENDER_YIELD_QUEUE = 200;
     public static final int SAVE_DELAY_MS = 1000;
     public static final String SQLITE_SYNC = "NORMAL";
@@ -92,6 +92,14 @@ public class AeroThroughputLimits {
 
     private static final Logger GATE_LOGGER = LoggerFactory.getLogger("AeroWorld-GateDiagnostics");
     private static final long GATE_REPORT_INTERVAL_MS = 5000L;
+
+    static {
+        int cores = Runtime.getRuntime().availableProcessors();
+        int dhThreads = distantHorizonsThreadCount();
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} " +
+                        "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
+                cores, dhThreads);
+    }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);
     private static final AtomicLong renderGateBlocks = new AtomicLong(0);
