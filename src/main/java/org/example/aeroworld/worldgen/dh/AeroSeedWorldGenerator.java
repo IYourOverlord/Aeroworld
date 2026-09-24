@@ -279,21 +279,27 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
      * вообще. Апгрейд при необходимости: адаптивный COARSE_SUBSAMPLES по detailLevel (меньше
      * сэмплов на самом грубом REGION, где площадь блока и так огромна) вместо фиксированной 3×3.
      */
-    private List<AeroColumnModel.Span> buildDominantSpans(
+    public static List<AeroColumnModel.Span> buildDominantSpans(
             int bx, int bz, int step, int minY, int maxY,
             Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
             UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource) {
 
+        // Сетка 3×3 сэмплов, центрированная в каждой трети блока (offset = subStep/2),
+        // а не от левого-нижнего угла: без центрирования i,j∈{0,1,2} дают координаты
+        // bx + {0, subStep, 2*subStep}, покрывая только [bx, bx+2*subStep] — правая/верхняя
+        // треть блока (до bx+step) никогда не сэмплируется, и голосование систематически
+        // смещено к одному углу вместо репрезентации всей площади LOD-блока.
         int subStep = Math.max(1, step / COARSE_SUBSAMPLES);
+        int sampleOffset = subStep / 2;
         Map<BlockState, List<AeroColumnModel.Span>> spansByTopBlock = new HashMap<>(COARSE_SUBSAMPLES * COARSE_SUBSAMPLES);
         Map<BlockState, Integer> votes = new HashMap<>(COARSE_SUBSAMPLES * COARSE_SUBSAMPLES);
         BlockState winner = null;
         int winnerVotes = -1;
 
         for (int i = 0; i < COARSE_SUBSAMPLES; i++) {
-            int sx = bx + i * subStep;
+            int sx = bx + sampleOffset + i * subStep;
             for (int j = 0; j < COARSE_SUBSAMPLES; j++) {
-                int sz = bz + j * subStep;
+                int sz = bz + sampleOffset + j * subStep;
 
                 List<AeroColumnModel.Span> spans = AeroColumnModel.buildSpans(
                         sx, sz, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource, true, null);

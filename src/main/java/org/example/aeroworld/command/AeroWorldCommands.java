@@ -13,6 +13,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import org.example.aeroworld.AeroWorld;
 import org.example.aeroworld.event.ProximityTriggerHandler;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
+import org.example.aeroworld.worldgen.column.AeroColumnModel;
 import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
@@ -97,7 +98,12 @@ public final class AeroWorldCommands {
                         .then(Commands.literal("enable")
                                 .executes(ctx -> runDhOpt(ctx, true)))
                         .then(Commands.literal("disable")
-                                .executes(ctx -> runDhOpt(ctx, false)))));
+                                .executes(ctx -> runDhOpt(ctx, false))))
+                .then(Commands.literal("biomeAt")
+                        .executes(AeroWorldCommands::runBiomeAtPlayer)
+                        .then(Commands.argument("x", com.mojang.brigadier.arguments.IntegerArgumentType.integer())
+                                .then(Commands.argument("z", com.mojang.brigadier.arguments.IntegerArgumentType.integer())
+                                        .executes(AeroWorldCommands::runBiomeAtXZ)))));
     }
 
     /**
@@ -690,6 +696,87 @@ public final class AeroWorldCommands {
                 "[AeroWorld] Ближайший остров слоя 3 (" + typeName + "): X=" + fx + " Z=" + fz +
                         " (Y " + data.bottomY + "–" + data.topY + "), кольцо сетки #" + fring +
                         " от вас. " + (tp ? "Телепортирую..." : "Выполните с игрока, чтобы телепортироваться.")), true);
+        return 1;
+    }
+
+    /**
+     * {@code /aeroworld biomeAt [<x> <z>]} — диагностика расхождения биома между аналитическим
+     * LOD-путём (то, что рисует Distant Horizons SeedGen) и реальным чанком (то, что видит игрок
+     * при подлёте). Без аргументов берёт позицию игрока; с аргументами — указанный блочный XZ.
+     * <p>
+     * Печатает: (1) имя биома по чистой формуле {@code resolveLayer1Biome} (используется LOD-путём
+     * на любом detailLevel), (2) top-блок для точного LOD (step=1, без voting), (3) top-блок,
+     * который выдаёт coarse-voting ({@code buildDominantSpans}-эквивалент) на нескольких характерных
+     * detailLevel/step, (4) реальный биом из уже сгенерированного чанка, если он загружен на сервере.
+     * Не завязано на конкретный вызов из {@code AeroSeedWorldGenerator} (тот приватный) — повторяет
+     * ту же формулу через публичный {@code AeroColumnModel.buildSpans}.
+     */
+    private static int runBiomeAtPlayer(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal("[AeroWorld] biomeAt без аргументов требует игрока (используйте biomeAt <x> <z> из консоли)."));
+            return 0;
+        }
+        return runBiomeAt(source, (int) Math.floor(player.getX()), (int) Math.floor(player.getZ()));
+    }
+
+    private static int runBiomeAtXZ(CommandContext<CommandSourceStack> ctx) {
+        int x = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "x");
+        int z = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "z");
+        return runBiomeAt(ctx.getSource(), x, z);
+    }
+
+    private static final int[] DIAG_DETAIL_LEVELS = {0, 2, 4, 6, 8};
+
+    private static int runBiomeAt(CommandSourceStack source, int x, int z) {
+        ServerLevel level = source.getLevel();
+        ChunkGenerator chunkGen = level.getChunkSource().getGenerator();
+        if (!(chunkGen instanceof AeroWorldChunkGenerator aeroGen)) {
+            source.sendFailure(Component.literal("[AeroWorld] biomeAt: генератор измерения — не AeroWorldChunkGenerator."));
+            return 0;
+        }
+        aeroGen.initializeWithSeed(level.getSeed());
+
+        var l1Terrain = aeroGen.getLayer1Terrain();
+        var aeroBiomeSource = aeroGen.getAeroBiomeSource();
+        var lower = aeroGen.getLowerIslands();
+        var high = aeroGen.getHighIslands();
+        var upper = aeroGen.getUpperIslands();
+
+        int minY = aeroGen.getMinY();
+        int maxY = minY + aeroGen.getGenDepth() - 1;
+
+        String formulaBiome = aeroBiomeSource != null ? aeroBiomeSource.getLayer1BiomeName(x, z) : "N/A (aeroBiomeSource=null)";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[AeroWorld] biomeAt (").append(x).append(", ").append(z).append(")\n");
+        sb.append("  Formula biome (resolveLayer1Biome): aeroworld:").append(formulaBiome).append("\n");
+
+        for (int detailLevel : DIAG_DETAIL_LEVELS) {
+            int step = 1 << detailLevel;
+            int bx = Math.floorDiv(x, step) * step;
+            int bz = Math.floorDiv(z, step) * step;
+
+            java.util.List<AeroColumnModel.Span> spans = step == 1
+                    ? AeroColumnModel.buildSpans(bx, bz, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource, true, null)
+                    : org.example.aeroworld.worldgen.dh.AeroSeedWorldGenerator.buildDominantSpans(
+                    bx, bz, step, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
+
+            String topBlockName = spans.isEmpty() ? "AIR" : spans.get(spans.size() - 1).state().getBlock().builtInRegistryHolder().key().location().toString();
+            String topBiomeName = spans.isEmpty() ? "?" : String.valueOf(spans.get(spans.size() - 1).biomeName());
+            sb.append("  detailLevel=").append(detailLevel).append(" step=").append(step)
+                    .append(" blockOrigin=(").append(bx).append(",").append(bz).append(")")
+                    .append(" -> top=").append(topBlockName).append(" biome=").append(topBiomeName).append("\n");
+        }
+
+        // Реальный биом из уже сгенерированного чанка (может отличаться от формулы, если
+        // чанк ещё не сгенерирован — тогда getNoiseBiome дёргает генерацию синхронно).
+        var realBiome = level.getBiome(new BlockPos(x, Math.max(minY, 0), z));
+        String realBiomeName = realBiome.unwrapKey().map(k -> k.location().toString()).orElse("unknown");
+        sb.append("  Real world biome (level.getBiome): ").append(realBiomeName);
+
+        final String msg = sb.toString();
+        source.sendSuccess(() -> Component.literal(msg), false);
         return 1;
     }
 }

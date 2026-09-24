@@ -1,6 +1,7 @@
 package org.example.aeroworld.worldgen.dh;
 
 import com.seibel.distanthorizons.api.DhApi;
+import com.seibel.distanthorizons.api.enums.config.EDhApiHorizontalQuality;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiLevelLoadEvent;
 import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhApiEventParam;
@@ -65,6 +66,28 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
         }
     }
 
+    /**
+     * Выставляет DH horizontalQuality (LOWEST/MEDIUM/HIGH/EXTREME) — квадратичную базу дистанции
+     * LOD-уровней, включая ближайший (самый детализированный). Выше пресет — дальше от игрока
+     * проходит граница ближнего уровня детализации. Client-only, как и render distance (3.9).
+     */
+    private static void applyHorizontalQuality(IDhApiLevelWrapper levelWrapper) {
+        String raw = AeroWorldConfig.DH_HORIZONTAL_QUALITY.get();
+        EDhApiHorizontalQuality quality;
+        try {
+            quality = EDhApiHorizontalQuality.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            LOGGER.warn("[AeroWorld] Invalid horizontalQuality '{}' in config, expected one of LOWEST/MEDIUM/HIGH/EXTREME, skipping.", raw);
+            return;
+        }
+        try {
+            DhApi.Delayed.configs.graphics().horizontalQuality().setValue(quality);
+            LOGGER.info("[AeroWorld] Set DH horizontalQuality to {} for {}.", quality, levelWrapper.getDimensionName());
+        } catch (Throwable t) {
+            LOGGER.warn("[AeroWorld] Failed to apply DH horizontalQuality (client-only config, likely dedicated server):", t);
+        }
+    }
+
     @Override
     public void onLevelLoad(DhApiEventParam<EventParam> eventParam) {
         long startTime = System.currentTimeMillis();
@@ -75,6 +98,7 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
 
             IDhApiLevelWrapper levelWrapper = eventParam.value.levelWrapper;
             applyExtendedRenderDistance(levelWrapper);
+            applyHorizontalQuality(levelWrapper);
 
             Object mcObj = levelWrapper.getWrappedMcObject();
             if (!(mcObj instanceof ServerLevel serverLevel)) {

@@ -28,6 +28,7 @@ public class AeroWorldConfig {
     public static final ModConfigSpec.IntValue     DH_COMPLETE_SECTION_CACHE_SIZE;
     public static final ModConfigSpec.BooleanValue DH_EXTENDED_RENDER_DISTANCE_ENABLED;
     public static final ModConfigSpec.IntValue     DH_EXTENDED_RENDER_DISTANCE_CHUNKS;
+    public static final ModConfigSpec.ConfigValue<String> DH_HORIZONTAL_QUALITY;
 
     static {
         BUILDER.push("distant_horizons");
@@ -58,6 +59,11 @@ public class AeroWorldConfig {
         DH_EXTENDED_RENDER_DISTANCE_CHUNKS = BUILDER
                 .comment("Target DH chunk render distance in chunks, applied via DhApi when extendedRenderDistanceEnabled is true")
                 .defineInRange("extendedRenderDistanceChunks", 128, 1, 1024);
+        DH_HORIZONTAL_QUALITY = BUILDER
+                .comment("DH horizontalQuality preset (LOWEST/MEDIUM/HIGH/EXTREME). Controls how far each LOD detail " +
+                        "level (including the nearest, most detailed one) extends before dropping to the next level. " +
+                        "Higher = the near full-detail zone reaches further out. Applied via DhApi on level load.")
+                .define("horizontalQuality", "HIGH");
         BUILDER.pop();
 
         SPEC = BUILDER.build();
