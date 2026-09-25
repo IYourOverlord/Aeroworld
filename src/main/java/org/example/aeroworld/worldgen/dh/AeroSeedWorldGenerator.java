@@ -278,15 +278,40 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
      * (см. {@link AeroFastDistantTerrain#subsamplesForDetailLevel}) — это и есть промежуточная
      * "волна" детализации между точным ближним LOD и максимально огрублённым дальним.
      * <p>
-     * ponytail: даже на самом грубом уровне цена — subsamples² аналитических сэмплов на
-     * coarse-колонку вместо 1; на step==1 (ближний, точный LOD) этот путь не используется вообще.
-     * Апгрейд при необходимости: сэмплировать не строгую сетку, а случайный джиттер точек, если
-     * регулярная сетка когда-нибудь даст видимый муаровый паттерн на переходах между LOD-блоками.
+     * Голосование само по себе не отличает "честное" большинство (весь блок реально один материал)
+     * от системной ошибки на границе биомов (блок реально смешанный, но большинство всё равно
+     * у кого-то есть). Поэтому после подсчёта голосов проверяется доля победителя: если она ниже
+     * {@link #MIXED_AREA_VOTE_THRESHOLD}, блок считается смешанной территорией и та же сетка
+     * пересчитывается с удвоенным {@code subsamples} (эффективно subStep вдвое мельче) — тем же
+     * циклом выше, без отдельной сетки координат. Рекурсия останавливается либо когда
+     * {@code subStep <= 1} (дальше сэмплировать нечем — уже честный per-block уровень), либо по
+     * достижении {@link #MAX_MIXED_AREA_RECURSION_DEPTH} (жёсткий предохранитель от патового
+     * голосования, которое не сходится к чёткому большинству). Чистое решение "рекурсировать или
+     * нет" вынесено в {@link #shouldRefineForMixedArea} — его же покрывает self-check.
+     * <p>
+     * ponytail: цена перестаёт быть строго фиксированной subsamples² — на границе биомов дерево
+     * рекурсии может удвоить subsamples до {@link #MAX_MIXED_AREA_RECURSION_DEPTH} раз, то есть
+     * до (subsamples · 2^depth)² сэмплов на смешанную coarse-колонку; в глубине однородной
+     * территории (подавляющее большинство блоков) цена не меняется — там голосование сходится
+     * с первой попытки и порог отсекает рекурсию сразу. Апгрейд при необходимости: сэмплировать
+     * не строгую сетку, а случайный джиттер точек, если регулярная сетка когда-нибудь даст видимый
+     * муаровый паттерн на переходах между LOD-блоками.
      */
+    private static final double MIXED_AREA_VOTE_THRESHOLD = 0.6;
+    private static final int MAX_MIXED_AREA_RECURSION_DEPTH = 3;
+
     public static List<AeroColumnModel.Span> buildDominantSpans(
             int bx, int bz, int step, int subsamples, int minY, int maxY,
             Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
             UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource) {
+        return buildDominantSpans(bx, bz, step, subsamples, minY, maxY,
+                l1Terrain, lower, high, upper, aeroBiomeSource, 0);
+    }
+
+    private static List<AeroColumnModel.Span> buildDominantSpans(
+            int bx, int bz, int step, int subsamples, int minY, int maxY,
+            Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
+            UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource, int depth) {
 
         // Сетка subsamples×subsamples, центрированная в каждой доле блока (offset = subStep/2),
         // а не от левого-нижнего угла: без центрирования i,j∈{0..subsamples-1} дают координаты
@@ -320,7 +345,28 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 }
             }
         }
+
+        if (shouldRefineForMixedArea(winnerVotes, subsamples * subsamples, subStep, depth)) {
+            return buildDominantSpans(bx, bz, step, subsamples * 2, minY, maxY,
+                    l1Terrain, lower, high, upper, aeroBiomeSource, depth + 1);
+        }
         return spansByTopBlock.get(winner);
+    }
+
+    /**
+     * Чистое решение "эта территория смешанная — надо мельчить сетку ещё раз?", без зависимости
+     * на Minecraft/DH-типы — только числа, поэтому тестируется изолированно (см. self-check).
+     * {@code subStep} — шаг сетки ТЕКУЩЕЙ (уже прошедшей) попытки голосования.
+     */
+    static boolean shouldRefineForMixedArea(int winnerVotes, int totalVotes, int subStep, int depth) {
+        if (subStep <= 1) {
+            return false; // дальше сэмплировать нечем — уже честный per-block уровень
+        }
+        if (depth >= MAX_MIXED_AREA_RECURSION_DEPTH) {
+            return false; // жёсткий предохранитель: не гоняться за патовым 50/50 голосованием
+        }
+        double winnerFraction = (double) winnerVotes / totalVotes;
+        return winnerFraction < MIXED_AREA_VOTE_THRESHOLD;
     }
 
     @Override
