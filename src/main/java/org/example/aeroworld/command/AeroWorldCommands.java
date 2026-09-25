@@ -760,7 +760,9 @@ public final class AeroWorldCommands {
             java.util.List<AeroColumnModel.Span> spans = step == 1
                     ? AeroColumnModel.buildSpans(bx, bz, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource, true, null)
                     : org.example.aeroworld.worldgen.dh.AeroSeedWorldGenerator.buildDominantSpans(
-                    bx, bz, step, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
+                    bx, bz, step,
+                    org.example.aeroworld.worldgen.dh.AeroFastDistantTerrain.subsamplesForDetailLevel((byte) detailLevel),
+                    minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
 
             String topBlockName = spans.isEmpty() ? "AIR" : spans.get(spans.size() - 1).state().getBlock().builtInRegistryHolder().key().location().toString();
             String topBiomeName = spans.isEmpty() ? "?" : String.valueOf(spans.get(spans.size() - 1).biomeName());

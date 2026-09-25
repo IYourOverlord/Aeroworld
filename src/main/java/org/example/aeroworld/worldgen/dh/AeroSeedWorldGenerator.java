@@ -231,8 +231,11 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                         if (step > 1) {
                             // Coarse LOD: одна точка на блок 2^detailLevel — aliasing (узкая полоса
                             // пляжа/бэдлендс-прожилка внутри джунглей/саванны красит весь блок LOD).
-                            // См. buildDominantSpans ниже.
-                            spans = buildDominantSpans(bx, bz, step, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
+                            // Число сэмплов растёт по мере приближения к игроку (несколько волн
+                            // детализации вместо одного скачка на первом же coarse-уровне) —
+                            // см. AeroFastDistantTerrain.subsamplesForDetailLevel.
+                            int subsamples = AeroFastDistantTerrain.subsamplesForDetailLevel(detailLevel);
+                            spans = buildDominantSpans(bx, bz, step, subsamples, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
                         } else {
                             if (columnCache != null) {
                                 columnCache.initForChunk(bx >> 4, bz >> 4, l1Terrain);
@@ -259,46 +262,47 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         }, executor);
     }
 
-    /** Число сэмплов на сторону coarse-колонки для мажоритарного голосования (3×3=9 точек). */
-    private static final int COARSE_SUBSAMPLES = 3;
-
     /**
      * На coarse LOD один сэмпл-столбец на угол блока стороной {@code step} даёт aliasing:
      * узкая полоса пляжа/бэдлендс-прожилка/структура внутри джунглей или саванны может
      * случайно попасть именно в сэмплируемую точку — и весь блок LOD красится в чужой материал
      * (репортится как "песок/бордовые блоки в густом лесу"). Вместо одной точки берём
-     * {@code COARSE_SUBSAMPLES × COARSE_SUBSAMPLES} сэмплов, равномерно раскиданных по площади
-     * колонки, и оставляем span-list того сэмпла, чей верхний блок — самый частый (majority vote
-     * по top-material). Полная вертикальная структура (пещеры, острова 2-4 слоёв) берётся
-     * целиком у сэмпла-победителя, а не усредняется по всем девяти — усложнять дальше не нужно,
-     * цель именно убрать случайный шум поверхности, а не отрендерить точную геометрию на LOD,
-     * для которого и так весь смысл в приближении.
+     * {@code subsamples × subsamples} сэмплов, равномерно раскиданных по площади колонки, и
+     * оставляем span-list того сэмпла, чей верхний блок — самый частый (majority vote по
+     * top-material). Полная вертикальная структура (пещеры, острова 2-4 слоёв) берётся целиком
+     * у сэмпла-победителя, а не усредняется по всем — усложнять дальше не нужно, цель именно
+     * убрать случайный шум поверхности, а не отрендерить точную геометрию на LOD, для которого
+     * и так весь смысл в приближении.
      * <p>
-     * ponytail: 9 сэмплов на coarse-колонку вместо 1 — это ×9 аналитической нагрузки именно на
-     * дальних (coarse) LOD-запросах; на step==1 (ближний, точный LOD) этот путь не используется
-     * вообще. Апгрейд при необходимости: адаптивный COARSE_SUBSAMPLES по detailLevel (меньше
-     * сэмплов на самом грубом REGION, где площадь блока и так огромна) вместо фиксированной 3×3.
+     * {@code subsamples} растёт на ближних coarse-уровнях и убывает на дальних
+     * (см. {@link AeroFastDistantTerrain#subsamplesForDetailLevel}) — это и есть промежуточная
+     * "волна" детализации между точным ближним LOD и максимально огрублённым дальним.
+     * <p>
+     * ponytail: даже на самом грубом уровне цена — subsamples² аналитических сэмплов на
+     * coarse-колонку вместо 1; на step==1 (ближний, точный LOD) этот путь не используется вообще.
+     * Апгрейд при необходимости: сэмплировать не строгую сетку, а случайный джиттер точек, если
+     * регулярная сетка когда-нибудь даст видимый муаровый паттерн на переходах между LOD-блоками.
      */
     public static List<AeroColumnModel.Span> buildDominantSpans(
-            int bx, int bz, int step, int minY, int maxY,
+            int bx, int bz, int step, int subsamples, int minY, int maxY,
             Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
             UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource) {
 
-        // Сетка 3×3 сэмплов, центрированная в каждой трети блока (offset = subStep/2),
-        // а не от левого-нижнего угла: без центрирования i,j∈{0,1,2} дают координаты
-        // bx + {0, subStep, 2*subStep}, покрывая только [bx, bx+2*subStep] — правая/верхняя
-        // треть блока (до bx+step) никогда не сэмплируется, и голосование систематически
-        // смещено к одному углу вместо репрезентации всей площади LOD-блока.
-        int subStep = Math.max(1, step / COARSE_SUBSAMPLES);
+        // Сетка subsamples×subsamples, центрированная в каждой доле блока (offset = subStep/2),
+        // а не от левого-нижнего угла: без центрирования i,j∈{0..subsamples-1} дают координаты
+        // bx + {0, subStep, 2*subStep, ...}, не покрывая последнюю долю блока (до bx+step) —
+        // голосование систематически смещено к одному углу вместо репрезентации всей площади
+        // LOD-блока.
+        int subStep = Math.max(1, step / subsamples);
         int sampleOffset = subStep / 2;
-        Map<BlockState, List<AeroColumnModel.Span>> spansByTopBlock = new HashMap<>(COARSE_SUBSAMPLES * COARSE_SUBSAMPLES);
-        Map<BlockState, Integer> votes = new HashMap<>(COARSE_SUBSAMPLES * COARSE_SUBSAMPLES);
+        Map<BlockState, List<AeroColumnModel.Span>> spansByTopBlock = new HashMap<>(subsamples * subsamples);
+        Map<BlockState, Integer> votes = new HashMap<>(subsamples * subsamples);
         BlockState winner = null;
         int winnerVotes = -1;
 
-        for (int i = 0; i < COARSE_SUBSAMPLES; i++) {
+        for (int i = 0; i < subsamples; i++) {
             int sx = bx + sampleOffset + i * subStep;
-            for (int j = 0; j < COARSE_SUBSAMPLES; j++) {
+            for (int j = 0; j < subsamples; j++) {
                 int sz = bz + sampleOffset + j * subStep;
 
                 List<AeroColumnModel.Span> spans = AeroColumnModel.buildSpans(

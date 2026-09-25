@@ -36,6 +36,23 @@ public class AeroFastDistantTerrain {
         this.layer4Threshold = settings != null ? settings.layer4DetailThreshold() : 6;
     }
 
+    /**
+     * Число сэмплов на сторону coarse-колонки (см. {@link AeroSeedWorldGenerator#buildDominantSpans})
+     * в зависимости от detailLevel — несколько волн детализации вместо одного скачка:
+     * сразу за точным ближним LOD (detailLevel 0) идёт плотное семплирование, которое
+     * постепенно грубеет к дальним уровням, а не падает до voting-огрубления одним шагом.
+     * Монотонно невозрастающая по detailLevel; на detailLevel 0 не вызывается (там честный
+     * per-block buildSpans, не voting).
+     */
+    public static int subsamplesForDetailLevel(byte detailLevel) {
+        return switch (detailLevel) {
+            case 1 -> 6;
+            case 2 -> 5;
+            case 3 -> 4;
+            default -> 3;
+        };
+    }
+
     public boolean isLayer2Coarse(byte detailLevel) {
         return ENABLED && detailLevel >= layer2Threshold;
     }
