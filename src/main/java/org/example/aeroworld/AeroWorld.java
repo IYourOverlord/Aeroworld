@@ -75,6 +75,9 @@ public class AeroWorld {
         // (нужно вызывать после прегенерации Chunky/C2ME и ДО импорта в Voxy/любой LOD-рендерер)
         NeoForge.EVENT_BUS.addListener(AeroWorldCommands::register);
 
+        // Снимок позиций игроков для DH world-gen потоков (гибридная прогрузка)
+        NeoForge.EVENT_BUS.addListener(org.example.aeroworld.worldgen.dh.AeroPlayerAnchors::onLevelTick);
+
         // Distant Horizons SeedGen override registration
         org.example.aeroworld.worldgen.dh.AeroSeedWorldGenBinding.registerIfDhPresent();
     }

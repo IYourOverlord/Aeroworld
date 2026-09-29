@@ -128,7 +128,7 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
 
             aeroGen.initializeWithSeed(serverLevel.getSeed());
 
-            AeroSeedWorldGenerator seedGen = new AeroSeedWorldGenerator(aeroGen, levelWrapper);
+            AeroSeedWorldGenerator seedGen = new AeroSeedWorldGenerator(aeroGen, levelWrapper, serverLevel);
             DhApi.worldGenOverrides.registerWorldGeneratorOverride(levelWrapper, seedGen);
 
             long boundMs = System.currentTimeMillis() - startTime;

@@ -9,6 +9,15 @@ import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
 import com.seibel.distanthorizons.api.objects.data.DhApiChunk;
 import com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint;
 import com.seibel.distanthorizons.api.objects.data.IDhApiFullDataSource;
+import com.seibel.distanthorizons.core.api.internal.SharedApi;
+import com.seibel.distanthorizons.core.config.Config;
+import com.seibel.distanthorizons.core.generation.DhWorldGenerator;
+import com.seibel.distanthorizons.core.level.IDhServerLevel;
+import com.seibel.distanthorizons.core.world.AbstractDhWorld;
+import com.seibel.distanthorizons.core.wrapperInterfaces.world.ILevelWrapper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.storage.LevelResource;
+import org.example.aeroworld.config.AeroWorldConfig;
 import org.example.aeroworld.worldgen.AeroWorldChunkGenerator;
 import org.example.aeroworld.worldgen.biome.AeroBiomeSource;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
@@ -22,6 +31,8 @@ import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -47,9 +58,24 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
     private final AeroThroughputLimits throughputLimits;
     private final AeroFastDistantTerrain fastTerrain;
 
-    public AeroSeedWorldGenerator(AeroWorldChunkGenerator generator, IDhApiLevelWrapper levelWrapper) {
+    /** Реальный DH chunk-gen для листьев (detail 0) в радиусе R; создаётся лениво — уровень DH регистрируется после load-события. */
+    private volatile DhWorldGenerator realGen;
+    private final String dimension;
+    private final AeroLeafLedger leafLedger;
+
+    public AeroSeedWorldGenerator(AeroWorldChunkGenerator generator, IDhApiLevelWrapper levelWrapper, ServerLevel serverLevel) {
         this.generator = generator;
         this.levelWrapper = levelWrapper;
+        this.dimension = serverLevel.dimension().location().toString();
+        AeroLeafLedger ledger = null;
+        try {
+            Path file = serverLevel.getServer().getWorldPath(LevelResource.ROOT).resolve("data")
+                    .resolve("aeroworld_dh_leaves_" + dimension.replaceAll("[^a-z0-9_.-]", "_") + ".bin");
+            ledger = new AeroLeafLedger(file);
+        } catch (IOException e) {
+            LOGGER.error("[AeroWorld DH] Leaf ledger unavailable, hybrid real-chunk phase disabled:", e);
+        }
+        this.leafLedger = ledger;
         this.columnWriter = new AeroColumnWriter(levelWrapper);
         this.throughputLimits = new AeroThroughputLimits();
         this.fastTerrain = new AeroFastDistantTerrain(generator.getSettings().dhOverride());
@@ -199,6 +225,28 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
             EDhApiDistantGeneratorMode mode, ExecutorService executor,
             Consumer<IDhApiFullDataSource> resultConsumer) {
 
+        // Гибрид: лист (detail 0) в радиусе R вокруг игрока. Фаза 1 — мгновенная аналитика со шагом SURFACE
+        // (DH сам запросит лист повторно, т.к. для листа нужен FEATURES); фаза 2 — реальный chunk-gen DH.
+        // Вне R и при выключенном chunk-gen аналитика ставит FEATURES, лист не перезапрашивается.
+        long leafKey = AeroLeafLedger.key(lodPosX, lodPosZ);
+        boolean hybridLeaf = false;
+        if (detailLevel == 0 && leafLedger != null && mode != EDhApiDistantGeneratorMode.PRE_EXISTING_ONLY
+                && Config.Common.WorldGenerator.generatorPlan.get().chunkGenEnabled) {
+            int radiusBlocks = AeroWorldConfig.DH_REAL_CHUNK_RADIUS.get() << 4;
+            // центр секции 64x64 (= 4x4 чанка) + её полуразмер
+            hybridLeaf = radiusBlocks > 0
+                    && AeroPlayerAnchors.isWithin(dimension, (chunkPosMinX << 4) + 32, (chunkPosMinZ << 4) + 32, radiusBlocks + 32);
+        }
+        if (hybridLeaf && leafLedger.contains(leafKey)) {
+            DhWorldGenerator real = realGenerator();
+            if (real != null) {
+                return real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
+                        pooledFullDataSource, mode, executor, resultConsumer);
+            }
+            hybridLeaf = false; // DH-уровень ещё недоступен: не крутим перезапросы, отдаём FEATURES
+        }
+        final boolean phaseOne = hybridLeaf;
+
         return CompletableFuture.runAsync(() -> {
             try {
                 int minY = generator.getMinY();
@@ -214,8 +262,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 int width = pooledFullDataSource.getWidthInDataColumns();
                 int step = 1 << detailLevel;
                 // Листья (detail 0) DH считает готовыми только с FEATURES, грубые уровни — с SURFACE
-                // (GeneratedFullDataSourceProvider.getPositionsToRetrieve). Иначе лист запрашивается повторно.
-                EDhApiWorldGenerationStep genStep = detailLevel > 0
+                // (GeneratedFullDataSourceProvider.getPositionsToRetrieve). Лист со SURFACE запрашивается повторно.
+                EDhApiWorldGenerationStep genStep = (detailLevel > 0 || phaseOne)
                         ? EDhApiWorldGenerationStep.SURFACE : EDhApiWorldGenerationStep.FEATURES;
                 int baseBlockX = chunkPosMinX << 4;
                 int baseBlockZ = chunkPosMinZ << 4;
@@ -253,6 +301,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 }
 
                 resultConsumer.accept(pooledFullDataSource);
+                if (phaseOne) leafLedger.add(leafKey); // после отдачи данных: сбой выше не загонит лист в фазу 2 вхолостую
                 int footprintChunks = (width * step) >> 4;
                 throughputLimits.recordChunksGenerated(footprintChunks * footprintChunks);
             } catch (Throwable t) {
@@ -302,13 +351,34 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         return out;
     }
 
+    /** Штатный DH chunk-gen этого уровня или {@code null}, если уровень DH ещё не зарегистрирован. */
+    private DhWorldGenerator realGenerator() {
+        DhWorldGenerator real = realGen;
+        if (real != null) return real;
+        synchronized (this) {
+            if (realGen == null) {
+                AbstractDhWorld world = SharedApi.getAbstractDhWorld();
+                if (world != null && levelWrapper instanceof ILevelWrapper wrapper
+                        && world.getLevel(wrapper) instanceof IDhServerLevel serverLevel) {
+                    realGen = new DhWorldGenerator(serverLevel);
+                }
+            }
+            return realGen;
+        }
+    }
+
     @Override
     public void preGeneratorTaskStart() {
         throughputLimits.onTaskStart();
+        DhWorldGenerator real = realGen;
+        if (real != null) real.preGeneratorTaskStart();
     }
 
     @Override
     public void close() {
+        DhWorldGenerator real = realGen;
+        if (real != null) real.close();
+        if (leafLedger != null) leafLedger.close();
         LOGGER.info("[AeroWorld DH SeedGen] Closed generator for level: {}", levelWrapper.getDimensionName());
     }
 

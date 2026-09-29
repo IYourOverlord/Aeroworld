@@ -29,6 +29,7 @@ public class AeroWorldConfig {
     public static final ModConfigSpec.BooleanValue DH_EXTENDED_RENDER_DISTANCE_ENABLED;
     public static final ModConfigSpec.IntValue     DH_EXTENDED_RENDER_DISTANCE_CHUNKS;
     public static final ModConfigSpec.ConfigValue<String> DH_HORIZONTAL_QUALITY;
+    public static final ModConfigSpec.IntValue     DH_REAL_CHUNK_RADIUS;
 
     static {
         BUILDER.push("distant_horizons");
@@ -64,6 +65,11 @@ public class AeroWorldConfig {
                         "level (including the nearest, most detailed one) extends before dropping to the next level. " +
                         "Higher = the near full-detail zone reaches further out. Applied via DhApi on level load.")
                 .define("horizontalQuality", "HIGH");
+        DH_REAL_CHUNK_RADIUS = BUILDER
+                .comment("Hybrid loading: within this radius (in chunks) around a player, DH replaces the instant " +
+                        "analytical LOD with real chunk generation at detail 0. Outside it real chunks are never generated. " +
+                        "0 = disabled (analytical LOD only).")
+                .defineInRange("realChunkRadius", 64, 0, 1024);
         BUILDER.pop();
 
         SPEC = BUILDER.build();
