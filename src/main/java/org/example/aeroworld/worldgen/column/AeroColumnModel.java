@@ -7,6 +7,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.example.aeroworld.worldgen.biome.AeroBiomeSource;
+import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
@@ -250,16 +251,6 @@ public final class AeroColumnModel {
                             ? new Layer1TerrainGenerator.SurfaceBlocks(BS_GRASS, BS_DIRT) : null;
                     addSurfaceColumn(spans, bY, tY, BS_STONE, grass, islandBiomeName, islandBiomeHolder);
 
-                    // Структуры Layer 2 на LOD: Tank21 на RICH-островах (6.3)
-                    AeroStructureCover.StructureColumn tank = AeroStructureCover.sampleLayer2RichStructure(
-                            lowerIslands.worldSeed(), x, z, d, lowerIslands);
-                    if (tank != null) {
-                        int sb = Math.max(minY, tank.bottomY());
-                        int st = Math.min(levelMax, tank.topY());
-                        if (st >= sb) {
-                            spans.add(new Span(sb, st, tank.state(), islandBiomeName, islandBiomeHolder));
-                        }
-                    }
                     // Деревья Layer 2 на LOD
                     if (sampleBiomes && isTop <= levelMax) {
                         AeroTreeCover.TreeSpans tree = lowerIslands.sampleTreeColumn(x, z, d, isTop);
@@ -282,6 +273,15 @@ public final class AeroColumnModel {
                     }
                 }
             }
+            // Мосты между островами: вне радиусов островов, поэтому вне цикла выше.
+            final String bridgeBiomeName = islandBiomeName;
+            final Holder<Biome> bridgeBiomeHolder = islandBiomeHolder;
+            final int bridgeMinY = minY, bridgeMaxY = levelMax;
+            lowerIslands.collectBridgeBlocks(x, z, centres, (wy, block) -> {
+                if (wy >= bridgeMinY && wy <= bridgeMaxY) {
+                    spans.add(new Span(wy, wy, block, bridgeBiomeName, bridgeBiomeHolder));
+                }
+            });
         }
 
         // ── 3. Layer 3 (Y 1000..1100) ────────────────────────────────────────
@@ -297,12 +297,39 @@ public final class AeroColumnModel {
 
                 int bodyTop = highIslands.getEllipsoidTopY(x, z, d);
                 int bodyBottom = highIslands.getEllipsoidBottomY(x, z, d);
+
+                // Кольца планеты лежат вне сферы ядра — семплим до отсечения колонок вне тела.
+                if (d.bodyType == BodyType.PLANET) {
+                    int[] ring = highIslands.getRingYRange(x, z, d);
+                    if (ring != null) {
+                        int rb = Math.max(ring[0], minY);
+                        int rt = Math.min(ring[1], levelMax);
+                        if (rt >= rb) {
+                            spans.add(new Span(rb, rt, HighIslandGenerator.BS_ASTEROID, islandBiomeName, islandBiomeHolder));
+                        }
+                    }
+                }
                 if (bodyTop < bodyBottom) continue; // колонка вне тела
 
-                int bY = Math.max(bodyBottom, minY);
-                int tY = Math.min(bodyTop, levelMax);
-                if (tY >= bY) {
-                    spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
+                // Метеорит полый: дно [bodyBottom..cavityBottom-1] и свод [cavityTop+1..bodyTop].
+                // ponytail: свод рисуется сплошным (Worley-отверстия свода не воспроизводятся на LOD);
+                // апгрейд — вынести предикат отверстия из HighIslandGenerator.fillMeteorite.
+                int cavityBottom = Integer.MAX_VALUE, cavityTop = Integer.MIN_VALUE;
+                if (d.bodyType == BodyType.METEORITE) {
+                    cavityBottom = highIslands.getMeteoriteCavityBottomY(x, z, d);
+                    cavityTop = highIslands.getMeteoriteCavityTopY(x, z, d);
+                }
+                if (cavityBottom <= cavityTop) {
+                    int fb = Math.max(bodyBottom, minY), ft = Math.min(cavityBottom - 1, levelMax);
+                    if (ft >= fb) spans.add(new Span(fb, ft, BS_STONE, islandBiomeName, islandBiomeHolder));
+                    int cb = Math.max(cavityTop + 1, minY), ct = Math.min(bodyTop, levelMax);
+                    if (ct >= cb) spans.add(new Span(cb, ct, BS_STONE, islandBiomeName, islandBiomeHolder));
+                } else {
+                    int bY = Math.max(bodyBottom, minY);
+                    int tY = Math.min(bodyTop, levelMax);
+                    if (tY >= bY) {
+                        spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
+                    }
                 }
                 // Структуры Layer 3 на LOD: End City на планетах (6.3).
                 // Город стоит в 9×9-силуэте по центру планеты — такие колонки
@@ -330,16 +357,26 @@ public final class AeroColumnModel {
                 IslandData d = upperIslands.getIslandData(ChunkKey.x(packed), ChunkKey.z(packed));
                 double dx = x - d.cx, dz = z - d.cz;
                 double reach = d.radius + LAYER4_NOISE_MARGIN;
-                if (dx * dx + dz * dz >= reach * reach) continue;
+                if (dx * dx + dz * dz < reach * reach) {
+                    int capTop = upperIslands.getCapTopY(x, z, d);
+                    int capBottom = upperIslands.getCapBottomY(x, z, d);
+                    int bY = Math.max(capBottom, minY);
+                    int tY = Math.min(capTop, levelMax);
+                    if (capTop >= capBottom && tY >= bY) { // иначе колонка вне купола
+                        spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
+                    }
+                }
 
-                int capTop = upperIslands.getCapTopY(x, z, d);
-                int capBottom = upperIslands.getCapBottomY(x, z, d);
-                if (capTop < capBottom) continue; // колонка вне купола
-
-                int bY = Math.max(capBottom, minY);
-                int tY = Math.min(capTop, levelMax);
-                if (tY >= bY) {
-                    spans.add(new Span(bY, tY, BS_STONE, islandBiomeName, islandBiomeHolder));
+                // Щупальца свисают из-под купола и выходят за его радиус.
+                List<int[]> tentacles = upperIslands.getTentacleYRanges(x, z, d);
+                if (tentacles != null) {
+                    for (int[] r : tentacles) {
+                        int tb = Math.max(r[0], minY);
+                        int tt = Math.min(r[1], levelMax);
+                        if (tt >= tb) {
+                            spans.add(new Span(tb, tt, BS_STONE, islandBiomeName, islandBiomeHolder));
+                        }
+                    }
                 }
             }
         }

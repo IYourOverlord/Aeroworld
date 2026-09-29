@@ -15,8 +15,8 @@ public record DhOverrideSettings(
 ) {
     public static final DhOverrideSettings DEFAULT = new DhOverrideSettings(
             true,
-            4,
-            5,
+            7,
+            6,
             6,
             30
     );

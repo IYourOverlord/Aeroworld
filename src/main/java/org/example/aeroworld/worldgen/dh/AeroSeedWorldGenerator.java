@@ -2,6 +2,7 @@ package org.example.aeroworld.worldgen.dh;
 
 import com.seibel.distanthorizons.api.enums.EDhApiDetailLevel;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGeneratorMode;
+import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiWorldGenerationStep;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiWorldGeneratorReturnType;
 import com.seibel.distanthorizons.api.interfaces.override.worldGenerator.IDhApiWorldGenerator;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
@@ -13,17 +14,16 @@ import org.example.aeroworld.worldgen.biome.AeroBiomeSource;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.column.AeroColumnModel;
 import org.example.aeroworld.worldgen.column.AeroColumnWriter;
+import org.example.aeroworld.worldgen.column.SliceVote;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
 import org.example.aeroworld.worldgen.layer.UpperIslandGenerator;
-import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
@@ -189,9 +189,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
      *       bottomYBlockPos/topYBlockPos должны прийти уже relative к minY, отсюда
      *       {@code columnWriter.toDataPoints(spans, minY, maxY, minY)}.</li>
      * </ul>
-     * Coarse-колонки (step > 1) не берут одну точку — голосование см. в {@link #buildDominantSpans}
-     * (там же зафиксирован актуальный ponytail этого пути: фиксированное число сэмплов, не
-     * адаптивное по detailLevel).
+     * Coarse-колонки (step > 1) не берут одну точку — слияние сэмплов по Y-срезам см. в
+     * {@link #buildDominantSpans}.
      */
     @Override
     public CompletableFuture<Void> generateLod(
@@ -214,6 +213,10 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
 
                 int width = pooledFullDataSource.getWidthInDataColumns();
                 int step = 1 << detailLevel;
+                // Листья (detail 0) DH считает готовыми только с FEATURES, грубые уровни — с SURFACE
+                // (GeneratedFullDataSourceProvider.getPositionsToRetrieve). Иначе лист запрашивается повторно.
+                EDhApiWorldGenerationStep genStep = detailLevel > 0
+                        ? EDhApiWorldGenerationStep.SURFACE : EDhApiWorldGenerationStep.FEATURES;
                 int baseBlockX = chunkPosMinX << 4;
                 int baseBlockZ = chunkPosMinZ << 4;
 
@@ -229,11 +232,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
 
                         List<AeroColumnModel.Span> spans;
                         if (step > 1) {
-                            // Coarse LOD: одна точка на блок 2^detailLevel — aliasing (узкая полоса
-                            // пляжа/бэдлендс-прожилка внутри джунглей/саванны красит весь блок LOD).
-                            // Число сэмплов растёт по мере приближения к игроку (несколько волн
-                            // детализации вместо одного скачка на первом же coarse-уровне) —
-                            // см. AeroFastDistantTerrain.subsamplesForDetailLevel.
+                            // Coarse LOD: сетка сэмплов (число растёт к игроку, см.
+                            // AeroFastDistantTerrain.subsamplesForDetailLevel) вместо одной точки.
                             int subsamples = AeroFastDistantTerrain.subsamplesForDetailLevel(detailLevel);
                             spans = buildDominantSpans(bx, bz, step, subsamples, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource);
                         } else {
@@ -248,7 +248,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                         }
 
                         List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, minY, maxY, minY);
-                        pooledFullDataSource.setApiDataPointColumn(relX, relZ, points);
+                        pooledFullDataSource.setApiDataPointColumn(relX, relZ, genStep, points);
                     }
                 }
 
@@ -263,110 +263,43 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
     }
 
     /**
-     * На coarse LOD один сэмпл-столбец на угол блока стороной {@code step} даёт aliasing:
-     * узкая полоса пляжа/бэдлендс-прожилка/структура внутри джунглей или саванны может
-     * случайно попасть именно в сэмплируемую точку — и весь блок LOD красится в чужой материал
-     * (репортится как "песок/бордовые блоки в густом лесу"). Вместо одной точки берём
-     * {@code subsamples × subsamples} сэмплов, равномерно раскиданных по площади колонки, и
-     * оставляем span-list того сэмпла, чей верхний блок — самый частый (majority vote по
-     * top-material). Полная вертикальная структура (пещеры, острова 2-4 слоёв) берётся целиком
-     * у сэмпла-победителя, а не усредняется по всем — усложнять дальше не нужно, цель именно
-     * убрать случайный шум поверхности, а не отрендерить точную геометрию на LOD, для которого
-     * и так весь смысл в приближении.
+     * Coarse-колонка стороной {@code step}: сетка {@code n×n} сэмплов по центрам равных долей колонки
+     * ({@code n = min(subsamples, step)}, иначе сэмплы вышли бы за колонку), затем колонки сливаются
+     * по Y-срезам через {@link SliceVote} (как в DH): твёрдое побеждает пустоту, среди твёрдых — большинство.
+     * Остров над лесом и суша больше не конкурируют за один «верхний блок».
      * <p>
-     * {@code subsamples} растёт на ближних coarse-уровнях и убывает на дальних
-     * (см. {@link AeroFastDistantTerrain#subsamplesForDetailLevel}) — это и есть промежуточная
-     * "волна" детализации между точным ближним LOD и максимально огрублённым дальним.
-     * <p>
-     * Голосование само по себе не отличает "честное" большинство (весь блок реально один материал)
-     * от системной ошибки на границе биомов (блок реально смешанный, но большинство всё равно
-     * у кого-то есть). Поэтому после подсчёта голосов проверяется доля победителя: если она ниже
-     * {@link #MIXED_AREA_VOTE_THRESHOLD}, блок считается смешанной территорией и та же сетка
-     * пересчитывается с удвоенным {@code subsamples} (эффективно subStep вдвое мельче) — тем же
-     * циклом выше, без отдельной сетки координат. Рекурсия останавливается либо когда
-     * {@code subStep <= 1} (дальше сэмплировать нечем — уже честный per-block уровень), либо по
-     * достижении {@link #MAX_MIXED_AREA_RECURSION_DEPTH} (жёсткий предохранитель от патового
-     * голосования, которое не сходится к чёткому большинству). Чистое решение "рекурсировать или
-     * нет" вынесено в {@link #shouldRefineForMixedArea} — его же покрывает self-check.
-     * <p>
-     * ponytail: цена перестаёт быть строго фиксированной subsamples² — на границе биомов дерево
-     * рекурсии может удвоить subsamples до {@link #MAX_MIXED_AREA_RECURSION_DEPTH} раз, то есть
-     * до (subsamples · 2^depth)² сэмплов на смешанную coarse-колонку; в глубине однородной
-     * территории (подавляющее большинство блоков) цена не меняется — там голосование сходится
-     * с первой попытки и порог отсекает рекурсию сразу. Апгрейд при необходимости: сэмплировать
-     * не строгую сетку, а случайный джиттер точек, если регулярная сетка когда-нибудь даст видимый
-     * муаровый паттерн на переходах между LOD-блоками.
+     * ponytail: {@code n²} вызовов buildSpans на колонку (36 на detail 1); потолок — стоимость coarse-секции.
+     * Апгрейд: брать сэмплы только там, где по соседям видна смена материала.
      */
-    private static final double MIXED_AREA_VOTE_THRESHOLD = 0.6;
-    private static final int MAX_MIXED_AREA_RECURSION_DEPTH = 3;
-
     public static List<AeroColumnModel.Span> buildDominantSpans(
             int bx, int bz, int step, int subsamples, int minY, int maxY,
             Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
             UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource) {
-        return buildDominantSpans(bx, bz, step, subsamples, minY, maxY,
-                l1Terrain, lower, high, upper, aeroBiomeSource, 0);
-    }
 
-    private static List<AeroColumnModel.Span> buildDominantSpans(
-            int bx, int bz, int step, int subsamples, int minY, int maxY,
-            Layer1TerrainGenerator l1Terrain, LowerIslandGenerator lower, HighIslandGenerator high,
-            UpperIslandGenerator upper, AeroBiomeSource aeroBiomeSource, int depth) {
-
-        // Сетка subsamples×subsamples, центрированная в каждой доле блока (offset = subStep/2),
-        // а не от левого-нижнего угла: без центрирования i,j∈{0..subsamples-1} дают координаты
-        // bx + {0, subStep, 2*subStep, ...}, не покрывая последнюю долю блока (до bx+step) —
-        // голосование систематически смещено к одному углу вместо репрезентации всей площади
-        // LOD-блока.
-        int subStep = Math.max(1, step / subsamples);
-        int sampleOffset = subStep / 2;
-        Map<BlockState, List<AeroColumnModel.Span>> spansByTopBlock = new HashMap<>(subsamples * subsamples);
-        Map<BlockState, Integer> votes = new HashMap<>(subsamples * subsamples);
-        BlockState winner = null;
-        int winnerVotes = -1;
-
-        for (int i = 0; i < subsamples; i++) {
-            int sx = bx + sampleOffset + i * subStep;
-            for (int j = 0; j < subsamples; j++) {
-                int sz = bz + sampleOffset + j * subStep;
-
+        int n = Math.max(1, Math.min(subsamples, step));
+        List<List<SliceVote.Seg<AeroColumnModel.Span>>> cols = new ArrayList<>(n * n);
+        for (int i = 0; i < n; i++) {
+            int sx = bx + ((2 * i + 1) * step) / (2 * n);
+            for (int j = 0; j < n; j++) {
+                int sz = bz + ((2 * j + 1) * step) / (2 * n);
                 List<AeroColumnModel.Span> spans = AeroColumnModel.buildSpans(
                         sx, sz, minY, maxY, l1Terrain, lower, high, upper, aeroBiomeSource, true, null);
-
-                BlockState top = spans.isEmpty()
-                        ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()
-                        : spans.get(spans.size() - 1).state();
-
-                spansByTopBlock.putIfAbsent(top, spans);
-                int count = votes.merge(top, 1, Integer::sum);
-                if (count > winnerVotes) {
-                    winnerVotes = count;
-                    winner = top;
+                List<SliceVote.Seg<AeroColumnModel.Span>> col = new ArrayList<>(spans.size());
+                for (AeroColumnModel.Span sp : spans) {
+                    col.add(new SliceVote.Seg<>(sp.bottomY(), sp.topY() + 1, sp));
                 }
+                cols.add(col);
             }
         }
 
-        if (shouldRefineForMixedArea(winnerVotes, subsamples * subsamples, subStep, depth)) {
-            return buildDominantSpans(bx, bz, step, subsamples * 2, minY, maxY,
-                    l1Terrain, lower, high, upper, aeroBiomeSource, depth + 1);
+        List<SliceVote.Seg<AeroColumnModel.Span>> voted =
+                SliceVote.vote(cols, AeroColumnModel.Span::state, sp -> sp.state().isAir());
+        List<AeroColumnModel.Span> out = new ArrayList<>(voted.size());
+        for (SliceVote.Seg<AeroColumnModel.Span> seg : voted) {
+            AeroColumnModel.Span sp = seg.value();
+            out.add(new AeroColumnModel.Span(seg.bottom(), seg.top() - 1, sp.state(), sp.biomeName(), sp.biomeHolder()));
         }
-        return spansByTopBlock.get(winner);
-    }
-
-    /**
-     * Чистое решение "эта территория смешанная — надо мельчить сетку ещё раз?", без зависимости
-     * на Minecraft/DH-типы — только числа, поэтому тестируется изолированно (см. self-check).
-     * {@code subStep} — шаг сетки ТЕКУЩЕЙ (уже прошедшей) попытки голосования.
-     */
-    static boolean shouldRefineForMixedArea(int winnerVotes, int totalVotes, int subStep, int depth) {
-        if (subStep <= 1) {
-            return false; // дальше сэмплировать нечем — уже честный per-block уровень
-        }
-        if (depth >= MAX_MIXED_AREA_RECURSION_DEPTH) {
-            return false; // жёсткий предохранитель: не гоняться за патовым 50/50 голосованием
-        }
-        double winnerFraction = (double) winnerVotes / totalVotes;
-        return winnerFraction < MIXED_AREA_VOTE_THRESHOLD;
+        return out;
     }
 
     @Override

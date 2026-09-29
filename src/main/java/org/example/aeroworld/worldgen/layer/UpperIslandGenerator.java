@@ -16,6 +16,7 @@ import org.example.aeroworld.worldgen.util.ChunkAccessWriter;
 import org.example.aeroworld.config.Layer4Settings;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -319,17 +320,75 @@ public class UpperIslandGenerator {
         return result;
     }
 
+    /** Центр и радиус сечения щупальца на доле длины {@code s} → {@code out = [centerX, centerZ, radius]}. */
+    private void tentacleCircle(double[] t, double s, double[] out) {
+        double rootX = t[0], rootZ = t[1];
+        double dirX = t[2], dirZ = t[3];
+        double baseR = t[5];
+        int spiralType = (int) t[6];
+        double spiralStrength = t[7];
+
+        double centerX = rootX + dirX * tentacleBend * s;
+        double centerZ = rootZ + dirZ * tentacleBend * s;
+
+        if (spiralType != SPIRAL_STRAIGHT) {
+            double spiralAngle = GOLDEN_ANGLE * s * spiralStrength * 4.0;
+            if (spiralType == SPIRAL_IN) spiralAngle = -spiralAngle;
+            double perpX = -dirZ;
+            double perpZ =  dirX;
+            centerX += perpX * Math.sin(spiralAngle) * tentacleBend * s;
+            centerZ += perpZ * Math.sin(spiralAngle) * tentacleBend * s;
+        }
+
+        out[0] = centerX;
+        out[1] = centerZ;
+        out[2] = baseR + (TENTACLE_TIP_R - baseR) * s;
+    }
+
+    /**
+     * LOD: Y-диапазоны {@code [min, max]} щупалец острова {@code d} в колонке (wx, wz), по одному на
+     * щупальце, или {@code null}. Те же формулы, что в {@link #fillTentaclesDirect}.
+     */
+    public List<int[]> getTentacleYRanges(int wx, int wz, IslandData d) {
+        int capBaseY = d.bottomY + d.height() / 3;
+        int floorY = Math.max(LAYER_MIN_Y - tentacleMaxLen, -64);
+        double[] circle = new double[3];
+        List<int[]> result = null;
+
+        for (double[] t : d.tentacleData) {
+            // Центр сечения не уходит от корня дальше 2·bend (спираль), плюс радиус у основания.
+            double reach = tentacleBend * 2.0 + t[5] + 1.0;
+            if (Math.abs(wx - t[0]) > reach || Math.abs(wz - t[1]) > reach) continue;
+
+            double length = t[4];
+            int endY = Math.max(floorY, (int) Math.floor(capBaseY - length));
+            int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
+            for (int wy = capBaseY - 1; wy >= endY; wy--) {
+                double s = (capBaseY - wy) / length;
+                if (s < 0 || s > 1.0) continue;
+                tentacleCircle(t, s, circle);
+                double dx = wx - circle[0], dz = wz - circle[1];
+                if (dx * dx + dz * dz <= circle[2] * circle[2]) {
+                    lo = Math.min(lo, wy);
+                    hi = Math.max(hi, wy);
+                }
+            }
+            if (lo <= hi) {
+                if (result == null) result = new ArrayList<>(2);
+                result.add(new int[]{lo, hi});
+            }
+        }
+        return result;
+    }
+
     private void fillTentaclesDirect(ChunkWriter chunk, int baseX, int baseZ,
                                      int capBaseY, int botY, double[][] tentacles) {
         int chunkMaxX = baseX + 15;
         int chunkMaxZ = baseZ + 15;
+        double[] circle = new double[3];
 
         for (double[] t : tentacles) {
-            double rootX          = t[0], rootZ          = t[1];
-            double dirX           = t[2], dirZ           = t[3];
-            double length         = t[4], baseR          = t[5];
-            int    spiralType     = (int) t[6];
-            double spiralStrength = t[7];
+            double length = t[4];
 
             int startY = capBaseY - 1;
             int endY   = Math.max(botY, (int) Math.floor(capBaseY - length));
@@ -338,19 +397,10 @@ public class UpperIslandGenerator {
                 double s = (capBaseY - wy) / length;
                 if (s < 0 || s > 1.0) continue;
 
-                double centerX = rootX + dirX * tentacleBend * s;
-                double centerZ = rootZ + dirZ * tentacleBend * s;
-
-                if (spiralType != SPIRAL_STRAIGHT) {
-                    double spiralAngle = GOLDEN_ANGLE * s * spiralStrength * 4.0;
-                    if (spiralType == SPIRAL_IN) spiralAngle = -spiralAngle;
-                    double perpX = -dirZ;
-                    double perpZ =  dirX;
-                    centerX += perpX * Math.sin(spiralAngle) * tentacleBend * s;
-                    centerZ += perpZ * Math.sin(spiralAngle) * tentacleBend * s;
-                }
-
-                double tentR = baseR + (TENTACLE_TIP_R - baseR) * s;
+                tentacleCircle(t, s, circle);
+                double centerX = circle[0];
+                double centerZ = circle[1];
+                double tentR = circle[2];
                 double tentRSq = tentR * tentR;
 
                 int minBx = (int) Math.floor(centerX - tentR);

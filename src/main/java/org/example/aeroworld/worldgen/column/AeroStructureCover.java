@@ -6,12 +6,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
-import org.example.aeroworld.worldgen.feature.vault.Layer2VaultTrialPlacer;
-import org.example.aeroworld.worldgen.feature.vault.VaultTrialSpawnTier;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
-import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
-import org.example.aeroworld.worldgen.layer.LowerIslandGeneratorAccess;
-import org.example.aeroworld.worldgen.noise.IslandPlacer;
 
 import javax.annotation.Nullable;
 
@@ -25,14 +20,12 @@ import javax.annotation.Nullable;
  * к StructureManager — только чистые предикаты от (seed, координаты).</p>
  *
  * <p><b>6.1. Оценка необходимости:</b> из всех структур AeroWorld видимость на
- * дальнем top-down LOD имеют только:</p>
+ * дальнем top-down LOD имеет только:</p>
  * <ul>
  *   <li><b>End City</b> (Layer 3) — стоит строго по центру каждой планеты
  *       {@link BodyType#PLANET} ({@code EndCityStructureMixin}) в открытом
  *       небе: башня высотой до 36 блоков над сферой — ключевой визуальный
  *       ориентир на дистанциях 32–128 чанков;</li>
- *   <li><b>Tank21</b> (Layer 2) — стоит по центру обычного (не архипелажного)
- *       острова тира RICH ({@code Layer2StructurePlacer}), габариты ~13×13×12.</li>
  * </ul>
  * <p>Ancient City, Nether Fortress и Bastion находятся под сплошным каменным
  * массивом Layer 1 и на top-down LOD не видны — оверлей для них не строится.
@@ -48,9 +41,7 @@ public final class AeroStructureCover {
         /** Структуры в чанке нет. */
         NONE,
         /** End City на планете Layer 3. */
-        END_CITY,
-        /** Tank21 на RICH-острове Layer 2. */
-        TANK21
+        END_CITY
     }
 
     // ── End City (Layer 3, планеты) ─────────────────────────────────────────
@@ -68,36 +59,19 @@ public final class AeroStructureCover {
     private static final BlockState BS_END_STONE_BRICKS = Blocks.END_STONE_BRICKS.defaultBlockState();
     private static final BlockState BS_PURPUR = Blocks.PURPUR_BLOCK.defaultBlockState();
 
-    // ── Tank21 (Layer 2, RICH-острова) ──────────────────────────────────────
-    /** Полуразмер корпуса танка по XZ (13×13 блоков — габарит NBT tank21). */
-    public static final int TANK21_RADIUS = 6;
-    /** Полуразмер центрального ядра (5×5 блоков, железо). */
-    public static final int TANK21_CORE_RADIUS = 2;
-    /** Высота корпуса над плоской вершиной острова (NBT ~12 блоков). */
-    public static final int TANK21_HEIGHT = 12;
-
-    private static final BlockState BS_IRON = Blocks.IRON_BLOCK.defaultBlockState();
-    private static final BlockState BS_GRAY_CONCRETE = Blocks.GRAY_CONCRETE.defaultBlockState();
-
     private AeroStructureCover() {}
 
     // ── 6.2. Легковесный детерминированный чекер ────────────────────────────
 
     /**
      * Детерминированно решает, есть ли в чанке (chunkX, chunkZ) структура,
-     * видимая на дальнем LOD. Полностью повторяет предикаты реального спавна:
-     * <ul>
-     *   <li>End City — центр острова Layer 3 лежит в чанке и тело имеет тип
-     *       {@link BodyType#PLANET} (тот же guard, что в {@code EndCityStructureMixin});</li>
-     *   <li>Tank21 — центр острова Layer 2 лежит в чанке, остров не является
-     *       архипелагом (центром или спутником) и тир вольтов — RICH
-     *       (тот же guard, что в {@code Layer2StructurePlacer}).</li>
-     * </ul>
+     * видимая на дальнем LOD. Повторяет предикат реального спавна: центр острова Layer 3
+     * лежит в чанке и тело имеет тип {@link BodyType#PLANET} (тот же guard, что в
+     * {@code EndCityStructureMixin}).
      * Не зависит от порядка генерации чанков; O(число центров в окрестности чанка).
      */
     public static Kind solve(int chunkX, int chunkZ,
-                             @Nullable HighIslandGenerator highIslands,
-                             @Nullable LowerIslandGenerator lowerIslands) {
+                             @Nullable HighIslandGenerator highIslands) {
         if (highIslands != null) {
             LongArrayList centres = highIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
             for (int i = 0; i < centres.size(); i++) {
@@ -110,35 +84,7 @@ public final class AeroStructureCover {
             }
         }
 
-        if (lowerIslands != null) {
-            LongArrayList centres = lowerIslands.getCachedIslandCentresForChunk(chunkX, chunkZ);
-            for (int i = 0; i < centres.size(); i++) {
-                long packed = centres.getLong(i);
-                int bx = ChunkKey.x(packed);
-                int bz = ChunkKey.z(packed);
-                if ((bx >> 4) != chunkX || (bz >> 4) != chunkZ) continue;
-                if (isTank21Island(lowerIslands, packed, bx, bz)) return Kind.TANK21;
-            }
-        }
-
         return Kind.NONE;
-    }
-
-    /**
-     * Предикат Tank21: не-архипелажный остров Layer 2 с тиром RICH.
-     * Используется и чекером {@link #solve}, и семплером {@link #sampleLayer2RichStructure}.
-     */
-    private static boolean isTank21Island(LowerIslandGenerator lowerIslands, long packed, int cx, int cz) {
-        IslandPlacer placer = lowerIslands.getPlacer();
-        // RICH недостижим для островов архипелага (центр/спутник) — отсекаем
-        // без вычисления тира, как в Layer2StructurePlacer.
-        if (placer.isArchipelagoCentre(packed)
-                || placer.findArchipelagoCentreFor(cx, cz, lowerIslands.getSearchRadius())
-                != IslandPlacer.NO_ISLAND) {
-            return false;
-        }
-        return Layer2VaultTrialPlacer.pickTierStatic(lowerIslands.worldSeed(), cx, cz)
-                == VaultTrialSpawnTier.RICH;
     }
 
     // ── 6.3. Колоночные шаблоны ─────────────────────────────────────────────
@@ -175,36 +121,5 @@ public final class AeroStructureCover {
                     startY + END_CITY_TOP_OFFSET, BS_PURPUR);
         }
         return new StructureColumn(startY, startY + END_CITY_BASE_HEIGHT - 1, BS_END_STONE_BRICKS);
-    }
-
-    /**
-     * Возвращает вертикальный шаблон Tank21 для колонки (x, z) на острове
-     * Layer 2 или {@code null}, если остров не RICH / архипелажный / колонка
-     * вне силуэта танка.
-     *
-     * <p>Геометрия (плоская вершина {@code d.topY}, как в реальной генерации):</p>
-     * <ul>
-     *   <li>ядро 5×5: {@code IRON_BLOCK}, [topY+1 .. topY+12];</li>
-     *   <li>корпус 13×13: {@code GRAY_CONCRETE}, [topY+7 .. topY+12].</li>
-     * </ul>
-     */
-    @Nullable
-    public static StructureColumn sampleLayer2RichStructure(
-            long worldSeed, int x, int z, @Nullable IslandData island, @Nullable LowerIslandGenerator lowerIslands) {
-        if (island == null || lowerIslands == null) return null;
-
-        int adx = Math.abs(x - island.cx);
-        int adz = Math.abs(z - island.cz);
-        if (adx > TANK21_RADIUS || adz > TANK21_RADIUS) return null;
-
-        if (!isTank21Island(lowerIslands, ChunkKey.of(island.cx, island.cz), island.cx, island.cz)) {
-            return null;
-        }
-
-        int baseY = island.topY + 1;
-        if (adx <= TANK21_CORE_RADIUS && adz <= TANK21_CORE_RADIUS) {
-            return new StructureColumn(baseY, island.topY + TANK21_HEIGHT, BS_IRON);
-        }
-        return new StructureColumn(island.topY + TANK21_HEIGHT / 2, island.topY + TANK21_HEIGHT, BS_GRAY_CONCRETE);
     }
 }

@@ -13,7 +13,7 @@ public class AeroFastDistantTerrain {
      * Глобальный runtime-переключатель упрощения геометрии для DH SeedGen,
      * управляемый командой {@code /aeroworld DHopt enable|disable}.
      * <p>
-     * {@code volatile}, а не final/per-instance: {@link org.example.aeroworld.worldgen.dh.AeroSeedWorldGenerator}
+     * {@code volatile}, а не final/per-instance: {@link AeroSeedWorldGenerator}
      * создаётся один раз при регистрации оверрайда ({@code DhApi.worldGenOverrides.registerWorldGeneratorOverride})
      * и живёт до перезапуска сервера — DH API не даёт способа пересоздать или отменить регистрацию оверрайда
      * (см. {@code IDhApiWorldGeneratorOverrideRegister}, там нет {@code unregister}). Поэтому переключение
@@ -31,8 +31,8 @@ public class AeroFastDistantTerrain {
     private final int layer4Threshold;
 
     public AeroFastDistantTerrain(DhOverrideSettings settings) {
-        this.layer2Threshold = settings != null ? settings.layer2DetailThreshold() : 4;
-        this.layer3Threshold = settings != null ? settings.layer3DetailThreshold() : 5;
+        this.layer2Threshold = settings != null ? settings.layer2DetailThreshold() : 7;
+        this.layer3Threshold = settings != null ? settings.layer3DetailThreshold() : 6;
         this.layer4Threshold = settings != null ? settings.layer4DetailThreshold() : 6;
     }
 

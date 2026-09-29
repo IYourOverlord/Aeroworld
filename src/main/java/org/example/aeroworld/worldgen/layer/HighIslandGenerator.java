@@ -85,7 +85,7 @@ public class HighIslandGenerator {
     private static final BlockState BS_TUFF           = Blocks.TUFF.defaultBlockState();
     private static final BlockState BS_CALCITE        = Blocks.CALCITE.defaultBlockState();
 
-    private static final BlockState BS_ASTEROID       = Blocks.COBBLED_DEEPSLATE.defaultBlockState();
+    public static final BlockState BS_ASTEROID       = Blocks.COBBLED_DEEPSLATE.defaultBlockState();
 
     private static final AtomicLong holeWarnCount = new AtomicLong(0);
 
@@ -503,6 +503,24 @@ public class HighIslandGenerator {
      * списка астероидов и без хранения состояния.
      */
     private void fillRingColumn(ChunkWriter chunk, IslandData d, int wx, int wz, double dist, int cy) {
+        scanRingColumn(chunk, null, d, wx, wz, dist, cy);
+    }
+
+    /**
+     * LOD: Y-диапазон {@code [min, max]} астероидов колец в колонке (wx, wz) или {@code null}.
+     * Тот же расчёт, что и при генерации чанка ({@link #scanRingColumn}).
+     */
+    public int[] getRingYRange(int wx, int wz, IslandData d) {
+        if (d.ringRadii == null) return null;
+        double dist = Math.sqrt((double) (wx - d.cx) * (wx - d.cx) + (double) (wz - d.cz) * (wz - d.cz));
+        if (dist < d.ringRadii[0] || dist > d.ringRadii[5]) return null;
+        int[] range = {Integer.MAX_VALUE, Integer.MIN_VALUE};
+        scanRingColumn(null, range, d, wx, wz, dist, d.centerY());
+        return range[0] > range[1] ? null : range;
+    }
+
+    /** Ставит блоки в {@code chunk} (если не null) и/или расширяет {@code range} (если не null). */
+    private void scanRingColumn(ChunkWriter chunk, int[] range, IslandData d, int wx, int wz, double dist, int cy) {
         // Определяем, в каком именно кольце лежит dist (с зазорами Кассини между ними).
         boolean inRing1 = dist >= d.ringRadii[0] && dist <= d.ringRadii[1];
         boolean inRing2 = dist >= d.ringRadii[2] && dist <= d.ringRadii[3];
@@ -552,7 +570,11 @@ public class HighIslandGenerator {
                 for (int wy = ay - 1; wy <= ay + 1; wy++) {
                     double ddy = wy - ay;
                     if (ddx * ddx + ddy * ddy + ddz * ddz <= maxDist * maxDist) {
-                        chunk.setBlockState(wx, wy, wz, BS_ASTEROID);
+                        if (chunk != null) chunk.setBlockState(wx, wy, wz, BS_ASTEROID);
+                        if (range != null) {
+                            range[0] = Math.min(range[0], wy);
+                            range[1] = Math.max(range[1], wy);
+                        }
                     }
                 }
             }

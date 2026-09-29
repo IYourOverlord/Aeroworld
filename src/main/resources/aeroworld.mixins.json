@@ -6,7 +6,6 @@
   "plugin": "org.example.aeroworld.mixin.dh.DhWorldGenBorderMixinPlugin",
   "mixins": [
     "BatchGenerationEnvironmentNeoforgeMixin",
-    "LodDataBuilderApplyToParentMixin",
     "LodRenderSectionAdjDiagMixin",
     "TranslucentAdjWallMixin",
     "RetrievalQueueLimitMixin",

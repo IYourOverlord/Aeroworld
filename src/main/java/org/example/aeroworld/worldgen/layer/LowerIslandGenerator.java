@@ -812,7 +812,31 @@ public class LowerIslandGenerator implements LowerIslandGeneratorAccess {
         pairs.add(new BridgePair(src, other, Math.min(src.topY, other.topY) - 1, amethyst));
     }
 
+    /** Приёмник блоков моста: Y и материал. */
+    @FunctionalInterface
+    public interface BridgeBlockSink {
+        void accept(int wy, BlockState block);
+    }
+
     private void fillBridges(ChunkWriter chunk, int wx, int wz, List<BridgePair> pairs) {
+        forEachBridgeBlock(wx, wz, pairs, (wy, block) -> {
+            if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, block);
+        });
+    }
+
+    /**
+     * LOD: блоки мостов в колонке (wx, wz) для островов чанка {@code centres} — тот же расчёт,
+     * что и в {@link #fillBridges}, поэтому LOD и реальный чанк совпадают.
+     */
+    public void collectBridgeBlocks(int wx, int wz, LongArrayList centres, BridgeBlockSink sink) {
+        for (int i = 0; i < centres.size(); i++) {
+            long packed = centres.getLong(i);
+            List<BridgePair> pairs = getBridgesForIsland(getIslandData(ChunkKey.x(packed), ChunkKey.z(packed)));
+            if (!pairs.isEmpty()) forEachBridgeBlock(wx, wz, pairs, sink);
+        }
+    }
+
+    private void forEachBridgeBlock(int wx, int wz, List<BridgePair> pairs, BridgeBlockSink sink) {
         for (BridgePair bp : pairs) {
 
             double t = projectPointOntoSegment(wx, wz, bp.src().cx, bp.src().cz, bp.other().cx, bp.other().cz);
@@ -857,7 +881,7 @@ public class LowerIslandGenerator implements LowerIslandGeneratorAccess {
                 } else {
                     bridgeBlock = (dy <= 0) ? BS_OAK_LOG : BS_MANGROVE;
                 }
-                if (chunk.getBlockState(wx, wy, wz).isAir()) chunk.setBlockState(wx, wy, wz, bridgeBlock);
+                sink.accept(wy, bridgeBlock);
             }
         }
     }

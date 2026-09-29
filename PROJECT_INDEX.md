@@ -60,7 +60,6 @@ org.example.aeroworld
 │   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча (таргет DH 3.3.x: DhChunkGenerator_neoforge.generateChunks)
 │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
-│   │   ├── LodDataBuilderApplyToParentMixin.java        - выставление applyToParent = TRUE в createFromApiChunkData для построения грубых уровней LOD
 │   │   ├── LodRenderSectionAdjDiagMixin.java            - диагностика швов на границах секций LOD (getRenderSourceForPos), счётчик пустых соседей
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
@@ -234,7 +233,7 @@ worldgen/
 ## 8. Расхождения и статус кодовой базы (2026-09-22)
 
 ### Добавленные и актуализированные компоненты:
-1. Пакет `org.example.aeroworld.mixin.dh`: 10 файлов интеграции, диагностики и тюнинга Distant Horizons (включая `LodDataBuilderApplyToParentMixin`, `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`). Удалены устаревшие/неиспользуемые `LodQuadTreeAccessor` и `ReloadCoalesceMixin`.
+1. Пакет `org.example.aeroworld.mixin.dh`: 9 файлов интеграции, диагностики и тюнинга Distant Horizons (включая `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`). Удалены устаревшие/неиспользуемые `LodQuadTreeAccessor` и `ReloadCoalesceMixin`.
 2. Пакет `org.example.aeroworld.mixin.structure`: миксины End City и Nether Fortress для корректного позиционирования в слоях AeroWorld.
 3. Пакет `org.example.aeroworld.worldgen.column`: `AeroColumnModel` (единое аналитическое ядро) и `AeroColumnWriter` (конвертер span -> DH).
 4. Пакет `org.example.aeroworld.worldgen.dh`: `AeroSeedWorldGenerator`, `AeroSeedWorldGenBinding`, `AeroThroughputLimits`, `AeroFastDistantTerrain`, `AeroSeedGenValidation`.
@@ -262,7 +261,7 @@ worldgen/
   грубые родительские уровни, которые рендер использует для дальних блоков. API-путь SeedGen
   (`LodDataBuilder.createFromApiChunkData`) этот флаг НЕ ставит -> иерархия грубых LOD не строится:
   в БД у всех источников `ApplyToParent=0`, грубая пирамида обрывается на detail 8, выше ничего нет.
-- Фикс: новый миксин `LodDataBuilderApplyToParentMixin` в `createFromApiChunkData` выставляет
+- Фикс (миксин `LodDataBuilderApplyToParentMixin` позже удалён: в DH 3.3.2 `WorldGenerationQueue` сам ставит `applyToParent`): миксин в `createFromApiChunkData` выставляет
   `applyToParent = TRUE` на возвращаемый источник (зеркально vanilla `createFromChunk`).
   `FullDataSourceV2.updateFromDataSource()` прокидывает флаг в агрегированный источник
   (guard detail < 15), и грубые LOD-уровни строятся.
@@ -277,8 +276,7 @@ worldgen/
 - `SchedulerPriorityMixin` и `ExecutorNameAccessor` удалены: компаратор в `PriorityTaskPicker` теперь двухаргументный
   (сначала priority, затем runtime), а DH сам создаёт `Render Loader` с priority 6 против 5 у `World Gen`.
 - Без изменений (сверены по байткоду 3.3.1): `GeneratorBusyMixin`, `WorldGenSpeedGateMixin`, `SaveDelayMixin`,
-  `SqliteTuningMixin`, `LodDataBuilderApplyToParentMixin` (API-путь `createFromApiChunkData` по-прежнему не ставит
-  `applyToParent`), `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`, вся API-часть SeedGen.
+  `SqliteTuningMixin`, `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`, вся API-часть SeedGen.
 - В `libs/` должен лежать только один `DistantHorizons-*.jar` (3.3.1), старый 3.2.0-b удалить.
 
 ### Мёртвый код и известные ограничения:
