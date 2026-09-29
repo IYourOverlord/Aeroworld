@@ -15,6 +15,15 @@ public class AeroThroughputLimits {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AeroThroughputLimits.class);
 
+    /** Радиус реальной генерации R в блоках (0 = гибрид выключен или конфиг ещё не загружен). */
+    public static int realRadiusBlocks() {
+        try {
+            return AeroWorldConfig.DH_REAL_CHUNK_RADIUS.get() << 4;
+        } catch (IllegalStateException | NullPointerException e) {
+            return 0;
+        }
+    }
+
     /** Количество вертикальных 16-блоковых секций в высоте мира AeroWorld (-64..2031 = 2096 блоков = 131 секция). */
     public static final int SECTIONS_PER_CHUNK = 131;
 
