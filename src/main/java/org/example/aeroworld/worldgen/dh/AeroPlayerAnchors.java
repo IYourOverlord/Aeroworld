@@ -28,6 +28,18 @@ public final class AeroPlayerAnchors {
         SNAPSHOT.put(level.dimension().location().toString(), n == packed.length ? packed : java.util.Arrays.copyOf(packed, n));
     }
 
+    /** Chebyshev-расстояние до ближайшего игрока в {@code dim} или -1, если игроков нет. */
+    public static int nearestChebyshev(String dim, int blockX, int blockZ) {
+        long[] players = SNAPSHOT.get(dim);
+        if (players == null || players.length == 0) return -1;
+        int best = Integer.MAX_VALUE;
+        for (long p : players) {
+            int px = (int) (p >> 32), pz = (int) p;
+            best = Math.min(best, Math.max(Math.abs(px - blockX), Math.abs(pz - blockZ)));
+        }
+        return best;
+    }
+
     /** Есть ли игрок в измерении {@code dim} на расстоянии (Chebyshev) не более {@code radiusBlocks} от точки. */
     public static boolean isWithin(String dim, int blockX, int blockZ, int radiusBlocks) {
         long[] players = SNAPSHOT.get(dim);

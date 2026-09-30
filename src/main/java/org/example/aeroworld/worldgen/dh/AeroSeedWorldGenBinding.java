@@ -27,6 +27,11 @@ public class AeroSeedWorldGenBinding extends DhApiLevelLoadEvent {
      * Проверяет наличие классов DH API на classpath; если DH не установлен — тихо пропускает.
      */
     public static void registerIfDhPresent() {
+        // -Daeroworld.dhOff=true: не подписываемся на DH и не подменяем генератор (см. также DhWorldGenBorderMixinPlugin).
+        if (Boolean.getBoolean("aeroworld.dhOff")) {
+            LOGGER.info("[AeroWorld] -Daeroworld.dhOff=true: DH override and DH mixins are disabled.");
+            return;
+        }
         try {
             Class.forName("com.seibel.distanthorizons.api.DhApi");
             bindDhEvents();

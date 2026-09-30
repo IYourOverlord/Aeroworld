@@ -48,6 +48,9 @@ neoForge {
             client()
 
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // Граница региона реального chunk-gen DH по умолчанию 0; для сравнения: systemProperty 'aeroworld.dhBorder', '4'
+            // Выключает ВСЕ DH-миксины и подмену генератора Aeroworld (для запуска рядом с SeedGen). Закомментировать = вернуть.
+            // systemProperty 'aeroworld.dhOff', 'true'
         }
 
         server {

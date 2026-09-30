@@ -62,13 +62,8 @@ import java.util.Iterator;
 @Mixin(targets = "com.seibel.distanthorizons.common.wrappers.worldGeneration.DhChunkGenerator_neoforge", remap = false)
 public abstract class BatchGenerationEnvironmentNeoforgeMixin
 {
-	/**
-	 * Должно совпадать со значением, которое возвращает
-	 * {@link #aeroworld$overrideWorldGenBorder()} ниже — оба редиректа
-	 * обязаны использовать один и тот же border, иначе geometry региона
-	 * (refSize) и заполнение карты чанков снова разойдутся.
-	 */
-	private static final int AEROWORLD_WORLD_GEN_BORDER = 4;
+	// Border общий для трёх редиректов ниже: AeroThroughputLimits.WORLD_GEN_BORDER (-Daeroworld.dhBorder, по умолчанию 0).
+	// Значения должны совпадать, иначе геометрия региона (refSize) и заполнение карты чанков снова разойдутся.
 
 	@Redirect(
 			method = "generateChunks",
@@ -83,7 +78,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 	{
 		// Минимально достаточное значение, чтобы piece'ы структур на
 		// соседних чанках попадали в DhLitWorldGenRegion.
-		return AEROWORLD_WORLD_GEN_BORDER;
+		return org.example.aeroworld.worldgen.dh.AeroThroughputLimits.WORLD_GEN_BORDER;
 	}
 
 	/**
@@ -105,7 +100,7 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 			int genMinX, int genMinZ, int width, int extraRadius)
 	{
 		return com.seibel.distanthorizons.common.wrappers.worldGeneration.ChunkPosGenStream_neoforge
-				.getIterator(genMinX, genMinZ, width, extraRadius + AEROWORLD_WORLD_GEN_BORDER);
+				.getIterator(genMinX, genMinZ, width, extraRadius + org.example.aeroworld.worldgen.dh.AeroThroughputLimits.WORLD_GEN_BORDER);
 	}
 
 	/**
@@ -126,6 +121,6 @@ public abstract class BatchGenerationEnvironmentNeoforgeMixin
 			int genMinX, int genMinZ, int width, int extraRadius)
 	{
 		return com.seibel.distanthorizons.common.wrappers.worldGeneration.ChunkPosGenStream_neoforge
-				.getIterator(genMinX, genMinZ, width, extraRadius + AEROWORLD_WORLD_GEN_BORDER);
+				.getIterator(genMinX, genMinZ, width, extraRadius + org.example.aeroworld.worldgen.dh.AeroThroughputLimits.WORLD_GEN_BORDER);
 	}
 }

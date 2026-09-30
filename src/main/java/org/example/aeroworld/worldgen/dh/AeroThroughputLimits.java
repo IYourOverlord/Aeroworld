@@ -27,6 +27,13 @@ public class AeroThroughputLimits {
     /** Количество вертикальных 16-блоковых секций в высоте мира AeroWorld (-64..2031 = 2096 блоков = 131 секция). */
     public static final int SECTIONS_PER_CHUNK = 131;
 
+    /**
+     * Граница региона реального chunk-gen DH (BatchGenerationEnvironmentNeoforgeMixin). По умолчанию 0 (замер этапа 0: в ~4 раза быстрее, без ошибок; было 4);
+     * {@code -Daeroworld.dhBorder=N} (0..8) — для A/B-замера этапа 0. Читается один раз при загрузке класса, чтобы все
+     * три редиректа миксина видели одно значение. Без границы возможны отказы вида «нет ключа в fallbackChunkGetterFunc».
+     */
+    public static final int WORLD_GEN_BORDER = Math.max(0, Math.min(8, Integer.getInteger("aeroworld.dhBorder", 0)));
+
     public static final int QUEUE_SCALE = 4;
     public static final int IN_FLIGHT_SCALE = 4;
     public static final int RENDER_YIELD_QUEUE = 200;

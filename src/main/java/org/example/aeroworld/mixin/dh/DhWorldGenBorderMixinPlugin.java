@@ -45,7 +45,8 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 		{
 			present = false;
 		}
-		this.distantHorizonsPresent = present;
+		// -Daeroworld.dhOff=true: все DH-миксины Aeroworld не применяются (чтобы запустить рядом другой мод на DH, например SeedGen).
+		this.distantHorizonsPresent = present && !Boolean.getBoolean("aeroworld.dhOff");
 	}
 
 	@Override
