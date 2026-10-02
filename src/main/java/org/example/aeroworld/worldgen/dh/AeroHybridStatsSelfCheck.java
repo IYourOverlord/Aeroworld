@@ -11,16 +11,17 @@ import org.example.aeroworld.worldgen.dh.AeroHybridStats.Branch;
 public final class AeroHybridStatsSelfCheck {
 
     public static void main(String[] args) {
-        assert AeroHybridStats.key(0, 1, 2) != AeroHybridStats.key(1, 1, 2);
-        assert AeroHybridStats.key(0, -1, 2) != AeroHybridStats.key(0, 1, 2);
-        assert AeroHybridStats.key(0, 1, -2) != AeroHybridStats.key(0, 1, 2);
+        assert AeroHybridStats.key(0, 0, 1, 2) != AeroHybridStats.key(0, 1, 1, 2);
+        assert AeroHybridStats.key(0, 0, -1, 2) != AeroHybridStats.key(0, 0, 1, 2);
+        assert AeroHybridStats.key(0, 0, 1, -2) != AeroHybridStats.key(0, 0, 1, 2);
+        assert AeroHybridStats.key(1, 0, 1, 2) != AeroHybridStats.key(0, 0, 1, 2); // измерение входит в ключ
 
-        AeroHybridStats.onSection(0, -5, 7, Branch.PHASE1);       // первый ответ
-        AeroHybridStats.onSection(0, -5, 7, Branch.PHASE2_REAL);  // штатный переход
-        AeroHybridStats.onSection(0, -5, 7, Branch.PHASE2_REAL);  // спин после реальных чанков
-        AeroHybridStats.onSection(0, 9, 9, Branch.OUTSIDE_FEATURES);
-        AeroHybridStats.onSection(0, 9, 9, Branch.OUTSIDE_FEATURES); // спин после FEATURES
-        AeroHybridStats.onSection(3, -5, 7, Branch.COARSE);       // другой detail — не повтор
+        AeroHybridStats.onSection(0, 0, -5, 7, Branch.PHASE1);       // первый ответ
+        AeroHybridStats.onSection(0, 0, -5, 7, Branch.PHASE2_REAL);  // штатный переход
+        AeroHybridStats.onSection(0, 0, -5, 7, Branch.PHASE2_REAL);  // спин после реальных чанков
+        AeroHybridStats.onSection(0, 0, 9, 9, Branch.OUTSIDE_FEATURES);
+        AeroHybridStats.onSection(0, 0, 9, 9, Branch.OUTSIDE_FEATURES); // спин после FEATURES
+        AeroHybridStats.onSection(0, 3, -5, 7, Branch.COARSE);       // другой detail — не повтор
 
         assert AeroHybridStats.firstCount(Branch.PHASE1) == 1 && AeroHybridStats.firstCount(Branch.COARSE) == 1;
         assert AeroHybridStats.repeatCount(Branch.PHASE1, Branch.PHASE2_REAL) == 1;
@@ -29,14 +30,21 @@ public final class AeroHybridStatsSelfCheck {
         assert AeroHybridStats.repeatCount(Branch.COARSE, Branch.COARSE) == 0;
 
         // застрявшие листья: PHASE1 без повтора считается ожидающим, любой следующий ответ снимает его
-        AeroHybridStats.onSection(0, -3, 4, Branch.PHASE1);
-        AeroHybridStats.onSection(0, 6, -2, Branch.PHASE1);
-        AeroHybridStats.onSection(0, 6, -2, Branch.PHASE2_REAL);
+        AeroHybridStats.onSection(0, 0, -3, 4, Branch.PHASE1);
+        AeroHybridStats.onSection(0, 0, 6, -2, Branch.PHASE1);
+        AeroHybridStats.onSection(0, 0, 6, -2, Branch.PHASE2_REAL);
         assert AeroHybridStats.phase1Waiting() == 1;                                   // остался только (-3,4)
         assert AeroHybridStats.stuckCount(System.currentTimeMillis()) == 0;            // ещё не «старый»
         assert AeroHybridStats.stuckCount(System.currentTimeMillis() + 61_000L) == 1;  // через минуту застрял
-        assert AeroHybridStats.decodeCoord(AeroHybridStats.key(0, -3, 4) >> 29) == -3 && AeroHybridStats.decodeCoord(AeroHybridStats.key(0, -3, 4)) == 4;
-        assert AeroHybridStats.decodeCoord(AeroHybridStats.key(0, 7, -9)) == -9;
+        assert AeroHybridStats.decodeCoord(AeroHybridStats.key(0, 0, -3, 4) >> 28) == -3 && AeroHybridStats.decodeCoord(AeroHybridStats.key(0, 0, -3, 4)) == 4;
+        assert AeroHybridStats.decodeCoord(AeroHybridStats.key(0, 0, 7, -9)) == -9;
+        assert AeroHybridStats.dimIndex("a") == AeroHybridStats.dimIndex("a") && AeroHybridStats.dimIndex("a") != AeroHybridStats.dimIndex("b");
+        AeroHybridStats.onSection(AeroHybridStats.dimIndex("b"), 0, -3, 4, Branch.PHASE1); // то же место в другом измерении — отдельная запись
+        assert AeroHybridStats.phase1Waiting() == 2;
+
+        AeroHybridStats.onRegenTry();
+        AeroHybridStats.onRegenGate(AeroHybridStats.RegenGate.COARSE_WAITING);
+        AeroHybridStats.onCanQueue(AeroHybridStats.QueueGate.QUEUE_FULL, 1280, 1280);
 
         CompletableFuture<Void> f = new CompletableFuture<>();
         assert AeroHybridStats.timeReal(f) == f;

@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -32,6 +33,12 @@ public class AeroThroughputLimits {
      * {@code -Daeroworld.dhBorder=N} (0..8) — для A/B-замера этапа 0. Читается один раз при загрузке класса, чтобы все
      * три редиректа миксина видели одно значение. Без границы возможны отказы вида «нет ключа в fallbackChunkGetterFunc».
      */
+    /**
+     * {@code -Daeroworld.dhTwoPhase=true} — вернуть двухфазный режим (аналитика SURFACE, затем реальные чанки через регенерацию DH).
+     * По умолчанию однофазный: по логам этапа 0 регенерация голодает, пока очередь забита листьями вне R (38% листьев R не дошли до фазы 2).
+     */
+    public static final boolean TWO_PHASE = Boolean.getBoolean("aeroworld.dhTwoPhase");
+
     public static final int WORLD_GEN_BORDER = Math.max(0, Math.min(8, Integer.getInteger("aeroworld.dhBorder", 0)));
 
     public static final int QUEUE_SCALE = 4;
@@ -55,6 +62,27 @@ public class AeroThroughputLimits {
     private final AtomicLong windowChunksGenerated = new AtomicLong(0);
 
     private volatile long windowStartTime = System.currentTimeMillis();
+
+    // Реальные листья (делегат DH chunk-gen) не входят в chunks выше: считаем их отдельно, чтобы в логе было видно,
+    // чем заняты слоты, когда аналитика молчит. Учёт на генератор (измерение), как и основной отчёт.
+    private final AtomicInteger realInFlight = new AtomicInteger();
+    private final AtomicLong totalRealDone = new AtomicLong();
+    private final AtomicLong windowRealDone = new AtomicLong();
+    private final AtomicLong windowRealNs = new AtomicLong();
+
+    /** Оборачивает фьючу реального листа (то же значение возвращается DH); время включает ожидание в пуле. */
+    public CompletableFuture<Void> trackRealLeaf(CompletableFuture<Void> future) {
+        long t0 = System.nanoTime();
+        realInFlight.incrementAndGet();
+        future.whenComplete((v, err) -> {
+            realInFlight.decrementAndGet();
+            totalRealDone.incrementAndGet();
+            windowRealDone.incrementAndGet();
+            windowRealNs.addAndGet(System.nanoTime() - t0);
+            checkReport(); // иначе в окне без аналитики строка не появилась бы
+        });
+        return future;
+    }
 
     public void recordChunksGenerated(int chunks) {
         totalChunksGenerated.addAndGet(chunks);
@@ -85,12 +113,18 @@ public class AeroThroughputLimits {
                     double sectionsPerSec = elapsedSec > 0 ? (sections / elapsedSec) : 0.0;
                     double chunksPerSec = elapsedSec > 0 ? (chunks / elapsedSec) : 0.0;
 
-                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {}",
+                    long realDone = windowRealDone.getAndSet(0);
+                    long realNs = windowRealNs.getAndSet(0);
+                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {} | real leaves: {} done ({}/s, avg {} ms), inFlight={}, total={}",
                             chunks,
                             String.format(java.util.Locale.ROOT, "%.1f", chunksPerSec),
                             String.format(java.util.Locale.ROOT, "%.1f", sectionsPerSec),
                             String.format(java.util.Locale.ROOT, "%.1f", elapsedSec),
-                            totalChunksGenerated.get());
+                            totalChunksGenerated.get(),
+                            realDone,
+                            String.format(java.util.Locale.ROOT, "%.1f", elapsedSec > 0 ? realDone / elapsedSec : 0.0),
+                            realDone == 0 ? 0 : realNs / 1_000_000L / realDone,
+                            realInFlight.get(), totalRealDone.get());
                 }
             }
         }

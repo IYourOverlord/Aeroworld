@@ -78,17 +78,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         this.leafLedger = ledger;
         LOGGER.info("[AeroWorld DH] Real-chunk region border = {} (-Daeroworld.dhBorder, default 0), real radius = {} chunks",
                 AeroThroughputLimits.WORLD_GEN_BORDER, AeroWorldConfig.DH_REAL_CHUNK_RADIUS.get());
-        // ponytail: проба статическая, при нескольких измерениях с генератором побеждает последнее созданное; хватает для диагностики.
-        AeroHybridStats.stuckProbe = (x, z) -> {
-            int cx = x * 64 + 32, cz = z * 64 + 32;
-            long pos = com.seibel.distanthorizons.core.pos.DhSectionPos.encode(
-                    com.seibel.distanthorizons.core.pos.DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL, x, z);
-            return "block(" + cx + "," + cz + ") distToPlayer=" + AeroPlayerAnchors.nearestChebyshev(dimension, cx, cz)
-                    + " R=" + (AeroWorldConfig.DH_REAL_CHUNK_RADIUS.get() << 4)
-                    + " inLedger=" + leafLedger.contains(AeroLeafLedger.key(x, z))
-                    + " cacheSaysComplete=" + AeroCompleteSectionCache.isConfirmedComplete(pos,
-                    com.seibel.distanthorizons.core.pos.DhSectionPos.SECTION_BLOCK_DETAIL_LEVEL);
-        };
+        LOGGER.info("[AeroWorld DH] Real-chunk mode for {}: {} (-Daeroworld.dhTwoPhase, default false)",
+                dimension, AeroThroughputLimits.TWO_PHASE ? "two-phase (analytic SURFACE, then DH regeneration)" : "single-phase (real chunks on first request)");
         this.columnWriter = new AeroColumnWriter(levelWrapper);
         this.throughputLimits = new AeroThroughputLimits();
         this.fastTerrain = new AeroFastDistantTerrain(generator.getSettings().dhOverride());
@@ -250,27 +241,28 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
             hybridLeaf = radiusBlocks > 0
                     && AeroPlayerAnchors.isWithin(dimension, (chunkPosMinX << 4) + 32, (chunkPosMinZ << 4) + 32, radiusBlocks + 32);
         }
-        boolean realUnavailable = false;
+        if (hybridLeaf && !AeroThroughputLimits.TWO_PHASE) {
+            // Однофазный режим: реальные чанки сразу при первом запросе листа. Порядок задаёт очередь DH (ближние первыми),
+            // путь регенерации DH не нужен: он голодает, пока очередь забита листьями вне R (измерения этапа 0).
+            DhWorldGenerator real = realGenerator();
+            if (real != null) {
+                return throughputLimits.trackRealLeaf(real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
+                        pooledFullDataSource, mode, executor, resultConsumer));
+            }
+            hybridLeaf = false; // DH-уровень ещё недоступен: отдаём FEATURES аналитикой
+        }
         if (hybridLeaf && leafLedger.contains(leafKey)) {
             DhWorldGenerator real = realGenerator();
             if (real != null) {
-                AeroHybridStats.onSection(detailLevel, lodPosX, lodPosZ, AeroHybridStats.Branch.PHASE2_REAL);
-                return AeroHybridStats.timeReal(real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
+                return throughputLimits.trackRealLeaf(real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
                         pooledFullDataSource, mode, executor, resultConsumer));
             }
             hybridLeaf = false; // DH-уровень ещё недоступен: не крутим перезапросы, отдаём FEATURES
-            realUnavailable = true;
         }
         final boolean phaseOne = hybridLeaf;
-        AeroHybridStats.onSection(detailLevel, lodPosX, lodPosZ,
-                detailLevel > 0 ? AeroHybridStats.Branch.COARSE
-                        : phaseOne ? AeroHybridStats.Branch.PHASE1
-                        : realUnavailable ? AeroHybridStats.Branch.REAL_UNAVAILABLE
-                        : AeroHybridStats.Branch.OUTSIDE_FEATURES);
 
         return CompletableFuture.runAsync(() -> {
             try {
-                long statsStartNs = System.nanoTime();
                 int minY = generator.getMinY();
                 int maxY = minY + WORLD_HEIGHT - 1;
 
@@ -326,7 +318,6 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 if (phaseOne) leafLedger.add(leafKey); // после отдачи данных: сбой выше не загонит лист в фазу 2 вхолостую
                 int footprintChunks = (width * step) >> 4;
                 throughputLimits.recordChunksGenerated(footprintChunks * footprintChunks);
-                AeroHybridStats.onAnalytic(detailLevel, System.nanoTime() - statsStartNs);
             } catch (Throwable t) {
                 LOGGER.error("Failed to generate DH LOD data at chunk ({}, {}), detailLevel {}:",
                         chunkPosMinX, chunkPosMinZ, detailLevel, t);

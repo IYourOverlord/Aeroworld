@@ -53,7 +53,7 @@ public class AeroWorldConfig {
                 .define("completeSectionCacheEnabled", true);
         DH_COMPLETE_SECTION_CACHE_SIZE = BUILDER
                 .comment("Maximum number of confirmed fully-generated section positions retained in the complete-section cache")
-                .defineInRange("completeSectionCacheSize", 4096, 128, 65536);
+                .defineInRange("completeSectionCacheSize", 65536, 128, 262144);
         DH_EXTENDED_RENDER_DISTANCE_ENABLED = BUILDER
                 .comment("Programmatically push DH chunk render distance beyond the vanilla UI slider limit on level load")
                 .define("extendedRenderDistanceEnabled", false);

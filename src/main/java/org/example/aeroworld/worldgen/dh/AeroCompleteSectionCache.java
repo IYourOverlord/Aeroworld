@@ -33,7 +33,7 @@ import java.util.concurrent.locks.StampedLock;
 public final class AeroCompleteSectionCache {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("AeroWorld/CompleteSectionCache");
-    public static final int DEFAULT_MAX_SIZE = 4096;
+    public static final int DEFAULT_MAX_SIZE = 65536;
     private static final byte NO_ENTRY = -1;
 
     // Значение = generatorDetailLevel, на котором позиция была подтверждена полностью

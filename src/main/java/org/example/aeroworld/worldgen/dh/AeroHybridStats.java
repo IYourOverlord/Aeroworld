@@ -31,7 +31,13 @@ public final class AeroHybridStats {
     public static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("aeroworld.dhstats", "true"));
 
     /** Чем ответил генератор на запрос секции. */
-    public enum Branch { COARSE, PHASE1, PHASE2_REAL, OUTSIDE_FEATURES, REAL_UNAVAILABLE }
+    public enum Branch { COARSE, PHASE1, PHASE2_REAL, REAL_FIRST, OUTSIDE_FEATURES, REAL_UNAVAILABLE }
+
+    /** Какое условие остановило регенерацию DH ({@code FullDataUpdatePropagatorV2.queueRegeneration}). */
+    public enum RegenGate { NO_QUEUE, REGEN_OFF, COARSE_WAITING, PROCEED }
+
+    /** Результат {@code GeneratedFullDataSourceProvider.canQueueRetrievalNow}. */
+    public enum QueueGate { OPEN, CHUNK_UPDATES_FULL, QUEUE_FULL, OTHER }
 
     private static final Logger LOG = LoggerFactory.getLogger("AeroWorld-HybridStats");
     private static final Branch[] BRANCHES = Branch.values();
@@ -66,33 +72,77 @@ public final class AeroHybridStats {
     private static final long STUCK_AFTER_MS = 60_000L;
     private static final int STUCK_SAMPLES = 5;
 
-    /**
-     * Описание застрявшего листа для отчёта (lodX, lodZ) -> строка; задаёт генератор, у которого есть доступ к DH/игрокам.
-     * null — только координаты.
-     */
-    public static volatile java.util.function.BiFunction<Integer, Integer, String> stuckProbe;
+    private static final AtomicLong REGEN_TRY = new AtomicLong();
+    private static final AtomicLongArray REGEN_GATE = new AtomicLongArray(RegenGate.values().length);
+    private static final AtomicLongArray CAN_QUEUE = new AtomicLongArray(QueueGate.values().length);
+    private static final AtomicLong QUEUE_WAITING_SUM = new AtomicLong();
+    private static final AtomicLong QUEUE_CHECKS = new AtomicLong();
+    private static final AtomicLong QUEUE_MAX = new AtomicLong();
 
     private static final AtomicLong NEXT_REPORT_MS = new AtomicLong(System.currentTimeMillis() + REPORT_INTERVAL_MS);
 
     private AeroHybridStats() {}
 
-    /** Ключ секции: detail в старших битах, x/z по 29 бит (знак отбрасывается маской — коллизии только за ±2^28 секций). */
-    static long key(int detailLevel, int lodX, int lodZ) {
-        return ((long) detailLevel << 58) | ((long) (lodX & 0x1FFFFFFF) << 29) | (lodZ & 0x1FFFFFFFL);
+    /** Ключ секции: измерение (4 бита) | detail (4 бита) | x (28 бит) | z (28 бит); коллизии только за ±2^27 секций. */
+    static long key(int dim, int detailLevel, int lodX, int lodZ) {
+        return ((long) (dim & 0xF) << 60) | ((long) (detailLevel & 0xF) << 56)
+                | ((long) (lodX & 0xFFFFFFF) << 28) | (lodZ & 0xFFFFFFFL);
     }
 
-    public static void onSection(int detailLevel, int lodX, int lodZ, Branch branch) {
+    private static final ConcurrentHashMap<String, Integer> DIM_INDEX = new ConcurrentHashMap<>();
+    private static final String[] DIM_NAMES = new String[16];
+    private static final AtomicInteger DIM_SEQ = new AtomicInteger();
+    private static final ConcurrentHashMap<Integer, java.util.function.BiFunction<Integer, Integer, String>> PROBES = new ConcurrentHashMap<>();
+
+    /** Номер измерения для ключей статистики (до 15 измерений; лишние делят номер 15). */
+    public static int dimIndex(String dimension) {
+        return DIM_INDEX.computeIfAbsent(dimension, d -> {
+            int i = Math.min(DIM_SEQ.getAndIncrement(), 15);
+            DIM_NAMES[i] = DIM_NAMES[i] == null ? d : DIM_NAMES[i] + "+" + d;
+            return i;
+        });
+    }
+
+    /** Описание застрявшего листа для отчёта {@code [Stuck]}: (lodX, lodZ) -> строка; своё на каждое измерение. */
+    public static void registerStuckProbe(int dim, java.util.function.BiFunction<Integer, Integer, String> probe) {
+        PROBES.put(dim, probe);
+    }
+
+    public static void onSection(int dim, int detailLevel, int lodX, int lodZ, Branch branch) {
         if (!ENABLED) return;
         if (LAST_BRANCH.size() >= TRACK_CAP) {
             UNTRACKED.incrementAndGet();
             return;
         }
-        long k = key(detailLevel, lodX, lodZ);
+        long k = key(dim, detailLevel, lodX, lodZ);
         if (branch == Branch.PHASE1) PHASE1_AT.putIfAbsent(k, System.currentTimeMillis());
         else PHASE1_AT.remove(k);
         Integer prev = LAST_BRANCH.put(k, branch.ordinal());
         if (prev == null) FIRST.incrementAndGet(branch.ordinal());
         else REPEAT.incrementAndGet(prev * B + branch.ordinal());
+        maybeReport();
+    }
+
+    /** Вызов {@code tryQueueRegeneration} (до всех его внутренних проверок). */
+    public static void onRegenTry() {
+        if (!ENABLED) return;
+        REGEN_TRY.incrementAndGet();
+        maybeReport();
+    }
+
+    public static void onRegenGate(RegenGate gate) {
+        if (ENABLED) REGEN_GATE.incrementAndGet(gate.ordinal());
+    }
+
+    /** Результат {@code canQueueRetrievalNow}: {@code waiting} ждущих задач при лимите {@code max} (-1 если неизвестно). */
+    public static void onCanQueue(QueueGate gate, int waiting, int max) {
+        if (!ENABLED) return;
+        CAN_QUEUE.incrementAndGet(gate.ordinal());
+        if (waiting >= 0) {
+            QUEUE_CHECKS.incrementAndGet();
+            QUEUE_WAITING_SUM.addAndGet(waiting);
+            QUEUE_MAX.set(max);
+        }
         maybeReport();
     }
 
@@ -155,6 +205,15 @@ public final class AeroHybridStats {
         LOG.info("[Repeats] tracked={} untracked={} | first:{} | repeat(prev->now):{}",
                 LAST_BRANCH.size(), UNTRACKED.get(), first, rep.length() == 0 ? " none" : rep);
 
+        StringBuilder rg = new StringBuilder();
+        for (RegenGate g : RegenGate.values()) rg.append(' ').append(g).append('=').append(REGEN_GATE.get(g.ordinal()));
+        StringBuilder cq = new StringBuilder();
+        for (QueueGate g : QueueGate.values()) cq.append(' ').append(g).append('=').append(CAN_QUEUE.get(g.ordinal()));
+        long checks = QUEUE_CHECKS.get();
+        LOG.info("[Regen] tryQueueRegeneration={} | queueRegeneration gates:{} | canQueueRetrievalNow:{} | avg waiting={} of max={}",
+                REGEN_TRY.get(), rg, cq,
+                checks == 0 ? "?" : String.format(java.util.Locale.ROOT, "%.0f", QUEUE_WAITING_SUM.get() / (double) checks), QUEUE_MAX.get());
+
         reportStuck(System.currentTimeMillis());
 
         long starts = LEAF_STARTS.get();
@@ -199,18 +258,19 @@ public final class AeroHybridStats {
         }
         if (stuck == 0 && PHASE1_AT.isEmpty()) return;
         LOG.info("[Stuck] phase1 waiting={} (older than {}s: {})", PHASE1_AT.size(), STUCK_AFTER_MS / 1000, stuck);
-        var probe = stuckProbe;
         for (int i = 0; i < filled; i++) {
-            int x = decodeCoord(oldestKey[i] >> 29), z = decodeCoord(oldestKey[i]);
+            int dim = (int) (oldestKey[i] >>> 60);
+            int x = decodeCoord(oldestKey[i] >> 28), z = decodeCoord(oldestKey[i]);
             String extra = "";
+            var probe = PROBES.get(dim);
             try { if (probe != null) extra = " " + probe.apply(x, z); } catch (Throwable t) { extra = " probe failed: " + t; }
-            LOG.info("[Stuck]   leaf 6*{},{} waiting {}s{}", x, z, (nowMs - oldestAt[i]) / 1000, extra);
+            LOG.info("[Stuck]   {} leaf 6*{},{} waiting {}s{}", DIM_NAMES[dim], x, z, (nowMs - oldestAt[i]) / 1000, extra);
         }
     }
 
-    /** Обратно к {@link #key}: 29 бит со знаком. */
+    /** Обратно к {@link #key}: 28 бит со знаком. */
     static int decodeCoord(long packed) {
-        return (int) ((packed & 0x1FFFFFFFL) << 3) >> 3;
+        return ((int) (packed & 0xFFFFFFFL) << 4) >> 4;
     }
 
     private static String pct(long part, long total) {

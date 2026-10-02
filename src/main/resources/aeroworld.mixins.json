@@ -10,12 +10,12 @@
     "TranslucentAdjWallMixin",
     "RetrievalQueueLimitMixin",
     "GeneratorBusyMixin",
-    "QueueOrderStatsMixin",
     "WorldGenSpeedGateMixin",
     "SaveDelayMixin",
     "SqliteTuningMixin",
     "StandInTerrainMixin",
-    "CompleteSectionCacheMixin"
+    "CompleteSectionCacheMixin",
+    "WorldGenUtilRegenRadiusMixin"
   ],
   "client": [],
   "server": [],
