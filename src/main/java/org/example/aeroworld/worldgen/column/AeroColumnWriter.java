@@ -125,6 +125,22 @@ public class AeroColumnWriter {
     }
 
     /**
+     * Свет точки под водой/льдом. DH рисует боковую грань воды к соседней водной колонке (ColumnBox.makeAdjVerticalQuad)
+     * со светом точки ПОД соседней водой и отбрасывает её, если свет не 15 (tryAddVerticalFaceWithSkyLightToBuilder,
+     * "walls between water blocks in the ocean"). Реальные чанки под водой темнее 15, а здесь везде был 15 — отсюда
+     * полупрозрачные "перегородки" воды по границам секций LOD. 14 почти не меняет яркость дна.
+     */
+    private static int skyLightFor(List<AeroColumnModel.Span> spans, int i) {
+        if (i + 1 >= spans.size()) {
+            return 15;
+        }
+        AeroColumnModel.Span above = spans.get(i + 1);
+        boolean translucentAbove = above.bottomY() <= spans.get(i).topY() + 1
+                && (above.state().is(net.minecraft.world.level.block.Blocks.WATER) || above.state().is(net.minecraft.world.level.block.Blocks.ICE));
+        return translucentAbove ? 14 : 15;
+    }
+
+    /**
      * Конвертирует список span'ов в список DhApiTerrainDataPoint для колонки.
      * <p>
      * Формат DH (см. LodDataBuilder.validateOrThrowApiDataColumn): все точки блочного размера
@@ -182,7 +198,7 @@ public class AeroColumnWriter {
             if (bottom > cursor) {
                 points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, cursor - yOffset, bottom - yOffset, air, lastBiome));
             }
-            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, 15, bottom - yOffset, spanTop - yOffset, getBlockStateWrapper(span.state()), biome));
+            points.add(DhApiTerrainDataPoint.create((byte) 0, 0, skyLightFor(spans, i), bottom - yOffset, spanTop - yOffset, getBlockStateWrapper(span.state()), biome));
             cursor = spanTop;
             lastBiome = biome;
         }
