@@ -26,8 +26,8 @@ public class WorldGenUtilRegenRadiusMixin {
     @Inject(method = "getMaxRegenDistanceInBlocks()I", at = @At("HEAD"), cancellable = true)
     private static void aeroworld$regenInsideRealRadius(CallbackInfoReturnable<Integer> info) {
         int radius = AeroThroughputLimits.realRadiusBlocks();
-        if (radius > 0) {
-            info.setReturnValue(2 * radius + 128);
-        }
+        // R = 0 (только аналитика): 0 = второй проход регенерации выключен (SQL "Distance <= 0" ничего не выбирает).
+        // Раньше при R = 0 действовал дефолт DH (-1 = бесконечность) и листья перегенерировались по всей дальности LOD.
+        info.setReturnValue(radius > 0 ? 2 * radius + 128 : 0);
     }
 }
