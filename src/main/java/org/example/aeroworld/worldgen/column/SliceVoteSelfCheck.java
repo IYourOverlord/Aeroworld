@@ -44,6 +44,13 @@ public final class SliceVoteSelfCheck {
         assert r.equals(List.of(s(0, 4, "stone"), s(8, 12, "stone"))) : r;
         assert vote(List.of(List.<Seg<String>>of(), List.<Seg<String>>of())).isEmpty();
 
-        System.out.println("SliceVoteSelfCheck: all checks passed (6/6)");
+        // carve: столб режет крону, кусок выше столба сохраняется, пустая колонка даёт один столб.
+        var c = SliceVote.carve(List.of(s(0, 10, "stone"), s(12, 30, "leaves")), 10, 20, "pillar");
+        assert c.equals(List.of(s(0, 10, "stone"), s(10, 20, "pillar"), s(20, 30, "leaves"))) : c;
+        c = SliceVote.carve(List.of(s(0, 10, "stone")), 4, 6, "pillar");
+        assert c.equals(List.of(s(0, 4, "stone"), s(4, 6, "pillar"), s(6, 10, "stone"))) : c;
+        assert SliceVote.carve(List.<Seg<String>>of(), 5, 9, "pillar").equals(List.of(s(5, 9, "pillar")));
+
+        System.out.println("SliceVoteSelfCheck: all checks passed (9/9)");
     }
 }

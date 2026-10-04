@@ -23,6 +23,18 @@ public final class SliceVote {
     private SliceVote() {}
 
     /**
+     * Вырезает [lo, hi) из колонки и вставляет на это место {@code fill}; остальное не меняется.
+     * @param segs колонка по возрастанию без пересечений (как в {@link #vote})
+     */
+    public static <T> List<Seg<T>> carve(List<Seg<T>> segs, int lo, int hi, T fill) {
+        List<Seg<T>> out = new ArrayList<>(segs.size() + 2);
+        for (Seg<T> s : segs) if (s.bottom() < lo) out.add(new Seg<>(s.bottom(), Math.min(s.top(), lo), s.value()));
+        out.add(new Seg<>(lo, hi, fill));
+        for (Seg<T> s : segs) if (s.top() > hi) out.add(new Seg<>(Math.max(s.bottom(), hi), s.top(), s.value()));
+        return out;
+    }
+
+    /**
      * @param cols  колонки; сегменты каждой отсортированы по возрастанию и не пересекаются
      * @param key   ключ голосования (одинаковый ключ = один и тот же материал)
      * @param empty сегмент, считающийся пустотой

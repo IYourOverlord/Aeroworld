@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
@@ -57,6 +58,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
     private final AeroColumnWriter columnWriter;
     private final AeroThroughputLimits throughputLimits;
     private final AeroFastDistantTerrain fastTerrain;
+    /** Столбы-маркеры структур на LOD или {@code null} (-Daeroworld.dhStructures=false). */
+    private final AeroStructureMarkers structureMarkers;
 
     /** Реальный DH chunk-gen для листьев (detail 0) в радиусе R; создаётся лениво — уровень DH регистрируется после load-события. */
     private volatile DhWorldGenerator realGen;
@@ -83,6 +86,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         this.columnWriter = new AeroColumnWriter(levelWrapper);
         this.throughputLimits = new AeroThroughputLimits();
         this.fastTerrain = new AeroFastDistantTerrain(generator.getSettings().dhOverride());
+        this.structureMarkers = AeroStructureMarkers.ENABLED ? new AeroStructureMarkers(generator, serverLevel) : null;
     }
 
     /**
@@ -287,6 +291,10 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 // сэмплируемая колонка попадает в свой чанк — кэш только мешает лишней проверкой.
                 Layer1ColumnCache columnCache = (step == 1 && l1Terrain != null) ? new Layer1ColumnCache() : null;
 
+                // Столбы-маркеры структур (только достаточно детальные секции, см. AeroStructureMarkers)
+                var markers = structureMarkers != null && detailLevel <= AeroStructureMarkers.MAX_DETAIL
+                        ? structureMarkers.forSection(baseBlockX, baseBlockZ, width, step) : Map.<Integer, AeroStructureMarkers.Marker>of();
+
                 for (int relX = 0; relX < width; relX++) {
                     int bx = baseBlockX + relX * step;
                     for (int relZ = 0; relZ < width; relZ++) {
@@ -308,6 +316,9 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                                     aeroBiomeSource, true, columnCache
                             );
                         }
+
+                        AeroStructureMarkers.Marker marker = markers.get(relX * width + relZ);
+                        if (marker != null) spans = AeroStructureMarkers.apply(spans, marker, step, maxY);
 
                         List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, minY, maxY, minY);
                         pooledFullDataSource.setApiDataPointColumn(relX, relZ, genStep, points);
