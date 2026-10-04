@@ -125,19 +125,19 @@ public class AeroColumnWriter {
     }
 
     /**
-     * Свет точки под водой/льдом. DH рисует боковую грань воды к соседней водной колонке (ColumnBox.makeAdjVerticalQuad)
+     * Свет любой точки под водой/льдом (не только верхней: при укрупнении LOD DH усредняет свет по слоям, и под водой может оказаться более глубокий слой). DH рисует боковую грань воды к соседней водной колонке (ColumnBox.makeAdjVerticalQuad)
      * со светом точки ПОД соседней водой и отбрасывает её, если свет не 15 (tryAddVerticalFaceWithSkyLightToBuilder,
      * "walls between water blocks in the ocean"). Реальные чанки под водой темнее 15, а здесь везде был 15 — отсюда
      * полупрозрачные "перегородки" воды по границам секций LOD. 14 почти не меняет яркость дна.
      */
     private static int skyLightFor(List<AeroColumnModel.Span> spans, int i) {
-        if (i + 1 >= spans.size()) {
-            return 15;
+        for (int j = i + 1; j < spans.size(); j++) {
+            BlockState above = spans.get(j).state();
+            if (above.is(net.minecraft.world.level.block.Blocks.WATER) || above.is(net.minecraft.world.level.block.Blocks.ICE)) {
+                return 14;
+            }
         }
-        AeroColumnModel.Span above = spans.get(i + 1);
-        boolean translucentAbove = above.bottomY() <= spans.get(i).topY() + 1
-                && (above.state().is(net.minecraft.world.level.block.Blocks.WATER) || above.state().is(net.minecraft.world.level.block.Blocks.ICE));
-        return translucentAbove ? 14 : 15;
+        return 15;
     }
 
     /**

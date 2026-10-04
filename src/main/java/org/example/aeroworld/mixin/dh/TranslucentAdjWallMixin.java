@@ -3,6 +3,7 @@ package org.example.aeroworld.mixin.dh;
 import com.seibel.distanthorizons.core.dataObjects.render.bufferBuilding.LodQuadBuilder;
 import com.seibel.distanthorizons.core.dataObjects.render.columnViews.ColumnRenderView;
 import com.seibel.distanthorizons.core.enums.EDhDirection;
+import com.seibel.distanthorizons.core.util.RenderDataPointUtil;
 import com.seibel.distanthorizons.core.util.objects.pooling.PhantomArrayList.PhantomArrayListCheckout;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
 import com.seibel.distanthorizons.coreapi.util.ColorUtil;
@@ -34,8 +35,26 @@ public class TranslucentAdjWallMixin {
             ColumnRenderView adjView, short[] textureIds, boolean flag, int index, EDhDirection direction,
             short x, short y, short z, short width, short height, int color, byte skyLight, byte blockLight,
             CallbackInfo ci) {
-        if (adjView != null && adjView.size == 0 && ColorUtil.getAlpha(color) < 255) {
+        if (adjView != null && ColorUtil.getAlpha(color) < 255
+                && (adjView.size == 0 || RenderDataPointUtil.hasZeroHeight(adjView.get(0))
+                || aeroworld$hasTranslucentOverlap(adjView, y, y + height))) {
             ci.cancel();
         }
+    }
+
+    /**
+     * Сосед содержит полупрозрачную точку (вода/лёд), пересекающую [yMin, yMax). Грань между двумя водными
+     * колонками не нужна; без этой проверки её рисует DH, когда свет под водой после усреднения при укрупнении LOD
+     * снова оказывается 15.
+     */
+    private static boolean aeroworld$hasTranslucentOverlap(ColumnRenderView adjView, int yMin, int yMax) {
+        for (int i = 0; i < adjView.size; i++) {
+            long p = adjView.get(i);
+            if (RenderDataPointUtil.doesDataPointExist(p) && RenderDataPointUtil.getAlpha(p) < 255
+                    && RenderDataPointUtil.getYMin(p) < yMax && RenderDataPointUtil.getYMax(p) > yMin) {
+                return true;
+            }
+        }
+        return false;
     }
 }
