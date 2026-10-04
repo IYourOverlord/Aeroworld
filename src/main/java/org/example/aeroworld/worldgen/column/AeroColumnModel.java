@@ -1,6 +1,7 @@
 package org.example.aeroworld.worldgen.column;
 
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
@@ -42,6 +43,19 @@ public final class AeroColumnModel {
     private static final BlockState BS_GRASS = Blocks.GRASS_BLOCK.defaultBlockState();
     private static final BlockState BS_DIRT = Blocks.DIRT.defaultBlockState();
     private static final BlockState BS_ICE = Blocks.ICE.defaultBlockState();
+
+    /**
+     * Замерзает ли вода на уровне моря в этом биоме так же, как у freeze_top_layer: ровно та же проверка климата, что у ванили
+     * ({@code Biome.coldEnoughToSnow}, учитывает и модификатор температуры frozen океана). Свет и рёбра воды не учитываются.
+     */
+    private static boolean freezesAtSeaLevel(Holder<Biome> biome, int x, int z, int seaLevel) {
+        if (biome == null) return false;
+        try {
+            return biome.value().coldEnoughToSnow(new BlockPos(x, seaLevel, z));
+        } catch (RuntimeException e) {
+            return false; // биом ещё не привязан к реестру: остаёмся на проверке по имени
+        }
+    }
     private static final BlockState BS_KELP_PLANT = Blocks.KELP_PLANT.defaultBlockState();
     private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
 
@@ -216,7 +230,10 @@ public final class AeroColumnModel {
                         waterBottom = vegTop + 1; // вода начинается выше растительности
                     }
 
-                    if (frozen && waterTop == seaLevel) {
+                    // Лёд: frozen-биомы по имени (как Layer1TerrainGenerator) плюс заморозка воды, которую в реальных чанках делает
+                    // финальная фича minecraft:freeze_top_layer в холодных биомах. LOD её не запускает, поэтому там была вода.
+                    boolean iceTop = frozen || freezesAtSeaLevel(layer1BiomeHolder, x, z, seaLevel);
+                    if (iceTop && waterTop == seaLevel) {
                         if (waterTop > waterBottom) {
                             spans.add(new Span(waterBottom, waterTop - 1, BS_WATER, layer1BiomeName, layer1BiomeHolder));
                         }
