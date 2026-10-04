@@ -143,7 +143,7 @@ public class Layer1TerrainGenerator {
     private final AeroNoise coralNoise;
     private final AeroNoise ridgeNoise;
     private final AeroNoise riverNoise;
-    private final AeroNoise riverWarpNoise;
+    private final AeroRiverNetwork rivers;
 
     public Layer1TerrainGenerator(long seed) {
         this.seed = seed;
@@ -158,7 +158,7 @@ public class Layer1TerrainGenerator {
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
         this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
         this.riverNoise       = new AeroNoise(seed ^ 0x4E9B17C3L);
-        this.riverWarpNoise   = new AeroNoise(seed ^ 0xC3815F29L);
+        this.rivers           = new AeroRiverNetwork(seed, this::getContinentality);
     }
 
     public long getSeed() {
@@ -254,12 +254,15 @@ public class Layer1TerrainGenerator {
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
         height = lerp(height, land, smoothstep(-0.06, 0.10, continentality));
 
-        // Domain-warped river valleys form continuous, naturally curved channels.
-        // They are only cut through land; the centre is five to six blocks below sea level.
-        double river = getRiverStrength(wx, wz);
-        double riverLandMask = smoothstep(-0.01, 0.10, continentality);
+        // Реки и озёра: сеть стекает к океану и озёрам (AeroRiverNetwork), русла и чаши уходят под уровень моря,
+        // воду доливает обычная заливка. В горах и на высокой суше реки гасятся: они кончаются у подножия, а не
+        // прорезают каньоны. Маска побережья не нужна: min() никогда не поднимает дно океана.
+        AeroRiverNetwork.Sample net = rivers.sample(wx, wz, continentality);
+        double lowland = 1.0 - smoothstep(20.0, 50.0, height);
         double riverBed = SEA_LEVEL - (5.0 + riverNoise.noise2D(wx * 0.018, wz * 0.018) * 0.5);
-        height = lerp(height, Math.min(height, riverBed), river * riverLandMask);
+        height = lerp(height, Math.min(height, riverBed), net.river() * lowland);
+        double lakeBed = SEA_LEVEL - (4.0 + 8.0 * net.lake());
+        height = lerp(height, Math.min(height, lakeBed), net.lake() * lowland);
 
         int finalHeight = (int) Math.round(height);
         return Math.max(MIN_Y + BEDROCK_LAYERS + 1, Math.min(220, finalHeight));
@@ -269,14 +272,6 @@ public class Layer1TerrainGenerator {
     public double getRidgeStrength(int wx, int wz) {
         double field = 1.0 - Math.abs(ridgeNoise.fbm2D(wx * 0.00125, wz * 0.00125, 4, 2.0, 0.5));
         return smoothstep(0.72, 0.90, field);
-    }
-
-    /** Returns the continuous river-channel mask; one equals the channel centre. */
-    public double getRiverStrength(int wx, int wz) {
-        double warpX = riverWarpNoise.fbm2D(wx * 0.0018 + 91.0, wz * 0.0018 - 37.0, 3, 2.0, 0.5) * 130.0;
-        double warpZ = riverWarpNoise.fbm2D(wx * 0.0018 - 53.0, wz * 0.0018 + 71.0, 3, 2.0, 0.5) * 130.0;
-        double channel = Math.abs(riverNoise.fbm2D((wx + warpX) * 0.0042, (wz + warpZ) * 0.0042, 3, 2.0, 0.5));
-        return 1.0 - smoothstep(0.035, 0.075, channel);
     }
 
     /**

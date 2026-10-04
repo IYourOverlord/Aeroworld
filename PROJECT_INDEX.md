@@ -125,6 +125,7 @@ worldgen/
 │       └── VaultTrialSpawnTier.java       - POOR 1+1, MEDIUM 2+3, RICH 3+5
 ├── layer/
 │   ├── Layer1TerrainGenerator.java    - весь Layer 1: высоты, пещера, заливка, декор пещеры, buildSurface
+│   ├── AeroRiverNetwork.java          - чистая (без MC) сеть рек и озёр: узлы сетки 640 блоков стекают к соседу с меньшей континентальностью, русла расширяются к устью, замкнутые впадины и часть узлов дают озёра; Layer1TerrainGenerator.getHeight вырезает русла/чаши ниже SEA_LEVEL, в горах (height > 20..50) реки гасятся; проверка: AeroRiverNetworkSelfCheck
 │   ├── Layer1FlatGenerator.java        - тонкая обёртка (surfaceHeight/topmostHeight) для валидатора и биомов
 │   ├── LowerIslandGenerator.java       - Layer 2: fillChunk, placeTreesInRegion, clearVanillaVegetationInCentralZone
 │   ├── HighIslandGenerator.java        - Layer 3: полые метеориты с кратерами и планеты с кольцами астероидов
