@@ -39,12 +39,27 @@ public class AeroBiomeSource extends BiomeSource {
     };
 
     private final MultiNoiseBiomeSource delegate;
-    private final long seed;
-    private final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
+    /**
+     * Всё, что зависит от сида мира и Layer1, одним неизменяемым блоком: {@link #reconfigure} подменяет его целиком,
+     * поэтому читатели (потоки генерации чанков и LOD) всегда видят согласованный набор.
+     */
+    private static final class Params {
+        final long seed;
+        final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
+        final AeroNoise tempNoise;
+        final AeroNoise humidityNoise;
+        final AeroNoise deepDarkNoise;
 
-    private final AeroNoise tempNoise;
-    private final AeroNoise humidityNoise;
-    private final AeroNoise deepDarkNoise;
+        Params(long seed, org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
+            this.seed          = seed;
+            this.layer1        = layer1;
+            this.tempNoise     = new AeroNoise(seed ^ 0x11223344L);
+            this.humidityNoise = new AeroNoise(seed ^ 0x55667788L);
+            this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
+        }
+    }
+
+    private volatile Params params;
 
     private volatile java.util.Set<Holder<Biome>> cachedBiomes = null;
 
@@ -63,6 +78,7 @@ public class AeroBiomeSource extends BiomeSource {
         final Holder<Biome>[] layer1Biomes = new Holder[64];
         final boolean[] hasDeepDark = new boolean[64];
         final Holder<Biome>[] deepDarkBiomes = new Holder[64];
+        Params owner; // для каких параметров заполнен кэш; при смене сброс (см. getNoiseBiome)
     }
 
     private final ThreadLocal<BiomeColumnCache> threadColumnCache =
@@ -74,12 +90,8 @@ public class AeroBiomeSource extends BiomeSource {
 
     public AeroBiomeSource(MultiNoiseBiomeSource delegate, long seed,
                            org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
-        this.delegate      = delegate;
-        this.seed          = seed;
-        this.layer1        = layer1;
-        this.tempNoise     = new AeroNoise(seed ^ 0x11223344L);
-        this.humidityNoise = new AeroNoise(seed ^ 0x55667788L);
-        this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
+        this.delegate = delegate;
+        this.params   = new Params(seed, layer1);
     }
 
     public AeroBiomeSource(MultiNoiseBiomeSource delegate) {
@@ -87,13 +99,28 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     public AeroBiomeSource withSeed(long newSeed) {
-        if (newSeed == this.seed) return this;
-        return new AeroBiomeSource(delegate, newSeed, this.layer1);
+        Params p = params;
+        if (newSeed == p.seed) return this;
+        return new AeroBiomeSource(delegate, newSeed, p.layer1);
     }
 
     public AeroBiomeSource withRingChecker(org.example.aeroworld.worldgen.layer.Layer1FlatGenerator newLayer1) {
-        if (newLayer1 == this.layer1) return this;
-        return new AeroBiomeSource(delegate, this.seed, newLayer1);
+        Params p = params;
+        if (newLayer1 == p.layer1) return this;
+        return new AeroBiomeSource(delegate, p.seed, newLayer1);
+    }
+
+    /**
+     * Меняет сид и Layer1 <b>у этого же экземпляра</b>. Нужен, потому что ванильный {@code ChunkGenerator} держит
+     * источник биомов в своём поле и {@code createBiomes} читает именно его: копия через {@link #withSeed}/{@link #withRingChecker}
+     * оставляла реальным чанкам старый экземпляр (сид по умолчанию, без континентальности), а LOD считал по новому, и биомы
+     * (а с ними песок/снег/подзол) расходились.
+     */
+    public synchronized void reconfigure(long newSeed,
+                                         org.example.aeroworld.worldgen.layer.Layer1FlatGenerator newLayer1) {
+        Params p = params;
+        if (p.seed == newSeed && p.layer1 == newLayer1) return;
+        params = new Params(newSeed, newLayer1);
     }
 
     @Override
@@ -135,7 +162,12 @@ public class AeroBiomeSource extends BiomeSource {
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
         int slot = (x * 31 + z) & BiomeColumnCache.MASK;
+        Params p = this.params;
         BiomeColumnCache cache = threadColumnCache.get();
+        if (cache.owner != p) {
+            java.util.Arrays.fill(cache.valid, false);
+            cache.owner = p;
+        }
 
         Holder<Biome> islandBiome;
         Holder<Biome> layer1Biome;
@@ -151,16 +183,16 @@ public class AeroBiomeSource extends BiomeSource {
             double wx = x * 4.0;
             double wz = z * 4.0;
 
-            double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+            double dd = p.deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
             hasDD = dd > DEEP_DARK_THRESHOLD;
             ddBiome = hasDD ? findAeroBiome("deep_dark").orElse(null) : null;
 
-            double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-            double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+            double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+            double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
             String islandName = resolveIslandBiome(temp, humid);
             islandBiome = findAeroBiome(islandName).orElseGet(() -> delegateWithSafety(x, 20, z, sampler, true));
 
-            Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
+            Layer1TerrainGenerator terrain = (p.layer1 != null) ? p.layer1.getTerrainGenerator() : null;
             double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
             double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
             double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
@@ -281,15 +313,16 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     public String getLayer1BiomeName(int blockX, int blockZ) {
-        Layer1TerrainGenerator terrain = (layer1 != null) ? layer1.getTerrainGenerator() : null;
+        Params p = params;
+        Layer1TerrainGenerator terrain = (p.layer1 != null) ? p.layer1.getTerrainGenerator() : null;
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
         double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
         double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
         double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
 
-        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+        double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+        double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
 
         return resolveLayer1Biome(cont, eros, ridge, temp, humid);
     }
@@ -297,15 +330,16 @@ public class AeroBiomeSource extends BiomeSource {
     public boolean isDeepDark(int blockX, int blockZ) {
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
-        double dd = deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+        double dd = params.deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
         return dd > DEEP_DARK_THRESHOLD;
     }
 
     public String getIslandBiomeName(int blockX, int blockZ) {
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
-        double temp = tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-        double humid = humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+        Params p = params;
+        double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+        double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
         return resolveIslandBiome(temp, humid);
     }
 

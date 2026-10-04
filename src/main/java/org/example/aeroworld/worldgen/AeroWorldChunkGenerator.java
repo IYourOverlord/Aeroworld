@@ -109,7 +109,29 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     public UpperIslandGenerator getUpperIslands() { return upperIslands; }
     public Layer1TerrainGenerator getLayer1Terrain() { return layer1Terrain; }
     public AeroWorldSettings getSettings() { return settings; }
-    public AeroBiomeSource getAeroBiomeSource() { return aeroSource.get(); }
+    /**
+     * По умолчанию (false) реальная генерация биомов НЕ тронута, как и до адаптации под DH: ванильный {@code createBiomes}
+     * читает экземпляр из поля {@code ChunkGenerator}, а {@link #applySeed} подменяет только копию в {@code aeroSource}
+     * (её используют структуры). Палитра поверхности, снег на горах и расстановка биомов в мире настроены под это поведение.
+     * LOD при этом берёт тот же экземпляр, что реальные чанки (см. {@link #getAeroBiomeSource()}), чтобы картинка совпадала.
+     * <p>
+     * {@code -Daeroworld.biomeSync=true} — экспериментальный режим: сид мира и Layer1 применяются к экземпляру на месте, и
+     * реальные чанки меняют биомы (кальцит вместо снега на горах и т.п.). Не включать на существующих мирах.
+     */
+    public static final boolean BIOME_SYNC = "true".equalsIgnoreCase(System.getProperty("aeroworld.biomeSync"));
+
+    /** Источник биомов для LOD: тот же экземпляр, что у реальных чанков (если не включён {@link #BIOME_SYNC}). */
+    public AeroBiomeSource getAeroBiomeSource() {
+        if (!BIOME_SYNC && super.getBiomeSource() instanceof AeroBiomeSource field) return field;
+        return aeroSource.get();
+    }
+
+    /**
+     * Диагностика ({@code /aeroworld biomeAt}): экземпляр, который ванильный {@code ChunkGenerator} хранит в своём поле.
+     * Ванильная {@code createBiomes} использует именно его, а не {@link #getAeroBiomeSource()}: {@code applySeed} подменяет
+     * только {@code aeroSource} через {@code withSeed(...).withRingChecker(...)} (новые экземпляры), поле остаётся прежним.
+     */
+    public BiomeSource fieldBiomeSource() { return super.getBiomeSource(); }
     public boolean isSeedInitialized() { return seedInitialized; }
 
     private long seedFrom(RandomState randomState) {
@@ -147,10 +169,11 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
 
         AeroWorld.structureScheduler = new IslandStructureScheduler();
 
+        // По умолчанию копия, как в исходной генерации мода (см. BIOME_SYNC); на месте только в экспериментальном режиме.
         AeroBiomeSource current = aeroSource.get();
         if (current != null) {
-            AeroBiomeSource updated = current.withSeed(seed).withRingChecker(layer1);
-            aeroSource.set(updated);
+            if (BIOME_SYNC) current.reconfigure(seed, layer1);
+            else aeroSource.set(current.withSeed(seed).withRingChecker(layer1));
         }
     }
 
@@ -214,7 +237,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         BlockState[] states = new BlockState[height];
         java.util.Arrays.fill(states, BS_AIR_SENTINEL);
 
-        java.util.List<org.example.aeroworld.worldgen.column.AeroColumnModel.Span> spans =
+        List<org.example.aeroworld.worldgen.column.AeroColumnModel.Span> spans =
                 org.example.aeroworld.worldgen.column.AeroColumnModel.buildSpans(
                         x, z, minY, levelMax,
                         layer1Terrain, lowerIslands, highIslands, upperIslands,

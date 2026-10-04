@@ -777,6 +777,41 @@ public final class AeroWorldCommands {
         String realBiomeName = realBiome.unwrapKey().map(k -> k.location().toString()).orElse("unknown");
         sb.append("  Real world biome (level.getBiome): ").append(realBiomeName);
 
+        // Тот ли источник биомов использует реальная генерация (поле ванильного ChunkGenerator), что и LOD (aeroSource)?
+        var fieldSrc = aeroGen.fieldBiomeSource();
+        sb.append("\n  Biome source: field==current ? ").append(fieldSrc == aeroBiomeSource);
+        if (fieldSrc instanceof org.example.aeroworld.worldgen.biome.AeroBiomeSource fs) {
+            sb.append(" | formula via FIELD source: aeroworld:").append(fs.getLayer1BiomeName(x, z));
+        }
+
+        // Реальные блоки из сгенерированного чанка (getHeight форсирует генерацию): верхний блок и «земля» под деревьями/травой.
+        // Это то, с чем надо сравнивать строки detailLevel выше: LOD должен рисовать именно эту землю и этот биом.
+        try {
+            java.util.function.Function<net.minecraft.world.level.block.state.BlockState, String> id =
+                    st -> st.getBlock().builtInRegistryHolder().key().location().toString();
+            int topY = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+            BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos(x, topY, z);
+            var topState = level.getBlockState(probe);
+            int groundY = topY;
+            while (groundY > minY) {
+                probe.setY(groundY);
+                var st = level.getBlockState(probe);
+                boolean skip = st.isAir() || st.is(net.minecraft.tags.BlockTags.LEAVES) || st.is(net.minecraft.tags.BlockTags.LOGS)
+                        || (st.canBeReplaced() && st.getFluidState().isEmpty());
+                if (!skip) break;
+                groundY--;
+            }
+            probe.setY(groundY);
+            var groundState = level.getBlockState(probe);
+            String groundBiome = level.getChunk(x >> 4, z >> 4).getNoiseBiome(x >> 2, groundY >> 2, z >> 2)
+                    .unwrapKey().map(k -> k.location().toString()).orElse("unknown");
+            sb.append("\n  Real top: ").append(id.apply(topState)).append(" @y=").append(topY)
+                    .append(" | ground: ").append(id.apply(groundState)).append(" @y=").append(groundY)
+                    .append(" | chunk biome at ground: ").append(groundBiome);
+        } catch (Throwable t) {
+            sb.append("\n  Real block probe failed: ").append(t);
+        }
+
         final String msg = sb.toString();
         source.sendSuccess(() -> Component.literal(msg), false);
         return 1;

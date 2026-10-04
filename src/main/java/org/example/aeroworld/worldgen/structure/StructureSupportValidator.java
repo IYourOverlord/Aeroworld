@@ -185,11 +185,11 @@ public final class StructureSupportValidator {
 
         // ── 4. Специфичная логика по категории ────────────────────────────────
         ValidationResult result = switch (category) {
-            case SURFACE      -> validateSurface(structureId, bounds, sampler);
+            case SURFACE      -> validateSurface(structureId, bounds, soleY(start, bounds), sampler);
             case ISLAND       -> validateIsland(structureId, bounds, sampler);
             case UNDERGROUND  -> validateUnderground(structureId, bounds, sampler);
             case SKY_FLOATING -> validateSkyFloating(structureId, bounds, sampler);
-            default           -> validateSurface(structureId, bounds, sampler);
+            default           -> validateSurface(structureId, bounds, soleY(start, bounds), sampler);
         };
 
         if (result.accepted && LOG_ACCEPTED) {
@@ -219,7 +219,7 @@ public final class StructureSupportValidator {
      * Проверяет наземные структуры (Layer 1, Y ≤ Layer1FlatGenerator.LAYER_MAX_Y).
      * Требует твёрдую землю под подошвой структуры.
      */
-    private ValidationResult validateSurface(ResourceLocation id, BoundingBox bounds,
+    private ValidationResult validateSurface(ResourceLocation id, BoundingBox bounds, int soleY,
                                              TerrainColumnSampler sampler) {
         // ИСПРАВЛЕНО (деревни/аванпосты стоят на воде): sampleSupport сама по
         // себе проверяет только твёрдость грунта (hasSolidBelow → дно), но не
@@ -234,7 +234,7 @@ public final class StructureSupportValidator {
         for (int x = bounds.minX(); x <= bounds.maxX(); x += TerrainColumnSampler.SAMPLE_GRID_STEP) {
             for (int z = bounds.minZ(); z <= bounds.maxZ(); z += TerrainColumnSampler.SAMPLE_GRID_STEP) {
                 total++;
-                if (sampler.isWaterCoveredAt(x, z, bounds.minY())) waterCovered++;
+                if (sampler.isWaterCoveredAt(x, z, soleY)) waterCovered++;
             }
         }
         if (total > 0 && (double) waterCovered / total > (1.0 - SURFACE_SUPPORT_THRESHOLD)) {
@@ -257,7 +257,7 @@ public final class StructureSupportValidator {
             for (int z = bounds.minZ(); z <= bounds.maxZ(); z += SAMPLE_STEP) {
                 heightTotal++;
                 int groundY = sampler.groundHeightAt(x, z);
-                if (Math.abs(groundY - bounds.minY()) > SURFACE_MAX_HEIGHT_DEVIATION) {
+                if (Math.abs(groundY - soleY) > SURFACE_MAX_HEIGHT_DEVIATION) {
                     uneven++;
                     if (unevenSamples.size() < MAX_FAILING_LOGGED) unevenSamples.add(new SupportSample(x, z));
                 }
@@ -273,7 +273,30 @@ public final class StructureSupportValidator {
         }
 
         return sampleSupport(id, StructureCategory.SURFACE, bounds, sampler,
-                bounds.minY(), SURFACE_SUPPORT_THRESHOLD);
+                soleY, SURFACE_SUPPORT_THRESHOLD);
+    }
+
+    /**
+     * Подошва наземной структуры для проверок опоры: медиана minY её частей. {@code bounds.minY()} для этого не годится:
+     * у деревень он включает глубокий колодец и фундаменты (по логам minY = -13 при земле около 0 у всех деревень),
+     * и проверка «земля в пределах ±6 от minY» отклоняла 100% точек у каждой деревни и аванпоста.
+     * Структуры из менее чем трёх частей (пирамиды, порталы) остаются на {@code bounds.minY()}.
+     */
+    private static int soleY(StructureStart start, BoundingBox bounds) {
+        var pieces = start.getPieces();
+        if (pieces == null || pieces.size() < MIN_PIECES_FOR_MEDIAN) return bounds.minY();
+        int[] ys = new int[pieces.size()];
+        for (int i = 0; i < ys.length; i++) ys[i] = pieces.get(i).getBoundingBox().minY();
+        return medianOf(ys);
+    }
+
+    private static final int MIN_PIECES_FOR_MEDIAN = 3;
+
+    /** Медиана (верхняя при чётном числе); вынесена для self-check. */
+    static int medianOf(int[] ys) {
+        int[] copy = ys.clone();
+        java.util.Arrays.sort(copy);
+        return copy[copy.length / 2];
     }
 
     // ── Валидация ISLAND ──────────────────────────────────────────────────────
