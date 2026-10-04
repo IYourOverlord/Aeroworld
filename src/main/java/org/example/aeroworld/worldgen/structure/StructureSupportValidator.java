@@ -160,7 +160,12 @@ public final class StructureSupportValidator {
 
         // ── 2. Водные структуры — разрешаем только в океаническом Layer 1. ───
         if (category == StructureCategory.WATER) {
-            if (actualLayer == 2 || actualLayer == 3 || actualLayer == 4) {
+            // actualLayer считается только по XZ: если над точкой висит остров, он вернёт 2/3/4 и для структуры на дне океана.
+            // Островная ли структура на самом деле, говорит её Y: острова начинаются с Layer 2 (Y >= LAYER_MIN_Y), а клад,
+            // руины и корабли лежат на дне у Layer 1 (у buried_treasure стартовый Y = 90 по ванили). Раньше клад под островом
+            // отклонялся, у него пропадал structure start, и карта сокровищ не находила крестик, хотя сундук был в мире.
+            boolean onIsland = bounds.maxY() >= LowerIslandGenerator.LAYER_MIN_Y;
+            if ((actualLayer == 2 || actualLayer == 3 || actualLayer == 4) && onIsland) {
                 logRejection(structureId, bounds, "водная структура попала на небесный остров");
                 return cacheAndReturn(start, ValidationResult.waterStructure(structureId, bounds));
             }
