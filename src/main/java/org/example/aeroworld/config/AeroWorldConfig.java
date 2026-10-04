@@ -30,6 +30,7 @@ public class AeroWorldConfig {
     public static final ModConfigSpec.IntValue     DH_EXTENDED_RENDER_DISTANCE_CHUNKS;
     public static final ModConfigSpec.ConfigValue<String> DH_HORIZONTAL_QUALITY;
     public static final ModConfigSpec.IntValue     DH_REAL_CHUNK_RADIUS;
+    public static final ModConfigSpec.IntValue     DH_RENDER_YIELD_QUEUE;
 
     static {
         BUILDER.push("distant_horizons");
@@ -70,6 +71,12 @@ public class AeroWorldConfig {
                         "analytical LOD with real chunk generation at detail 0. Outside it real chunks are never generated. " +
                         "0 = disabled (analytical LOD only).")
                 .defineInRange("realChunkRadius", 64, 0, 1024);
+        DH_RENDER_YIELD_QUEUE = BUILDER
+                .comment("World generation pauses while the DH render-loader queue is longer than this many tasks, so the " +
+                        "renderer can catch up. Lower = smoother rendering while loading but slower world loading (the log " +
+                        "shows [RenderYieldGate] blocked % and queue size). Higher = generation almost never waits. " +
+                        "Changes apply without a restart once the config file is saved.")
+                .defineInRange("renderYieldQueue", 2500, 1, 1_000_000);
         BUILDER.pop();
 
         SPEC = BUILDER.build();

@@ -266,6 +266,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         final boolean phaseOne = hybridLeaf;
 
         return CompletableFuture.runAsync(() -> {
+            long taskStartNs = System.nanoTime();
             try {
                 int minY = generator.getMinY();
                 int maxY = minY + WORLD_HEIGHT - 1;
@@ -328,6 +329,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 resultConsumer.accept(pooledFullDataSource);
                 if (phaseOne) leafLedger.add(leafKey); // после отдачи данных: сбой выше не загонит лист в фазу 2 вхолостую
                 int footprintChunks = (width * step) >> 4;
+                throughputLimits.recordAnalyticTask(detailLevel, System.nanoTime() - taskStartNs);
                 throughputLimits.recordChunksGenerated(footprintChunks * footprintChunks);
             } catch (Throwable t) {
                 LOGGER.error("Failed to generate DH LOD data at chunk ({}, {}), detailLevel {}:",

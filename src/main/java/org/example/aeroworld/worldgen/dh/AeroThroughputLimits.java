@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
  * Статистика и мониторинг пропускной способности (throughput) аналитического генератора DH SeedGen.
@@ -43,7 +44,17 @@ public class AeroThroughputLimits {
 
     public static final int QUEUE_SCALE = 4;
     public static final int IN_FLIGHT_SCALE = 4;
-    public static final int RENDER_YIELD_QUEUE = 200;
+    /** Порог по умолчанию, пока конфиг не загружен; сам порог задаёт {@code renderYieldQueue} в конфиге мода. */
+    public static final int DEFAULT_RENDER_YIELD_QUEUE = 2500;
+
+    /** Длина очереди рендера, выше которой генерация ждёт (ключ {@code renderYieldQueue}, меняется без пересборки). */
+    public static int renderYieldQueue() {
+        try {
+            return AeroWorldConfig.DH_RENDER_YIELD_QUEUE.get();
+        } catch (IllegalStateException | NullPointerException e) {
+            return DEFAULT_RENDER_YIELD_QUEUE;
+        }
+    }
     public static final int SAVE_DELAY_MS = 1000;
     public static final String SQLITE_SYNC = "NORMAL";
 
@@ -84,6 +95,35 @@ public class AeroThroughputLimits {
         return future;
     }
 
+    // Аналитические задачи по уровню детализации (окно между строками Throughput): сколько завершилось и сколько времени
+    // ушло на сам расчёт (без ожидания в очереди и пуле). Отделяет «мало задач» от «задачи медленные»: chunks/с в отчёте
+    // это площадь секций, и к концу прогрузки падает просто потому, что остаются мелкие уровни.
+    private static final int MAX_DETAIL_TRACKED = 16;
+    private final AtomicLongArray windowDetailTasks = new AtomicLongArray(MAX_DETAIL_TRACKED);
+    private final AtomicLongArray windowDetailNs = new AtomicLongArray(MAX_DETAIL_TRACKED);
+
+    /** Завершена аналитическая задача уровня {@code detailLevel}; {@code computeNanos} — время работы самого генератора. */
+    public void recordAnalyticTask(int detailLevel, long computeNanos) {
+        int d = Math.max(0, Math.min(detailLevel, MAX_DETAIL_TRACKED - 1));
+        windowDetailTasks.incrementAndGet(d);
+        windowDetailNs.addAndGet(d, computeNanos);
+    }
+
+    /** Строка вида {@code d0 412 (13.7/s, 38 ms) d3 20 (0.7/s, 410 ms)} за окно; обнуляет счётчики окна. */
+    private String drainAnalyticSummary(double elapsedSec) {
+        StringBuilder sb = new StringBuilder();
+        for (int d = 0; d < MAX_DETAIL_TRACKED; d++) {
+            long n = windowDetailTasks.getAndSet(d, 0);
+            long ns = windowDetailNs.getAndSet(d, 0);
+            if (n == 0) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append('d').append(d).append(' ').append(n).append(" (")
+                    .append(String.format(java.util.Locale.ROOT, "%.1f", elapsedSec > 0 ? n / elapsedSec : 0.0))
+                    .append("/s, ").append(ns / 1_000_000L / n).append(" ms)");
+        }
+        return sb.length() == 0 ? "none" : sb.toString();
+    }
+
     public void recordChunksGenerated(int chunks) {
         totalChunksGenerated.addAndGet(chunks);
         windowChunksGenerated.addAndGet(chunks);
@@ -115,7 +155,7 @@ public class AeroThroughputLimits {
 
                     long realDone = windowRealDone.getAndSet(0);
                     long realNs = windowRealNs.getAndSet(0);
-                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {} | real leaves: {} done ({}/s, avg {} ms), inFlight={}, total={}",
+                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {} | real leaves: {} done ({}/s, avg {} ms), inFlight={}, total={} | analytic tasks by detail: {}",
                             chunks,
                             String.format(java.util.Locale.ROOT, "%.1f", chunksPerSec),
                             String.format(java.util.Locale.ROOT, "%.1f", sectionsPerSec),
@@ -124,7 +164,8 @@ public class AeroThroughputLimits {
                             realDone,
                             String.format(java.util.Locale.ROOT, "%.1f", elapsedSec > 0 ? realDone / elapsedSec : 0.0),
                             realDone == 0 ? 0 : realNs / 1_000_000L / realDone,
-                            realInFlight.get(), totalRealDone.get());
+                            realInFlight.get(), totalRealDone.get(),
+                            drainAnalyticSummary(elapsedSec));
                 }
             }
         }
@@ -202,7 +243,7 @@ public class AeroThroughputLimits {
             GATE_LOGGER.info("[RenderYieldGate] blocked {}% of {} checks | queue size last={} max={} (limit={})",
                     String.format(java.util.Locale.ROOT, "%.1f", rBlockedPct), rChecks,
                     renderGateLastQueueSize.get(), renderGateMaxQueueSize.getAndSet(0),
-                    RENDER_YIELD_QUEUE);
+                    renderYieldQueue());
 
             GATE_LOGGER.info("[BacklogGate] blocked {}% of {} checks | inProgress last={} max={} allowed={}",
                     String.format(java.util.Locale.ROOT, "%.1f", bBlockedPct), bChecks,
