@@ -58,7 +58,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
     private final AeroColumnWriter columnWriter;
     private final AeroThroughputLimits throughputLimits;
     private final AeroFastDistantTerrain fastTerrain;
-    /** Столбы-маркеры структур на LOD или {@code null} (-Daeroworld.dhStructures=false). */
+    /** Миниатюры структур на LOD или {@code null} (-Daeroworld.dhStructures=false). */
     private final AeroStructureMarkers structureMarkers;
 
     /** Реальный DH chunk-gen для листьев (detail 0) в радиусе R; создаётся лениво — уровень DH регистрируется после load-события. */
@@ -291,9 +291,9 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 // сэмплируемая колонка попадает в свой чанк — кэш только мешает лишней проверкой.
                 Layer1ColumnCache columnCache = (step == 1 && l1Terrain != null) ? new Layer1ColumnCache() : null;
 
-                // Столбы-маркеры структур (только достаточно детальные секции, см. AeroStructureMarkers)
+                // Миниатюры структур (только достаточно детальные секции, см. AeroStructureMarkers)
                 var markers = structureMarkers != null && detailLevel <= AeroStructureMarkers.MAX_DETAIL
-                        ? structureMarkers.forSection(baseBlockX, baseBlockZ, width, step) : Map.<Integer, AeroStructureMarkers.Marker>of();
+                        ? structureMarkers.forSection(baseBlockX, baseBlockZ, width, step) : Map.<Integer, AeroStructureMarkers.Placed>of();
 
                 for (int relX = 0; relX < width; relX++) {
                     int bx = baseBlockX + relX * step;
@@ -317,8 +317,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                             );
                         }
 
-                        AeroStructureMarkers.Marker marker = markers.get(relX * width + relZ);
-                        if (marker != null) spans = AeroStructureMarkers.apply(spans, marker, step, maxY);
+                        AeroStructureMarkers.Placed marker = markers.get(relX * width + relZ);
+                        if (marker != null) spans = AeroStructureMarkers.apply(spans, marker, maxY);
 
                         List<DhApiTerrainDataPoint> points = columnWriter.toDataPoints(spans, minY, maxY, minY);
                         pooledFullDataSource.setApiDataPointColumn(relX, relZ, genStep, points);

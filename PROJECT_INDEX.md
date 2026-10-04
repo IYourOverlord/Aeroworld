@@ -110,7 +110,8 @@ worldgen/
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках
 │   ├── AeroSeedWorldGenBinding.java   - слушатель DhApiLevelLoadEvent, регистрация оверрайда и stand-down логика
 │   ├── AeroSeedWorldGenerator.java    - реализация IDhApiWorldGenerator (EDhApiWorldGeneratorReturnType.API_CHUNKS)
-│   ├── AeroStructureMarkers.java      - цветные столбы-маркеры структур на LOD (detail <= 5): позиции пробным createStructures на одноразовом ProtoChunk, кэш по ячейкам 32x32 чанка; -Daeroworld.dhStructures=false отключает
+│   ├── AeroStructureMarkers.java      - миниатюры структур на LOD (detail <= 5), стоят на земле своего слоя; позиции пробным createStructures на одноразовом ProtoChunk (кэш по ячейкам 32x32 чанка, подземные структуры и End City пропущены, см. AeroStructureIcon.shownOnLod); -Daeroworld.dhStructures=false отключает
+│   ├── AeroStructureIcon.java         - чистые (без MC) воксельные шаблоны миниатюр по id структуры (послойные ASCII-схемы), проверка: AeroStructureIconSelfCheck
 │   └── AeroThroughputLimits.java      - счётчик чанков и секций, периодический отчёт производительности (chunks/s, sections/s)
 ├── feature/
 │   ├── Layer1OreFilter.java           - в applyBiomeDecoration заменяет руду на камень/сланец в секциях Y <= 320
