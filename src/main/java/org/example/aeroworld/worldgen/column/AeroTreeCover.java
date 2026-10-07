@@ -1,5 +1,6 @@
 package org.example.aeroworld.worldgen.column;
 
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
@@ -182,6 +183,8 @@ public final class AeroTreeCover {
         Rule rule = getRuleForBiome(biomeName);
         if (rule == null) return null;
 
+        // В реальном чанке дерево не прорастает на снежном/каменном верхнем блоке (would_survive), LOD обязан так же.
+        Layer1TerrainGenerator.BiomeSurfaceInfo surfaceInfo = Layer1TerrainGenerator.surfaceInfoForBiomeName(biomeName);
         int cellX = x >> 2;
         int cellZ = z >> 2;
         int r = rule.shape().canopyRadius();
@@ -204,6 +207,7 @@ public final class AeroTreeCover {
                 int treeSurfaceY = (dx == 0 && dz == 0) ? surfaceY
                         : (terrainGen != null ? terrainGen.getHeight(treeX, treeZ) : surfaceY);
                 if (treeSurfaceY < rule.minSurfaceY() || treeSurfaceY > rule.maxSurfaceY()) continue;
+                if (!Layer1TerrainGenerator.surfaceBlocks(surfaceInfo, treeSurfaceY).top().is(BlockTags.DIRT)) continue;
 
                 int minH = rule.shape().minTrunkHeight();
                 int maxH = rule.shape().maxTrunkHeight();
