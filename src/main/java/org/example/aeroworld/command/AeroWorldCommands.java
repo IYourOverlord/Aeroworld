@@ -784,6 +784,14 @@ public final class AeroWorldCommands {
             sb.append(" | formula via FIELD source: aeroworld:").append(fs.getLayer1BiomeName(x, z));
         }
 
+        // Рельеф и настроенная копия источника (её читает /locate; поле выше, см. fieldBiomeSource, плато не знает).
+        sb.append("\n  Terrain: height=").append(l1Terrain.getHeight(x, z))
+                .append(" plateauMask=").append(String.format(Locale.ROOT, "%.2f", l1Terrain.getPlateauMask(x, z)))
+                .append(" deepLake=").append(l1Terrain.isDeepLake(x, z));
+        if (aeroGen.getBiomeSource() instanceof org.example.aeroworld.worldgen.biome.AeroBiomeSource cs) {
+            sb.append(" | configured source (/locate): aeroworld:").append(cs.getLayer1BiomeName(x, z));
+        }
+
         // Реальные блоки из сгенерированного чанка (getHeight форсирует генерацию): верхний блок и «земля» под деревьями/травой.
         // Это то, с чем надо сравнивать строки detailLevel выше: LOD должен рисовать именно эту землю и этот биом.
         try {
