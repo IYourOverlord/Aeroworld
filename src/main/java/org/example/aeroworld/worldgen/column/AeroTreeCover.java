@@ -32,8 +32,13 @@ public final class AeroTreeCover {
             AeroTreeShape shape,
             double chancePerCell,
             int minSurfaceY,
-            int maxSurfaceY
-    ) {}
+            int maxSurfaceY,
+            @Nullable AeroTreeShape alt
+    ) {
+        public Rule(AeroTreeShape shape, double chancePerCell, int minSurfaceY, int maxSurfaceY) {
+            this(shape, chancePerCell, minSurfaceY, maxSurfaceY, null);
+        }
+    }
 
     public record TreeSpans(
             int trunkBottom,
@@ -90,6 +95,13 @@ public final class AeroTreeCover {
             4, 6, 3, 4, CanopyProfile.SPHERE
     );
 
+    // фиолетовая крона: oak_leaves красится foliage_color биома wisteria_grove
+    public static final AeroTreeShape SHAPE_WISTERIA = new AeroTreeShape(
+            Blocks.OAK_LOG.defaultBlockState(),
+            Blocks.OAK_LEAVES.defaultBlockState(),
+            4, 6, 3, 4, CanopyProfile.SPHERE
+    );
+
     public static final AeroTreeShape SHAPE_MANGROVE = new AeroTreeShape(
             Blocks.MANGROVE_LOG.defaultBlockState(),
             Blocks.MANGROVE_LEAVES.defaultBlockState(),
@@ -117,7 +129,7 @@ public final class AeroTreeCover {
             return new Rule(SHAPE_CHERRY, 0.55, 1, 130);
         }
         if (path.contains("wisteria")) {
-            return new Rule(SHAPE_CHERRY, 0.55, 1, 130); // ponytail: на LOD только розовая крона, в игре cherry + окрашенный oak
+            return new Rule(SHAPE_CHERRY, 0.55, 1, 130, SHAPE_WISTERIA); // как в игре: половина деревьев вишнёвые, половина фиолетовые
         }
         if (path.contains("taiga") || path.contains("grove")) {
             return new Rule(SHAPE_SPRUCE, 0.55, 1, 130);
@@ -232,9 +244,10 @@ public final class AeroTreeCover {
                     trunkTop = cBottom - 1;
                 }
 
+                AeroTreeShape shape = (rule.alt() != null && ((h >> 40) & 1) == 1) ? rule.alt() : rule.shape();
                 return new TreeSpans(
-                        trunkBottom, trunkTop, rule.shape().log(),
-                        cBottom, cTop, rule.shape().leaves()
+                        trunkBottom, trunkTop, shape.log(),
+                        cBottom, cTop, shape.leaves()
                 );
             }
         }
