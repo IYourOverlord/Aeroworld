@@ -164,8 +164,9 @@ public final class AeroColumnModel {
             }
 
             int stoneTop = Math.min(surfaceY, levelMax);
-            Layer1TerrainGenerator.BiomeSurfaceInfo surfaceInfo =
-                    Layer1TerrainGenerator.surfaceInfoForBiomeName(layer1BiomeName);
+            boolean plateau = surfaceY >= seaLevel && layer1Terrain.isPlateau(x, z);
+            Layer1TerrainGenerator.BiomeSurfaceInfo surfaceInfo = plateau ? Layer1TerrainGenerator.PLATEAU_SURFACE
+                    : Layer1TerrainGenerator.surfaceInfoForBiomeName(layer1BiomeName);
             Layer1TerrainGenerator.SurfaceBlocks surface = null;
             if (stoneTop >= minY && stoneTop == surfaceY) {
                 surface = Layer1TerrainGenerator.surfaceBlocks(surfaceInfo, surfaceY);
@@ -192,7 +193,7 @@ public final class AeroColumnModel {
                 }
 
                 // Деревья Layer 1 на LOD
-                if (sampleBiomes && stoneTop == surfaceY && surfaceY >= seaLevel) {
+                if (sampleBiomes && !plateau && stoneTop == surfaceY && surfaceY >= seaLevel) {
                     AeroTreeCover.TreeSpans tree = AeroTreeCover.sampleLayer1(
                             layer1Terrain.getSeed(), x, z, surfaceY, layer1BiomeName, layer1Terrain);
                     if (tree != null) {

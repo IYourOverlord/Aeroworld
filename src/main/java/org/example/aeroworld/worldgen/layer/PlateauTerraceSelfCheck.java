@@ -46,6 +46,21 @@ public final class PlateauTerraceSelfCheck {
             assert full > h + PlateauTerrace.RISE - step - 1e-9 && full < h + PlateauTerrace.RISE + step : "подъём вне допуска";
         }
 
+        // 5б. Каньон: чем больше core, тем ниже (монотонно), дно не ниже min(h, FLOOR_Y) - шаг, кайма не выше h + RISE.
+        for (double h = -10.0; h <= 200.0; h += 1.7) {
+            double prevV = Double.MAX_VALUE;
+            for (double c = 0.0; c <= 1.0; c += 0.02) {
+                double v = PlateauTerrace.apply(h, 1.0, c, 0.0);
+                assert v <= prevV + 1e-9 : "каньон не монотонен: h=" + h + " c=" + c;
+                assert v >= Math.min(h, PlateauTerrace.FLOOR_Y) - step - 1e-9 : "дно каньона ниже допуска: h=" + h;
+                assert v <= h + PlateauTerrace.RISE + 1e-9 : "кайма выше RISE: h=" + h;
+                prevV = v;
+            }
+            // Сдвиг фазы не уводит высоту больше чем на шаг + |jitter|.
+            double j = PlateauTerrace.apply(h, 1.0, 0.0, PlateauTerrace.JITTER);
+            assert Math.abs(j - PlateauTerrace.apply(h, 1.0, 0.0, 0.0)) <= step + PlateauTerrace.JITTER + 1e-9 : "jitter слишком велик";
+        }
+
         // 6. Маска: 0..1, гаснет на хребтах и в океане, детерминирована.
         for (double n = -1.0; n <= 1.0; n += 0.05) {
             for (double c = -0.5; c <= 1.0; c += 0.1) {

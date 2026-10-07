@@ -279,9 +279,15 @@ public class Layer1TerrainGenerator {
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
         height = lerp(height, land, smoothstep(-0.06, 0.10, continentality));
 
-        // Плато ashen_plateau: подъём над местной землёй и террасы шагом 6. До рек: на плато высота > 50,
+        // Плато ashen_plateau: кайма из плит (подъём + террасы шагом 6) и каньон в центре. До рек: на плато высота > 50,
         // lowland гасит реки сам. Маска берётся из getPlateauMask, той же функции, что выбирает биом.
-        height = PlateauTerrace.apply(height, getPlateauMask(wx, wz, continentality, ridge));
+        if (PlateauTerrace.gate(continentality, ridge) > 0.0) {
+            double pn = plateauNoise.fbm2D(wx * PlateauTerrace.NOISE_FREQ, wz * PlateauTerrace.NOISE_FREQ, 3, 2.0, 0.5);
+            double jitter = plateauNoise.noise2D(wx * PlateauTerrace.JITTER_FREQ, wz * PlateauTerrace.JITTER_FREQ)
+                    * PlateauTerrace.JITTER;
+            height = PlateauTerrace.apply(height, PlateauTerrace.mask(pn, continentality, ridge),
+                    PlateauTerrace.core(pn, continentality, ridge), jitter);
+        }
 
         // Реки и озёра: сеть стекает к океану и озёрам (AeroRiverNetwork), русла и чаши уходят под уровень моря,
         // воду доливает обычная заливка. В горах и на высокой суше реки гасятся: они кончаются у подножия, а не
@@ -328,6 +334,20 @@ public class Layer1TerrainGenerator {
     public double getPlateauMask(int wx, int wz) {
         return getPlateauMask(wx, wz, getContinentality(wx, wz), getRidgeStrength(wx, wz));
     }
+
+    /**
+     * Колонка на плато по рельефу (маска + суша + вне хребтов), без учёта температуры. Реальные чанки берут биом из
+     * экземпляра-поля {@code ChunkGenerator}, где Layer1 не применён и плато всегда 0, поэтому поверхность плато
+     * ({@link SurfaceType#STRATA}) выбирается по той же маске, что поднимает высоту, а не по биому чанка.
+     */
+    public boolean isPlateau(int wx, int wz) {
+        double c = getContinentality(wx, wz);
+        double r = getRidgeStrength(wx, wz);
+        return PlateauTerrace.isPlateauBiome(getPlateauMask(wx, wz, c, r), c, r, 0.0);
+    }
+
+    /** Поверхность плато: то же, что даёт биом {@code ashen_plateau}. */
+    public static final BiomeSurfaceInfo PLATEAU_SURFACE = classifyPath("ashen_plateau");
 
     /** То же, что {@link #getPlateauMask(int, int)}, но с уже посчитанными континентальностью и хребтом. */
     public double getPlateauMask(int wx, int wz, double continentality, double ridge) {
@@ -698,7 +718,7 @@ public class Layer1TerrainGenerator {
 
                 int surfaceY = cache.surfaceY[idx];
                 Holder<Biome> biomeHolder = biomeGetter.apply(wx, wz);
-                BiomeSurfaceInfo info = getSurfaceInfo(biomeHolder);
+                BiomeSurfaceInfo info = isPlateau(wx, wz) ? PLATEAU_SURFACE : getSurfaceInfo(biomeHolder);
 
                 boolean underWater = surfaceY < SEA_LEVEL;
 
