@@ -143,6 +143,13 @@ public class Layer1TerrainGenerator {
             Blocks.HORN_CORAL_FAN.defaultBlockState()
     };
 
+    /** Плоское дно глубокого озера (там ставится океанический монумент). */
+    public static final int DEEP_LAKE_FLOOR_Y = -50;
+    /** Сила глубокого озера, выше которой колонка получает биом {@code deep_lake}. */
+    private static final double DEEP_LAKE_BIOME_THRESHOLD = 0.5;
+    /** Глубокое озеро считается настоящим, если дно реально не выше этой отметки (на горах чаша гасится). */
+    private static final int DEEP_LAKE_MIN_DEPTH = 15;
+
     public static final int CAVE_BOTTOM_Y = -50;
     public static final int CAVE_TOP_Y = -25;
     private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -37.5
@@ -283,11 +290,35 @@ public class Layer1TerrainGenerator {
         double lowland = 1.0 - smoothstep(20.0, 50.0, height);
         double riverBed = SEA_LEVEL - (5.0 + riverNoise.noise2D(wx * 0.018, wz * 0.018) * 0.5);
         height = lerp(height, Math.min(height, riverBed), net.river() * lowland);
-        double lakeBed = SEA_LEVEL - (4.0 + 8.0 * net.lake());
+        // Глубокие озёра (доля сток-озёр, AeroRiverNetwork.DEEP_LAKE_SHARE): к обычной чаше -4..-12 добавляется
+        // плавная чаша deep^1.5 с плоским дном на DEEP_LAKE_FLOOR_Y (deep = 1 внутри 0.55 радиуса озера).
+        double lakeDepth = 4.0 + 8.0 * net.lake()
+                + (SEA_LEVEL - DEEP_LAKE_FLOOR_Y - 12.0) * Math.pow(net.deep(), 1.5);
+        double lakeBed = SEA_LEVEL - lakeDepth;
         height = lerp(height, Math.min(height, lakeBed), net.lake() * lowland);
 
         int finalHeight = (int) Math.round(height);
         return Math.max(MIN_Y + BEDROCK_LAYERS + 1, Math.min(220, finalHeight));
+    }
+
+    /**
+     * Глубокое озеро в колонке: единая маска для биома {@code deep_lake} и монумента (иначе они разъедутся).
+     * Сила чаши {@code > 0.5} и дно реально глубокое (чаша не погашена горами).
+     */
+    public boolean isDeepLake(int wx, int wz) {
+        AeroRiverNetwork.Sample net = rivers.sample(wx, wz, getContinentality(wx, wz));
+        if (net.deep() <= DEEP_LAKE_BIOME_THRESHOLD) return false;
+        return getHeight(wx, wz) <= SEA_LEVEL - DEEP_LAKE_MIN_DEPTH;
+    }
+
+    /**
+     * Центр глубокого озера в чанке: {@code {x, z}} или {@code null}. Центр отдаётся, только если дно там
+     * действительно на {@link #DEEP_LAKE_FLOOR_Y} (плоская чаша), иначе монументу не на чем стоять.
+     */
+    public int[] getDeepLakeCentre(int chunkX, int chunkZ) {
+        int[] c = rivers.deepLakeCentre(chunkX, chunkZ);
+        if (c == null) return null;
+        return getHeight(c[0], c[1]) <= DEEP_LAKE_FLOOR_Y + 1 ? c : null;
     }
 
     /**

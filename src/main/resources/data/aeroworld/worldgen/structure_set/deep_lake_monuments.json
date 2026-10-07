@@ -1,0 +1,12 @@
+{
+  "structures": [
+    {
+      "structure": "minecraft:monument",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "aeroworld:deep_lake_monument",
+    "salt": 10387314
+  }
+}

@@ -50,11 +50,43 @@ public final class AeroRiverNetworkSelfCheck {
             for (int z = -3000; z <= 3000; z += 211) {
                 AeroRiverNetwork.Sample s = warped.sample(x, z, cont.applyAsDouble(x, z));
                 assert s.river() >= 0 && s.river() <= 1 && s.lake() >= 0 && s.lake() <= 1;
+                assert s.deep() >= 0 && s.deep() <= s.lake() : "deep выходит за lake";
                 assert s.equals(warped.sample(x, z, cont.applyAsDouble(x, z))) : "недетерминировано";
             }
         }
         assert warped.sample(0, 0, 0.0).river() == new AeroRiverNetwork(12345L, cont).sample(0, 0, 0.0).river() : "seed -> один результат";
 
-        System.out.println("AeroRiverNetworkSelfCheck: all checks passed (shown=" + shown + ", lakes=" + lakes + ", ends=" + ends + ")");
+        // Глубокие озёра: только сток-озёра, доля около DEEP_LAKE_SHARE, у каждого ровно один центр в чанке,
+        // и в центре чаша на полную силу (плоское дно).
+        // Материк с холмами-впадинами (на плавном уклоне замкнутых впадин нет, а значит и сток-озёр).
+        java.util.function.DoubleBinaryOperator hilly = (x, z) -> 0.30 + 0.25 * Math.sin(x / 900.0) * Math.sin(z / 1000.0);
+        AeroRiverNetwork basins = new AeroRiverNetwork(777L, hilly);
+        int sinks = 0, deepLakes = 0, centres = 0;
+        for (int i = -40; i <= 40; i++) {
+            for (int j = -40; j <= 40; j++) {
+                Cell c = basins.cell(i, j);
+                if (c.lakeR() > 0 && !c.hasTarget()) sinks++;
+                if (!c.deep()) continue;
+                assert !c.hasTarget() && c.lakeR() >= 130 : "глубокое озеро не сток-озеро";
+                deepLakes++;
+                int ncx = (int) Math.floor(c.node().x() / 16), ncz = (int) Math.floor(c.node().z() / 16);
+                int found = 0;
+                for (int cx = ncx - 20; cx <= ncx + 20; cx++) {
+                    for (int cz = ncz - 20; cz <= ncz + 20; cz++) {
+                        int[] centre = basins.deepLakeCentre(cx, cz);
+                        if (centre == null) continue;
+                        found++;
+                        AeroRiverNetwork.Sample at = basins.sample(centre[0], centre[1], hilly.applyAsDouble(centre[0], centre[1]));
+                        assert at.deep() > 0.99 : "центр озера не на дне чаши: " + at.deep();
+                        centres += 1;
+                    }
+                }
+                assert found >= 1 : "у глубокого озера нет центра в окне чанков";
+            }
+        }
+        assert sinks > 20 && deepLakes >= 1 && deepLakes <= sinks / 2 : sinks + " " + deepLakes;
+
+        System.out.println("AeroRiverNetworkSelfCheck: all checks passed (shown=" + shown + ", lakes=" + lakes + ", ends=" + ends
+                + ", sinks=" + sinks + ", deepLakes=" + deepLakes + ", centres=" + centres + ")");
     }
 }

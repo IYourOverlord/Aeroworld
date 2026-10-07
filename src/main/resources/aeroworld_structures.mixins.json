@@ -6,7 +6,9 @@
   "mixins": [
     "NetherFortressStructureMixin",
     "EndCityStructureMixin",
-    "EndCityStructureAccessor"
+    "EndCityStructureAccessor",
+    "OceanMonumentStructureMixin",
+    "OceanMonumentBuildingMixin"
   ],
   "client": [],
   "server": [],

@@ -14,7 +14,7 @@
 
 | Слой | Y-диапазон | Что генерируется | Генератор | Настройки |
 |---|---|---|---|---|
-| Layer 1 | -64 .. 300 (`Layer1TerrainGenerator.MIN_Y/MAX_Y`) | Кастомный рельеф на собственном шуме (континентальность, эрозия, хребты, речные долины). `SEA_LEVEL = 0`. Высота грунта клампится в -58 .. 220: глубокий океан около -47, шельф около -8, пляж около 2, суша от 3, горы и хребты до 220. Редкие плато `ashen_plateau` (+45 блоков над землёй, террасы шагом 6, маска `getPlateauMask`, математика в `PlateauTerrace`; биом и высота берут одну маску). Гигантская пещера Y -50 .. -25 под всей сушей (не под океаном) с мхом, светящимся лишайником и пещерными лианами. 5 слоёв бедрока. Крепость Нижнего мира фиксируется в Y -55..-50 (`NetherFortressStructureMixin`). | `worldgen/layer/Layer1TerrainGenerator.java` | Жёстко в коде. `settings: minecraft:overworld` нужен только базовому `NoiseBasedChunkGenerator` (структуры), рельеф из него не берётся |
+| Layer 1 | -64 .. 300 (`Layer1TerrainGenerator.MIN_Y/MAX_Y`) | Кастомный рельеф на собственном шуме (континентальность, эрозия, хребты, речные долины). `SEA_LEVEL = 0`. Высота грунта клампится в -58 .. 220: глубокий океан около -47, шельф около -8, пляж около 2, суша от 3, горы и хребты до 220. Редкие плато `ashen_plateau` (+45 блоков над землёй, террасы шагом 6, маска `getPlateauMask`, математика в `PlateauTerrace`; биом и высота берут одну маску). Гигантская пещера Y -50 .. -25 под всей сушей (не под океаном) с мхом, светящимся лишайником и пещерными лианами. 5 слоёв бедрока. Крепость Нижнего мира фиксируется в Y -55..-50 (`NetherFortressStructureMixin`). Глубокие озёра: 10% сток-озёр (`AeroRiverNetwork.DEEP_LAKE_SHARE`) копаются плавной чашей `deep^1.5` до плоского дна Y -50 (`DEEP_LAKE_FLOOR_Y`), биом `deep_lake` (маска `Layer1TerrainGenerator.isDeepLake`), по одному океаническому монументу на озеро (раздел 5, п. 9). | `worldgen/layer/Layer1TerrainGenerator.java` | Жёстко в коде. `settings: minecraft:overworld` нужен только базовому `NoiseBasedChunkGenerator` (структуры), рельеф из него не берётся |
 | Layer 2 | 400 .. 500 | Острова-конусы с 4 профилями и шумовой деформацией края, архипелаги (центр + 5-6 спутников), деревья по кольцу края, сталактиты снизу, мосты между соседями | `worldgen/layer/LowerIslandGenerator.java` | `config/Layer2Settings.java` (`aero_settings.layer2`) |
 | Layer 3 | 1000 .. 1100 | Небесные тела двух типов (`BodyType`): 50% полые метеориты с кратерами, 50% сплошные планеты с 3 кольцами астероидов. На каждой планете строго по центру спавнится End City без корабля (`EndCityStructureMixin`). | `worldgen/layer/HighIslandGenerator.java` | `config/Layer3Settings.java`, `config/Layer3BodySettings.java` (`aero_settings.layer3`) |
 | Layer 4 | 1900 .. 2031 | "Медузы": купол + 10 щупалец длиной 90-120, щупальца свисают ниже `LAYER_MIN_Y` (до ~1780) | `worldgen/layer/UpperIslandGenerator.java` | `config/Layer4Settings.java` |
@@ -70,10 +70,12 @@ org.example.aeroworld
 │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld
 │       ├── EndCityStructureAccessor.java     - аксессор ванильного generatePieces в EndCityStructure
 │       ├── EndCityStructureMixin.java        - принудительный спавн End City на планетах Layer 3, вырезка корабля
+│       ├── OceanMonumentBuildingMixin.java   - низ монумента Y 39 -> MONUMENT_MIN_Y (дно озера), заливка водой до SEA_LEVEL вместо Y 64 (только здания ниже нуля)
+│       ├── OceanMonumentStructureMixin.java  - старт монумента только в чанке центра глубокого озера, считает MONUMENT_MIN_Y
 │       └── NetherFortressStructureMixin.java - сдвиг Nether Fortress в пещеру Layer 1 (Y -55..-50)
 ├── registry/
 │   ├── AeroDimensions.java            - CHUNK_GENERATOR aeroworld:aero_generator
-│   ├── AeroRegistries.java            - регистрация генератора и aeroworld:aero_biome_source
+│   ├── AeroRegistries.java            - регистрация генератора, aeroworld:aero_biome_source и aeroworld:deep_lake_monument (тип размещения структур)
 │   ├── AeroResourceKeys.java          - ResourceKey DimensionType / LevelStem / Level aeroworld:aeroworld
 │   └── AeroWorldPreset.java           - документация: WorldPreset только через datapack
 ├── spawning/LayerSpawnRestriction.java - отмена спавна при Y >= 1900, только если level.dimension() == aeroworld:aeroworld (5.7)
@@ -125,7 +127,7 @@ worldgen/
 │       └── VaultTrialSpawnTier.java       - POOR 1+1, MEDIUM 2+3, RICH 3+5
 ├── layer/
 │   ├── Layer1TerrainGenerator.java    - весь Layer 1: высоты, пещера, заливка, декор пещеры, buildSurface
-│   ├── AeroRiverNetwork.java          - чистая (без MC) сеть рек и озёр: узлы сетки 640 блоков стекают к соседу с меньшей континентальностью, русла расширяются к устью, замкнутые впадины и часть узлов дают озёра; Layer1TerrainGenerator.getHeight вырезает русла/чаши ниже SEA_LEVEL, в горах (height > 20..50) реки гасятся; проверка: AeroRiverNetworkSelfCheck
+│   ├── AeroRiverNetwork.java          - чистая (без MC) сеть рек и озёр: узлы сетки 640 блоков стекают к соседу с меньшей континентальностью, русла расширяются к устью, замкнутые впадины и часть узлов дают озёра; Layer1TerrainGenerator.getHeight вырезает русла/чаши ниже SEA_LEVEL, в горах (height > 20..50) реки гасятся; `Sample.deep` и `deepLakeCentre(chunkX, chunkZ)` для глубоких озёр (центр в мире решается обратным преобразованием искажения); проверка: AeroRiverNetworkSelfCheck
 │   ├── Layer1FlatGenerator.java        - тонкая обёртка (surfaceHeight/topmostHeight) для валидатора и биомов
 │   ├── LowerIslandGenerator.java       - Layer 2: fillChunk, placeTreesInRegion, clearVanillaVegetationInCentralZone
 │   ├── HighIslandGenerator.java        - Layer 3: полые метеориты с кратерами и планеты с кольцами астероидов
@@ -136,6 +138,7 @@ worldgen/
 │   ├── IslandPlacer.java              - сетка ячеек, anti-overlap, архипелаги (25% ячеек Layer 2), AABB-фильтр
 │   └── IslandShape.java               - профили конуса, precomputeXZ, isSolid
 ├── structure/
+│   ├── DeepLakeMonumentPlacement.java      - StructurePlacement «один старт на глубокое озеро» (чанк центра озера), срабатывает только при IS_GENERATING; ThreadLocal MONUMENT_MIN_Y для миксинов монумента
 │   ├── AncientCityIslandSupportPlacer.java - ступенчатая deepslate-платформа под ancient_city до пола пещеры
 │   ├── StructureCategory.java         - SURFACE, ISLAND, UNDERGROUND, WATER, SKY_FLOATING, DENY
 │   ├── StructureCategoryResolver.java - deny-список, токены путей, resolveForActualLayer
@@ -190,7 +193,7 @@ worldgen/
 
 1. **Генератор.** Ванильный пайплайн рельефа не используется ни для одного слоя; наследование от `NoiseBasedChunkGenerator` нужно для codec `settings`, структур и Distant Horizons. Поля `vanillaGenerator` нет.
 2. **Многопоточность.** Поля генераторов `volatile`; `initializeWithSeed` `synchronized`, `applyCarvers` проверяет сид перед входом в монитор. Кэши `ChunkIslandCache`, `IslandCache` и `islandBridgeCache` на `Long2ObjectLinkedOpenHashMap` + `StampedLock` с истинным O(1) LRU-вытеснением. Запись блоков в `fillFromNoise` через `SectionDirectChunkWriter` (`useLocking=false`), heightmap праймятся пакетом один раз на чанк.
-3. **Биомы.** `AeroBiomeSource` с `ThreadLocal<BiomeColumnCache>` (64 слота direct-mapped) — все 17 октав шума Layer 1 и `delegate.getNoiseBiome` на quart y=20 сэмплируются ровно 1 раз на XZ-колонку (16 раз на чанк вместо 8384). Мемоизация `vanilla -> aero` через `ConcurrentHashMap<Holder<Biome>, Holder<Biome>>`. quart y > 75: клон `aeroworld:<path>`; океаны, `dripstone_caves`, `lush_caves`, `deep_dark` -> `aeroworld:plains`. quart y <= 75: `aeroworld:<name>` через `AeroBiomeRegistryCache`. Y -64..-8: пятна `aeroworld:deep_dark` для Ancient City. `possibleBiomes()` = 60 клонов + биомы ванильного пресета.
+3. **Биомы.** `AeroBiomeSource` с `ThreadLocal<BiomeColumnCache>` (64 слота direct-mapped) — все 17 октав шума Layer 1 и `delegate.getNoiseBiome` на quart y=20 сэмплируются ровно 1 раз на XZ-колонку (16 раз на чанк вместо 8384). Мемоизация `vanilla -> aero` через `ConcurrentHashMap<Holder<Biome>, Holder<Biome>>`. quart y > 75: клон `aeroworld:<path>`; океаны, `dripstone_caves`, `lush_caves`, `deep_dark` -> `aeroworld:plains`. quart y <= 75: `aeroworld:<name>` через `AeroBiomeRegistryCache`. Y -64..-8: пятна `aeroworld:deep_dark` для Ancient City. `possibleBiomes()` = 61 клон + биомы ванильного пресета. `deep_lake` (клон `deep_ocean`) ставится маской `Layer1TerrainGenerator.isDeepLake` (параметр `deepLake` в `resolveLayer1Biome`), пятно `deep_dark` на дне озера его не перекрывает.
    Для аналитического пути добавлены прямые методы `getLayer1BiomeName(x, z)`, `isDeepDark(x, z)`, `getIslandBiomeName(x, z)`, `findAeroBiome(name)`.
 4. **Интеграция с Distant Horizons (SeedGen Override).**
     - Реализована мягкая зависимость: при отсутствии DH на classpath (`ClassNotFoundException`) оверрайд тихо отключается без падения игры (`AeroSeedWorldGenBinding.registerIfDhPresent()`).
@@ -201,21 +204,23 @@ worldgen/
 6. **Структуры.** Валидация только в `createStructures`. `ancient_city` принимается всегда и получает платформу. WATER допускаются на Layer 1 без проверки опоры, на островах отклоняются. `end_city` принудительно центрируется на планетах Layer 3, `fortress` смещается в главную пещеру Layer 1.
 7. **Команды.** `findIsland2/3/4`: спиральный обход ячеек `IslandPlacer` нужного слоя, телепорт на `topY + 5`. `validateSeedGen [count]`: сверка вывода столбцовой модели с `getBaseColumn`.
 8. **Два способа попасть в измерение.** World preset заменяет overworld и не содержит `aero_settings` (используются Java-DEFAULT: Layer 2 grid 25, радиус 25..110; Layer 4 spawn 0.05, grid 30, радиус 25..35). Отдельное измерение `aeroworld:aeroworld` из `dimension/aeroworld.json` использует явные `aero_settings` (grid 20, радиус 50..110 и т.д.). Команды и тик-обработчики проверяют namespace `dimension_type` и работают в обоих случаях; `LayerSpawnRestriction` сравнивает ключ уровня с `aeroworld:aeroworld` и в мире через preset не срабатывает.
+9. **Глубокие озёра и монумент.** Сток-озёра (радиус 130..270) с шансом 10% глубокие: `Sample.deep` (сила только глубоких озёр, `<= lake`) добавляет к чаше `(SEA_LEVEL - DEEP_LAKE_FLOOR_Y - 12) * deep^1.5`, дно плоское на Y -50 внутри 0.55 радиуса. Биом и высота читают одну маску (`isDeepLake`: `deep > 0.5` и дно не выше Y -15, чтобы горы, гасящие чашу, не давали `deep_lake` без воды). Монумент: `DeepLakeMonumentPlacement` даёт старт в чанке центра озера (только если там дно на Y -50), `OceanMonumentStructureMixin` отклоняет все прочие старты монумента в AeroWorld и считает `MONUMENT_MIN_Y = дно - 4`, `OceanMonumentBuildingMixin` подставляет его вместо ванильного Y 39 и режет заливку водой до `SEA_LEVEL`. Валидатор пропускает WATER на Layer 1 без проверки опоры.
 
 ---
 
 ## 6. Ресурсы датапака и конфигурации
 
 - `aeroworld.mixins.json`: конфигурация миксинов DH с плагином `DhWorldGenBorderMixinPlugin` (мягкая зависимость).
-- `aeroworld_structures.mixins.json`: конфигурация миксинов структур (`EndCityStructureMixin`, `NetherFortressStructureMixin`).
+- `aeroworld_structures.mixins.json`: конфигурация миксинов структур (`EndCityStructureMixin`, `NetherFortressStructureMixin`, `OceanMonumentStructureMixin`, `OceanMonumentBuildingMixin`).
 - `data/aeroworld/dimension/aeroworld.json`: генератор `aeroworld:aero_generator`, `settings: minecraft:overworld`, `aero_settings`.
 - `data/aeroworld/dimension_type/aeroworld.json`: `min_y -64`, `height 2096`.
 - `data/aeroworld/worldgen/world_preset/aeroworld.json` + `data/minecraft/tags/worldgen/world_preset/normal.json`: пресет, overworld заменён без `aero_settings`.
-- `data/aeroworld/worldgen/biome/*.json`: 60 клонов `aeroworld:*`.
+- `data/aeroworld/worldgen/biome/*.json`: 61 клон `aeroworld:*` (включая `deep_lake`).
 - `data/aeroworld/tags/worldgen/biome/aero_biomes.json`: 6 биомов, область `remove_ores.json`.
 - `data/aeroworld/neoforge/biome_modifier/remove_ores.json`: `neoforge:remove_features`, шаг `underground_ores`.
 - `data/minecraft/tags/worldgen/biome/has_structure/*.json`: биомы ванильных структур переопределены на `aeroworld:*`.
 - `data/minecraft/worldgen/structure_set/*.json`: переопределённые spacing/separation (включая `end_cities.json` с `spacing=1`).
+- `data/aeroworld/worldgen/structure_set/deep_lake_monuments.json`: `minecraft:monument` с размещением `aeroworld:deep_lake_monument` (по одному на глубокое озеро). `data/minecraft/tags/worldgen/biome/required_ocean_monument_surrounding.json` добавляет `aeroworld:deep_lake` (ванильная проверка биомов вокруг монумента), `has_structure/ocean_monument.json` тоже содержит `deep_lake`. `/locate` для этого размещения не работает.
 - `data/minecraft/worldgen/structure/end_city.json`, `bastion_remnant.json`: кастомные высоты и настройки структур.
 - `data/aeroworld/loot_table/gameplay/layer{2,3,4}/`: vault и trial_spawner, normal и ominous.
 - `data/aeroworld/presets/*.json`: справочные примеры `aero_settings`. Загрузчика в коде нет, игрой не читаются.

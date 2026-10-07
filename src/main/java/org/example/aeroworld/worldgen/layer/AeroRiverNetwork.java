@@ -33,11 +33,20 @@ public final class AeroRiverNetwork {
     /** Узел сетки: положение, континентальность и хэш ячейки. */
     record Node(double x, double z, double cont, long h) {}
 
-    /** Данные ячейки: исток-ребро к (ti, tj), число притоков, радиус озера (0 = нет) и показано ли ребро. */
-    record Cell(Node node, boolean hasTarget, int ti, int tj, int imp, double lakeR, boolean shown) {}
+    /**
+     * Данные ячейки: исток-ребро к (ti, tj), число притоков, радиус озера (0 = нет), показано ли ребро и глубокое ли
+     * озеро (только сток-озёра, см. {@link #DEEP_LAKE_SHARE}).
+     */
+    record Cell(Node node, boolean hasTarget, int ti, int tj, int imp, double lakeR, boolean shown, boolean deep) {}
 
-    /** Вырезание: сила реки и озера, 0..1. */
-    public record Sample(double river, double lake) {}
+    /**
+     * Вырезание: сила реки и озера, 0..1. {@code deep} — сила только глубоких озёр (максимум по их ячейкам, всегда
+     * {@code <= lake}): 1 на плоском дне чаши, к берегу плавно падает до 0.
+     */
+    public record Sample(double river, double lake, double deep) {}
+
+    /** Доля глубоких среди сток-озёр. */
+    static final double DEEP_LAKE_SHARE = 0.10;
 
     private final long seed;
     private final DoubleBinaryOperator continentality;
@@ -120,7 +129,8 @@ public final class AeroRiverNetwork {
             boolean sink = t == null && n.cont() >= WET;
             double lakeR = sink ? 130 + 140 * unit(h2, 20) : t != null && unit(h2, 0) < 0.10 ? 100 + 90 * unit(h2, 20) : 0;
             boolean shown = t != null && (imp >= 2 || unit(h2, 40) < 0.35);
-            c = new Cell(n, t != null, t == null ? 0 : t[0], t == null ? 0 : t[1], imp, lakeR, shown);
+            boolean deep = sink && unit(h2, 44) < DEEP_LAKE_SHARE;
+            c = new Cell(n, t != null, t == null ? 0 : t[0], t == null ? 0 : t[1], imp, lakeR, shown, deep);
             cells.put(k, c);
         }
         return c;
@@ -138,27 +148,39 @@ public final class AeroRiverNetwork {
         return 3.0 + 1.6 * Math.min(imp - 1, 4);
     }
 
+    /** Смещение X искажающего шума в точке (то же, что в {@link #sample}). */
+    private double warpOffsetX(double wx, double wz) {
+        return warp * (noise.fbm2D(wx * 0.0018 + 91.0, wz * 0.0018 - 37.0, 3, 2.0, 0.5) * 110.0
+                + noise.noise2D(wx * 0.006 + 13.0, wz * 0.006 + 7.0) * 24.0);
+    }
+
+    /** Смещение Z искажающего шума в точке (то же, что в {@link #sample}). */
+    private double warpOffsetZ(double wx, double wz) {
+        return warp * (noise.fbm2D(wx * 0.0018 - 53.0, wz * 0.0018 + 71.0, 3, 2.0, 0.5) * 110.0
+                + noise.noise2D(wx * 0.006 - 29.0, wz * 0.006 + 41.0) * 24.0);
+    }
+
     /**
      * Сила вырезания реки и озера в колонке.
      * @param cont континентальность колонки: чем ближе к берегу, тем шире русло (эстуарий)
      */
     public Sample sample(int wx, int wz, double cont) {
-        double px = wx + warp * (noise.fbm2D(wx * 0.0018 + 91.0, wz * 0.0018 - 37.0, 3, 2.0, 0.5) * 110.0
-                + noise.noise2D(wx * 0.006 + 13.0, wz * 0.006 + 7.0) * 24.0);
-        double pz = wz + warp * (noise.fbm2D(wx * 0.0018 - 53.0, wz * 0.0018 + 71.0, 3, 2.0, 0.5) * 110.0
-                + noise.noise2D(wx * 0.006 - 29.0, wz * 0.006 + 41.0) * 24.0);
+        double px = wx + warpOffsetX(wx, wz);
+        double pz = wz + warpOffsetZ(wx, wz);
         int ci = (int) Math.floor(px / CELL), cj = (int) Math.floor(pz / CELL);
         double estuary = 1.0 + 2.2 * smoothstep(0.30, -0.02, cont);
         double shore = 1.0 + 0.18 * noise.noise2D(wx * 0.01 + 101.0, wz * 0.01 - 77.0);
 
-        double river = 0, lake = 0;
+        double river = 0, lake = 0, deep = 0;
         for (int di = -1; di <= 1; di++) {
             for (int dj = -1; dj <= 1; dj++) {
                 Cell a = cell(ci + di, cj + dj);
                 if (a.lakeR() > 0) {
                     double r = a.lakeR() * shore;
                     double d = Math.hypot(px - a.node().x(), pz - a.node().z());
-                    lake = Math.max(lake, 1.0 - smoothstep(0.55 * r, r, d));
+                    double l = 1.0 - smoothstep(0.55 * r, r, d);
+                    lake = Math.max(lake, l);
+                    if (a.deep()) deep = Math.max(deep, l);
                 }
                 if (a.shown()) {
                     Cell b = cell(a.ti(), a.tj());
@@ -171,6 +193,35 @@ public final class AeroRiverNetwork {
                 }
             }
         }
-        return new Sample(river, lake);
+        return new Sample(river, lake, deep);
+    }
+
+    /**
+     * Мировой центр (X, Z) глубокого озера, попадающий в чанк {@code (chunkX, chunkZ)}, или {@code null}.
+     * Узлы живут в искажённом пространстве, поэтому центр в мире находится обратным решением
+     * {@code wx + warp(wx, wz) = node.x} (итерация сходится: градиент смещения заметно меньше 1).
+     * Не больше одного центра на чанк: озёра далеко друг от друга (ячейка {@link #CELL}).
+     */
+    public int[] deepLakeCentre(int chunkX, int chunkZ) {
+        double mx = chunkX * 16 + 8.0, mz = chunkZ * 16 + 8.0;
+        int ci = (int) Math.floor(mx / CELL), cj = (int) Math.floor(mz / CELL);
+        for (int di = -1; di <= 1; di++) {
+            for (int dj = -1; dj <= 1; dj++) {
+                Cell c = cell(ci + di, cj + dj);
+                if (!c.deep()) continue;
+                // смещение искажения не превышает ~150 блоков; всё, что дальше, в этот чанк не попадёт
+                if (Math.abs(c.node().x() - mx) > 250 || Math.abs(c.node().z() - mz) > 250) continue;
+                double wx = c.node().x(), wz = c.node().z();
+                for (int it = 0; it < 8; it++) {
+                    double nx = c.node().x() - warpOffsetX(wx, wz);
+                    double nz = c.node().z() - warpOffsetZ(wx, wz);
+                    wx = nx;
+                    wz = nz;
+                }
+                int bx = (int) Math.round(wx), bz = (int) Math.round(wz);
+                if ((bx >> 4) == chunkX && (bz >> 4) == chunkZ) return new int[]{bx, bz};
+            }
+        }
+        return null;
     }
 }

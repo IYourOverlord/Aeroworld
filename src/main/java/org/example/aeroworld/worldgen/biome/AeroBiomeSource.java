@@ -37,8 +37,11 @@ public class AeroBiomeSource extends BiomeSource {
             "swamp", "taiga", "warm_ocean", "windswept_forest", "windswept_gravelly_hills",
             "windswept_hills", "windswept_savanna", "wooded_badlands",
             "alpine_meadow", "karst_highlands", "autumn_forest", "heather_moor", "volcanic_wastes",
-            "wisteria_grove", "ashen_plateau"
+            "wisteria_grove", "ashen_plateau", "deep_lake"
     };
+
+    /** Биом глубокого озера: клон deep_ocean, нужен для океанического монумента на дне. */
+    public static final String DEEP_LAKE = "deep_lake";
 
     private final MultiNoiseBiomeSource delegate;
     /**
@@ -201,8 +204,15 @@ public class AeroBiomeSource extends BiomeSource {
 
             double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
 
-            String biomeName = resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid);
+            boolean deepLake = terrain != null && terrain.isDeepLake((int) wx, (int) wz);
+            String biomeName = resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, deepLake);
             layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
+            // Пятно deep_dark на Y <= -8 не должно заменять биом на дне озера: ванильная проверка биома старта
+            // монумента берёт биом на высоте дна и иначе отклоняла бы его.
+            if (deepLake) {
+                hasDD = false;
+                ddBiome = null;
+            }
 
             cache.xs[slot] = x;
             cache.zs[slot] = z;
@@ -226,6 +236,14 @@ public class AeroBiomeSource extends BiomeSource {
     }
 
     public static String resolveLayer1Biome(double cont, double eros, double ridge, double plateau, double temp, double humid) {
+        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, false);
+    }
+
+    /** То же, но {@code deepLake} (маска {@code Layer1TerrainGenerator.isDeepLake}) даёт биом {@link #DEEP_LAKE}. */
+    public static String resolveLayer1Biome(double cont, double eros, double ridge, double plateau, double temp,
+                                            double humid, boolean deepLake) {
+        if (deepLake) return DEEP_LAKE;
+
         // 1. Океан
         if (cont < -0.05) {
             boolean deep = cont < -0.20;
@@ -329,14 +347,18 @@ public class AeroBiomeSource extends BiomeSource {
 
         double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
 
-        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid);
+        boolean deepLake = terrain != null && terrain.isDeepLake((int) wx, (int) wz);
+        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, deepLake);
     }
 
     public boolean isDeepDark(int blockX, int blockZ) {
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
         double dd = params.deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
-        return dd > DEEP_DARK_THRESHOLD;
+        if (dd <= DEEP_DARK_THRESHOLD) return false;
+        // как в getNoiseBiome: на дне глубокого озера deep_dark не перекрывает biom озера
+        Layer1TerrainGenerator terrain = (params.layer1 != null) ? params.layer1.getTerrainGenerator() : null;
+        return terrain == null || !terrain.isDeepLake((int) wx, (int) wz);
     }
 
     public String getIslandBiomeName(int blockX, int blockZ) {
