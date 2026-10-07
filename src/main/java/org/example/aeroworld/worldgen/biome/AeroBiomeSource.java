@@ -5,6 +5,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.*;
 import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
+import org.example.aeroworld.worldgen.layer.PlateauTerrace;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 
 import java.util.Optional;
@@ -36,7 +37,7 @@ public class AeroBiomeSource extends BiomeSource {
             "swamp", "taiga", "warm_ocean", "windswept_forest", "windswept_gravelly_hills",
             "windswept_hills", "windswept_savanna", "wooded_badlands",
             "alpine_meadow", "karst_highlands", "autumn_forest", "heather_moor", "volcanic_wastes",
-            "wisteria_grove"
+            "wisteria_grove", "ashen_plateau"
     };
 
     private final MultiNoiseBiomeSource delegate;
@@ -198,7 +199,9 @@ public class AeroBiomeSource extends BiomeSource {
             double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
             double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
 
-            String biomeName = resolveLayer1Biome(cont, eros, ridge, temp, humid);
+            double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
+
+            String biomeName = resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid);
             layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
 
             cache.xs[slot] = x;
@@ -222,7 +225,7 @@ public class AeroBiomeSource extends BiomeSource {
         return layer1Biome;
     }
 
-    public static String resolveLayer1Biome(double cont, double eros, double ridge, double temp, double humid) {
+    public static String resolveLayer1Biome(double cont, double eros, double ridge, double plateau, double temp, double humid) {
         // 1. Океан
         if (cont < -0.05) {
             boolean deep = cont < -0.20;
@@ -244,6 +247,11 @@ public class AeroBiomeSource extends BiomeSource {
             if (eros < -0.2) return "stony_shore";
             if (temp < -0.2) return "snowy_beach";
             return "beach";
+        }
+
+        // 2б. Плато ashen_plateau: маска из Layer1TerrainGenerator.getPlateauMask (та же, что поднимает рельеф).
+        if (PlateauTerrace.isPlateauBiome(plateau, cont, ridge, temp)) {
+            return "ashen_plateau";
         }
 
         // 3. Continuous ridge biomes.
@@ -319,7 +327,9 @@ public class AeroBiomeSource extends BiomeSource {
         double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
         double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
 
-        return resolveLayer1Biome(cont, eros, ridge, temp, humid);
+        double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
+
+        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid);
     }
 
     public boolean isDeepDark(int blockX, int blockZ) {

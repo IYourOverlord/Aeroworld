@@ -44,6 +44,7 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_BASALT = Blocks.BASALT.defaultBlockState();
     private static final BlockState BS_BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState();
     private static final BlockState BS_TUFF = Blocks.TUFF.defaultBlockState();
+    private static final BlockState BS_ANDESITE = Blocks.ANDESITE.defaultBlockState();
 
     // Цветная терракота для elevation bands бэдлендов
     private static final BlockState BS_ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
@@ -89,6 +90,16 @@ public class Layer1TerrainGenerator {
             BS_TUFF,     BS_STONE,    BS_STONE,    BS_STONE,
     };
 
+    /**
+     * Паттерн полос плато {@code ashen_plateau} по Y (16 элементов, зацикленный): stone / tuff / andesite / basalt.
+     */
+    private static final BlockState[] STRATA_BANDS = {
+            BS_STONE,    BS_STONE,    BS_ANDESITE, BS_TUFF,
+            BS_STONE,    BS_BASALT,   BS_STONE,    BS_ANDESITE,
+            BS_ANDESITE, BS_STONE,    BS_TUFF,     BS_STONE,
+            BS_BASALT,   BS_STONE,    BS_ANDESITE, BS_STONE,
+    };
+
     /** Возвращает блок цветной терракоты по Y-координатному паттерну бэдлендов. */
     public static BlockState getBadlandsBand(int y) {
         return BADLANDS_BANDS[(y & 0x7FFF_FFFF) % BADLANDS_BANDS.length];
@@ -97,6 +108,11 @@ public class Layer1TerrainGenerator {
     /** Возвращает блок горных прожилок по Y-координатному паттерну. */
     public static BlockState getStoneskyBand(int y) {
         return STONY_BANDS[(y & 0x7FFF_FFFF) % STONY_BANDS.length];
+    }
+
+    /** Возвращает блок полос плато по Y-координатному паттерну (stone / tuff / andesite / basalt). */
+    public static BlockState getStrataBand(int y) {
+        return STRATA_BANDS[(y & 0x7FFF_FFFF) % STRATA_BANDS.length];
     }
 
     private static final BlockState BS_SEAGRASS = Blocks.SEAGRASS.defaultBlockState();
@@ -143,6 +159,7 @@ public class Layer1TerrainGenerator {
     private final AeroNoise coralNoise;
     private final AeroNoise ridgeNoise;
     private final AeroNoise riverNoise;
+    private final AeroNoise plateauNoise;
     private final AeroRiverNetwork rivers;
 
     public Layer1TerrainGenerator(long seed) {
@@ -158,6 +175,7 @@ public class Layer1TerrainGenerator {
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
         this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
         this.riverNoise       = new AeroNoise(seed ^ 0x4E9B17C3L);
+        this.plateauNoise     = new AeroNoise(seed ^ 0x6A3F52D1L);
         this.rivers           = new AeroRiverNetwork(seed, this::getContinentality);
     }
 
@@ -254,6 +272,10 @@ public class Layer1TerrainGenerator {
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
         height = lerp(height, land, smoothstep(-0.06, 0.10, continentality));
 
+        // Плато ashen_plateau: подъём над местной землёй и террасы шагом 6. До рек: на плато высота > 50,
+        // lowland гасит реки сам. Маска берётся из getPlateauMask, той же функции, что выбирает биом.
+        height = PlateauTerrace.apply(height, getPlateauMask(wx, wz, continentality, ridge));
+
         // Реки и озёра: сеть стекает к океану и озёрам (AeroRiverNetwork), русла и чаши уходят под уровень моря,
         // воду доливает обычная заливка. В горах и на высокой суше реки гасятся: они кончаются у подножия, а не
         // прорезают каньоны. Маска побережья не нужна: min() никогда не поднимает дно океана.
@@ -266,6 +288,21 @@ public class Layer1TerrainGenerator {
 
         int finalHeight = (int) Math.round(height);
         return Math.max(MIN_Y + BEDROCK_LAYERS + 1, Math.min(220, finalHeight));
+    }
+
+    /**
+     * Маска плато 0..1: редкие пятна по {@code plateauNoise}, гаснет у берега и на хребтах.
+     * Единственный источник маски для {@link #getHeight} и {@code AeroBiomeSource}.
+     */
+    public double getPlateauMask(int wx, int wz) {
+        return getPlateauMask(wx, wz, getContinentality(wx, wz), getRidgeStrength(wx, wz));
+    }
+
+    /** То же, что {@link #getPlateauMask(int, int)}, но с уже посчитанными континентальностью и хребтом. */
+    public double getPlateauMask(int wx, int wz, double continentality, double ridge) {
+        if (PlateauTerrace.gate(continentality, ridge) <= 0.0) return 0.0;
+        double n = plateauNoise.fbm2D(wx * PlateauTerrace.NOISE_FREQ, wz * PlateauTerrace.NOISE_FREQ, 3, 2.0, 0.5);
+        return PlateauTerrace.mask(n, continentality, ridge);
     }
 
     /** Returns the continuous ridge contribution used by terrain and biome selection. */
@@ -495,6 +532,10 @@ public class Layer1TerrainGenerator {
             } else if (info.type() == SurfaceType.STONY || info.type() == SurfaceType.KARST) {
                 topBlock = info.type().top;
                 underBlock = getStoneskyBand(surfaceY - 1);
+            } else if (info.type() == SurfaceType.STRATA) {
+                // Без снега на Y>=60: верх андезит, под ним полосы по Y.
+                topBlock = info.type().top;
+                underBlock = getStrataBand(surfaceY - 1);
             } else {
                 topBlock = info.type().top;
                 underBlock = info.type().under;
@@ -515,7 +556,8 @@ public class Layer1TerrainGenerator {
         COLD(null, null),
         VOLCANIC(BS_BASALT, BS_BLACKSTONE),
         KARST(BS_CALCITE, BS_STONE),
-        PODZOL(BS_PODZOL, BS_DIRT);
+        PODZOL(BS_PODZOL, BS_DIRT),
+        STRATA(BS_ANDESITE, BS_STONE);
 
         final BlockState top;
         final BlockState under;
@@ -569,6 +611,8 @@ public class Layer1TerrainGenerator {
             type = SurfaceType.STONY;
         } else if (isCold) {
             type = SurfaceType.COLD;
+        } else if (path.contains("ashen_plateau")) {
+            type = SurfaceType.STRATA;
         } else if (path.contains("volcanic")) {
             type = SurfaceType.VOLCANIC;
         } else if (path.contains("karst")) {
@@ -633,7 +677,8 @@ public class Layer1TerrainGenerator {
                 // Глубина замены зависит от типа поверхности
                 boolean hasBands = info.type() == SurfaceType.BADLANDS;
                 boolean hasStoneskyBands = info.type() == SurfaceType.STONY || info.type() == SurfaceType.KARST;
-                int depth = hasBands ? BADLANDS_DEPTH : (hasStoneskyBands ? 8 : 3);
+                boolean hasStrataBands = info.type() == SurfaceType.STRATA;
+                int depth = hasBands ? BADLANDS_DEPTH : ((hasStoneskyBands || hasStrataBands) ? 8 : 3);
 
                 pos.set(wx, surfaceY, wz);
                 chunk.setBlockState(pos, topBlock, false);
@@ -644,6 +689,7 @@ public class Layer1TerrainGenerator {
                         pos.set(wx, y, wz);
                         BlockState bandBlock = hasBands ? getBadlandsBand(y)
                                 : hasStoneskyBands ? getStoneskyBand(y)
+                                : hasStrataBands ? getStrataBand(y)
                                 : surfaceBlocks.under();
                         chunk.setBlockState(pos, bandBlock, false);
                     }

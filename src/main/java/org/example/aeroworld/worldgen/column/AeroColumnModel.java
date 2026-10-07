@@ -423,7 +423,8 @@ public final class AeroColumnModel {
         }
         boolean isBadlands = info != null && info.type() == Layer1TerrainGenerator.SurfaceType.BADLANDS;
         boolean isStoneBands = info != null && (info.type() == Layer1TerrainGenerator.SurfaceType.STONY
-                || info.type() == Layer1TerrainGenerator.SurfaceType.KARST);
+                || info.type() == Layer1TerrainGenerator.SurfaceType.KARST
+                || info.type() == Layer1TerrainGenerator.SurfaceType.STRATA);
         int depth = isBadlands ? 15 : (isStoneBands ? 8 : SUBSURFACE_DEPTH);
         int underBottom = Math.max(bottom, top - depth);
 
