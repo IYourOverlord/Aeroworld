@@ -113,6 +113,12 @@ public final class AeroTreeCover {
         if (path.contains("birch")) {
             return new Rule(SHAPE_BIRCH, 0.60, 1, 120);
         }
+        if (path.contains("cherry")) {
+            return new Rule(SHAPE_CHERRY, 0.55, 1, 130);
+        }
+        if (path.contains("wisteria")) {
+            return new Rule(SHAPE_CHERRY, 0.55, 1, 130); // ponytail: на LOD только розовая крона, в игре cherry + окрашенный oak
+        }
         if (path.contains("taiga") || path.contains("grove")) {
             return new Rule(SHAPE_SPRUCE, 0.55, 1, 130);
         }
@@ -122,9 +128,6 @@ public final class AeroTreeCover {
         }
         if (path.contains("savanna")) {
             return new Rule(SHAPE_ACACIA, 0.20, 1, 120);
-        }
-        if (path.contains("cherry")) {
-            return new Rule(SHAPE_CHERRY, 0.55, 1, 130);
         }
         if (path.contains("mangrove")) {
             return new Rule(SHAPE_MANGROVE, 0.50, 1, 60);

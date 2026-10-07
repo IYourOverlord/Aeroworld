@@ -35,7 +35,8 @@ public class AeroBiomeSource extends BiomeSource {
             "snowy_taiga", "sparse_jungle", "stony_peaks", "stony_shore", "sunflower_plains",
             "swamp", "taiga", "warm_ocean", "windswept_forest", "windswept_gravelly_hills",
             "windswept_hills", "windswept_savanna", "wooded_badlands",
-            "alpine_meadow", "karst_highlands", "autumn_forest", "heather_moor", "volcanic_wastes"
+            "alpine_meadow", "karst_highlands", "autumn_forest", "heather_moor", "volcanic_wastes",
+            "wisteria_grove"
     };
 
     private final MultiNoiseBiomeSource delegate;
@@ -274,14 +275,8 @@ public class AeroBiomeSource extends BiomeSource {
             return "windswept_forest";
         }
 
-        // 7. Temperate
-        if (temp < 0.16) {
-            if (humid > 0.35) return "dark_forest";
-            if (humid > 0.18) return "autumn_forest";
-            if (humid > -0.08) return "birch_forest";
-            if (humid > -0.24) return "meadow";
-            return "heather_moor";
-        }
+        // 7. Temperate (temp здесь уже >= 0; лестница общая с островами)
+        if (temp < 0.16) return resolveIslandBiome(temp, humid);
 
         // 8. Warm climates. Thresholds are intentionally centred on the observed
         // fBm range so every vanilla arid biome receives a meaningful share.
@@ -353,6 +348,7 @@ public class AeroBiomeSource extends BiomeSource {
         if (temp < 0.16) {
             if (humid > 0.35) return "dark_forest";
             if (humid > 0.18) return "autumn_forest";
+            if (humid > 0.06) return "wisteria_grove";
             if (humid > -0.08) return "birch_forest";
             if (humid > -0.24) return "meadow";
             return "heather_moor";
