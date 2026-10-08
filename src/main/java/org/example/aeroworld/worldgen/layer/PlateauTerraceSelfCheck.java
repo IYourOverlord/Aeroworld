@@ -1,7 +1,7 @@
 package org.example.aeroworld.worldgen.layer;
 
 /**
- * Self-check для {@link PlateauTerrace}: {@code javac -d /tmp/pt PlateauTerrace.java PlateauTerraceSelfCheck.java
+ * Self-check для {@link PlateauTerrace}: {@code javac -d /tmp/pt AeroNoise.java PlateauTerrace.java PlateauTerraceSelfCheck.java
  * && java -ea -cp /tmp/pt org.example.aeroworld.worldgen.layer.PlateauTerraceSelfCheck} (MC не нужен).
  */
 public final class PlateauTerraceSelfCheck {
@@ -61,6 +61,16 @@ public final class PlateauTerraceSelfCheck {
             assert Math.abs(j - PlateauTerrace.apply(h, 1.0, 0.0, 0.0)) <= step + PlateauTerrace.JITTER + 1e-9 : "jitter слишком велик";
         }
 
+        // 5в. core: 0..1, максимум на нулевом контуре шума, симметричен по знаку, гаснет у каймы (малая маска) и вне стен.
+        assert PlateauTerrace.core(0.0, 1.0) == 1.0 : "нет каньона на нулевом контуре";
+        assert PlateauTerrace.core(PlateauTerrace.CANYON_W1, 1.0) == 0.0 : "каньон шире стены";
+        assert PlateauTerrace.core(0.0, PlateauTerrace.CANYON_MASK_LO) == 0.0 : "каньон прорезает кайму";
+        for (double cn = -0.3; cn <= 0.3; cn += 0.01) {
+            double c = PlateauTerrace.core(cn, 1.0);
+            assert c >= 0.0 && c <= 1.0 : "core вне 0..1";
+            assert c == PlateauTerrace.core(-cn, 1.0) : "core несимметричен";
+        }
+
         // 6. Маска: 0..1, гаснет на хребтах и в океане, детерминирована.
         for (double n = -1.0; n <= 1.0; n += 0.05) {
             for (double c = -0.5; c <= 1.0; c += 0.1) {
@@ -82,6 +92,52 @@ public final class PlateauTerraceSelfCheck {
         assert !PlateauTerrace.isPlateauBiome(1.0, 0.05, 0.0, 0.1) : "плато у берега";
         assert !PlateauTerrace.isPlateauBiome(1.0, 0.3, 0.4, 0.1) : "плато на хребте";
         assert !PlateauTerrace.isPlateauBiome(0.5, 0.3, 0.0, 0.1) : "порог маски строгий";
+
+        // 8. Овраги, останцы, мосты: диапазоны, гейт по глубине плато, монотонность apply по останцу.
+        assert PlateauTerrace.gully(0.0, 1.0) == PlateauTerrace.GULLY_DEPTH : "овраг не на контуре";
+        assert PlateauTerrace.gully(0.0, PlateauTerrace.CANYON_MASK_LO) == 0.0 : "овраг режет кайму";
+        assert PlateauTerrace.gully(PlateauTerrace.GULLY_W1, 1.0) == 0.0 : "овраг шире стены";
+        assert PlateauTerrace.pillar(1.0, 1.0) == 1.0 && PlateauTerrace.pillar(0.0, 1.0) == 0.0 : "останец: границы";
+        assert PlateauTerrace.pillar(1.0, PlateauTerrace.CANYON_MASK_LO) == 0.0 : "останец на кайме";
+        assert PlateauTerrace.bridge(0.0, 1.0) == 1.0 && PlateauTerrace.bridge(0.0, -1.0) == 0.0 : "мост: отбор";
+        assert PlateauTerrace.bridge(PlateauTerrace.BRIDGE_W1, 1.0) == 0.0 : "мост шире полосы";
+        for (double h = -10.0; h <= 120.0; h += 3.1) {
+            double prevP = -Double.MAX_VALUE;
+            for (double pl = 0.0; pl <= 1.0; pl += 0.05) {
+                double v = PlateauTerrace.apply(h, 1.0, 0.0, 0.0, pl);
+                assert v >= prevP - 1e-9 : "останец опускает землю: h=" + h;
+                assert v <= PlateauTerrace.apply(h, 1.0) + PlateauTerrace.PILLAR_H + step : "останец выше PILLAR_H";
+                prevP = v;
+            }
+        }
+        assert !PlateauTerrace.hasBridgeVoid(0.4, 6, 48) : "пустота при слабом мосте";
+        assert !PlateauTerrace.hasBridgeVoid(1.0, 42, 48) : "пустота без просвета";
+        assert PlateauTerrace.hasBridgeVoid(1.0, 6, 48) : "нет пустоты под полным мостом";
+
+        // 9. Реальные шумы, сид 12345, база Y=20, весь регион внутри плато (маска 1): мост никогда не опускает землю,
+        // под ним всегда есть просвет, мосты не исчезли, останцы и овраги есть, каньон не заполнен.
+        org.example.aeroworld.worldgen.noise.AeroNoise noise =
+                new org.example.aeroworld.worldgen.noise.AeroNoise(12345L ^ 0x6A3F52D1L);
+        int voids = 0, pillars = 0, gullies = 0, floors = 0;
+        for (int z = -16500; z < -16000; z += 2) {
+            for (int x = -8700; x < -7300; x += 2) {
+                double with = PlateauTerrace.column(noise, 20.0, x, z, 1.0, true);
+                double without = PlateauTerrace.column(noise, 20.0, x, z, 1.0, false);
+                assert with >= without - 1e-9 : "мост опустил землю: " + x + "," + z;
+                int sy = (int) Math.round(with), fy = (int) Math.round(without);
+                if (PlateauTerrace.hasBridgeVoid(PlateauTerrace.bridgeAt(noise, x, z), fy, sy)) {
+                    voids++;
+                    assert fy + PlateauTerrace.CLEARANCE <= sy - PlateauTerrace.DECK : "нет просвета под мостом";
+                }
+                if (sy > 54) pillars++;
+                if (sy >= 20 && sy <= 40) gullies++;
+                if (sy <= 8) floors++;
+            }
+        }
+        assert voids > 0 : "мосты исчезли";
+        assert pillars > 0 : "останцы исчезли";
+        assert gullies > 0 : "овраги исчезли";
+        assert floors > 0 : "каньон исчез";
 
         System.out.println("PlateauTerraceSelfCheck: all checks passed (maxJump=" + maxJump + ")");
     }

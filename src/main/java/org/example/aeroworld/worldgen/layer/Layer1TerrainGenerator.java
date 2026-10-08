@@ -242,6 +242,15 @@ public class Layer1TerrainGenerator {
      * Горы (низкая эрозия): могут подниматься выше Y=20 (до 60..120+).
      */
     public int getHeight(int wx, int wz) {
+        return height(wx, wz, true);
+    }
+
+    /** Высота без мостов плато: дно каньона под мостом (нужно для пустоты под ним). */
+    public int getHeightNoBridge(int wx, int wz) {
+        return height(wx, wz, false);
+    }
+
+    private int height(int wx, int wz, boolean bridges) {
         double continentality = getContinentality(wx, wz);
         double erosion = getErosion(wx, wz);
         double macro = heightNoise.fbm2D(wx * 0.003, wz * 0.003, 5, 2.0, 0.5);
@@ -283,10 +292,8 @@ public class Layer1TerrainGenerator {
         // lowland гасит реки сам. Маска берётся из getPlateauMask, той же функции, что выбирает биом.
         if (PlateauTerrace.gate(continentality, ridge) > 0.0) {
             double pn = plateauNoise.fbm2D(wx * PlateauTerrace.NOISE_FREQ, wz * PlateauTerrace.NOISE_FREQ, 3, 2.0, 0.5);
-            double jitter = plateauNoise.noise2D(wx * PlateauTerrace.JITTER_FREQ, wz * PlateauTerrace.JITTER_FREQ)
-                    * PlateauTerrace.JITTER;
-            height = PlateauTerrace.apply(height, PlateauTerrace.mask(pn, continentality, ridge),
-                    PlateauTerrace.core(pn, continentality, ridge), jitter);
+            height = PlateauTerrace.column(plateauNoise, height, wx, wz,
+                    PlateauTerrace.mask(pn, continentality, ridge), bridges);
         }
 
         // Реки и озёра: сеть стекает к океану и озёрам (AeroRiverNetwork), русла и чаши уходят под уровень моря,
@@ -325,6 +332,20 @@ public class Layer1TerrainGenerator {
         int[] c = rivers.deepLakeCentre(chunkX, chunkZ);
         if (c == null) return null;
         return getHeight(c[0], c[1]) <= DEEP_LAKE_FLOOR_Y + 1 ? c : null;
+    }
+
+    /**
+     * Пустота под естественным мостом плато в колонке: {@code {floorY, topY}} (воздух от floorY + 1 до topY включительно,
+     * floorY это дно каньона) или {@code null}. Дорогой {@link #getHeightNoBridge} зовётся только на пересечении
+     * каньона с полосой моста.
+     */
+    public int[] plateauBridgeVoid(int wx, int wz, int surfaceY) {
+        double bridge = PlateauTerrace.bridgeAt(plateauNoise, wx, wz);
+        if (bridge < PlateauTerrace.BRIDGE_VOID_MIN
+                || Math.abs(PlateauTerrace.canyonNoise(plateauNoise, wx, wz)) >= PlateauTerrace.CANYON_W1) return null;
+        int floorY = getHeightNoBridge(wx, wz);
+        return PlateauTerrace.hasBridgeVoid(bridge, floorY, surfaceY)
+                ? new int[] {floorY, surfaceY - PlateauTerrace.DECK} : null;
     }
 
     /**
@@ -718,7 +739,8 @@ public class Layer1TerrainGenerator {
 
                 int surfaceY = cache.surfaceY[idx];
                 Holder<Biome> biomeHolder = biomeGetter.apply(wx, wz);
-                BiomeSurfaceInfo info = isPlateau(wx, wz) ? PLATEAU_SURFACE : getSurfaceInfo(biomeHolder);
+                boolean plateau = isPlateau(wx, wz);
+                BiomeSurfaceInfo info = plateau ? PLATEAU_SURFACE : getSurfaceInfo(biomeHolder);
 
                 boolean underWater = surfaceY < SEA_LEVEL;
 
@@ -743,6 +765,19 @@ public class Layer1TerrainGenerator {
                                 : hasStrataBands ? getStrataBand(y)
                                 : surfaceBlocks.under();
                         chunk.setBlockState(pos, bandBlock, false);
+                    }
+                }
+
+                // Мост плато: плита остаётся сверху, под ней вырезается канал (после слоёв, иначе они забьют пустоту).
+                if (plateau) {
+                    int[] bridgeVoid = plateauBridgeVoid(wx, wz, surfaceY);
+                    if (bridgeVoid != null) {
+                        for (int y = bridgeVoid[0] + 1; y <= bridgeVoid[1]; y++) {
+                            pos.set(wx, y, wz);
+                            chunk.setBlockState(pos, Blocks.AIR.defaultBlockState(), false);
+                        }
+                        pos.set(wx, bridgeVoid[0], wz);
+                        chunk.setBlockState(pos, surfaceBlocks(info, bridgeVoid[0]).top(), false);
                     }
                 }
 
