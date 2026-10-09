@@ -55,7 +55,12 @@ public class AeroThroughputLimits {
             return DEFAULT_RENDER_YIELD_QUEUE;
         }
     }
-    public static final int SAVE_DELAY_MS = 1000;
+    /**
+     * {@code -Daeroworld.dhSaveDelayMs=N} — задержка сохранения LOD в БД, мс (250..30000, штатное значение DH 10000).
+     * Читается при создании провайдера, до загрузки конфига, поэтому системное свойство. DH не сбрасывает отложенные
+     * секции при закрытии, поэтому при выходе теряются последние N мс генерации; секции пересчитываются при следующем запросе.
+     */
+    public static final int SAVE_DELAY_MS = Math.max(250, Math.min(30000, Integer.getInteger("aeroworld.dhSaveDelayMs", 1000)));
     public static final String SQLITE_SYNC = "NORMAL";
 
     public static int distantHorizonsThreadCount() {
@@ -187,9 +192,9 @@ public class AeroThroughputLimits {
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int dhThreads = distantHorizonsThreadCount();
-        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} " +
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} " +
                         "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
-                cores, dhThreads);
+                cores, dhThreads, SAVE_DELAY_MS);
     }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);

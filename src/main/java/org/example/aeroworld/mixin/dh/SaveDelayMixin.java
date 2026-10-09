@@ -6,9 +6,8 @@ import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
 
 /**
- * Сокращает задержку сохранения LOD-данных в GeneratedFullDataSourceProvider.
- * Штатное значение (10 с) слишком велико для аналитического SeedGen —
- * при быстрой генерации буфер переполняется раньше.
+ * Задаёт задержку сохранения LOD-данных в GeneratedFullDataSourceProvider (штатно 10 с).
+ * По умолчанию 1 с; значение меняется через {@code -Daeroworld.dhSaveDelayMs} для сравнения (этап 1 PROGRESS.md).
  */
 @Mixin(targets = "com.seibel.distanthorizons.core.file.fullDatafile.GeneratedFullDataSourceProvider", remap = false)
 public class SaveDelayMixin {
