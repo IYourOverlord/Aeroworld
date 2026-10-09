@@ -60,7 +60,7 @@ public class AeroThroughputLimits {
      * Читается при создании провайдера, до загрузки конфига, поэтому системное свойство. DH не сбрасывает отложенные
      * секции при закрытии, поэтому при выходе теряются последние N мс генерации; секции пересчитываются при следующем запросе.
      */
-    public static final int SAVE_DELAY_MS = Math.max(250, Math.min(30000, Integer.getInteger("aeroworld.dhSaveDelayMs", 1000)));
+    public static final int SAVE_DELAY_MS = Math.max(250, Math.min(30000, Integer.getInteger("aeroworld.dhSaveDelayMs", 3000)));
     public static final String SQLITE_SYNC = "NORMAL";
 
     public static int distantHorizonsThreadCount() {
