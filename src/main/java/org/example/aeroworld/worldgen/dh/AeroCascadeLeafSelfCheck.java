@@ -2,7 +2,7 @@ package org.example.aeroworld.worldgen.dh;
 
 /**
  * Self-check для {@link AeroCascadeLeaf}: выключено при радиусе 0, только родители детализации 7, расстояние от края секции.
- * Запуск: {@code javac -d /tmp/cl AeroCascadeLeaf.java AeroCascadeLeafSelfCheck.java && java -ea -cp /tmp/cl org.example.aeroworld.worldgen.dh.AeroCascadeLeafSelfCheck}
+ * Запуск (дважды: без флага и с {@code -Daeroworld.dhCascadeLeafRadius=1024}): {@code javac -d /tmp/cl AeroCascadeLeaf.java AeroCascadeLeafSelfCheck.java && java -ea -cp /tmp/cl org.example.aeroworld.worldgen.dh.AeroCascadeLeafSelfCheck}
  */
 public final class AeroCascadeLeafSelfCheck {
 
@@ -23,6 +23,25 @@ public final class AeroCascadeLeafSelfCheck {
         // игрок не в начале координат
         assert !AeroCascadeLeaf.shouldSkip(1024, 7, 5000, 5000, 128, 5000, 5000);
         assert AeroCascadeLeaf.shouldSkip(1024, 7, 5000 + 1025, 5000, 128, 5000, 5000);
+        // возврат пропущенных (RADIUS из системного свойства, поэтому две ветки; запускать обе, см. ниже)
+        if (AeroCascadeLeaf.RADIUS == 0) {
+            AeroCascadeLeaf.remember(42L);
+            assert !AeroCascadeLeaf.rearmDue(0, 0) : "радиус 0: возврат выключен";
+        } else {
+            assert !AeroCascadeLeaf.rearmDue(0, 0) : "пустой список: не пора";
+            AeroCascadeLeaf.remember(42L);
+            assert AeroCascadeLeaf.rearmDue(0, 0) : "первый раз пора";
+            assert AeroCascadeLeaf.rearmDue(0, 0) : "ожидание держится, пока просмотр не закончен";
+            AeroCascadeLeaf.rearmDone(128, 128); // упёрлись в лимит: просмотр не закончен
+            assert AeroCascadeLeaf.rearmDue(0, 0) : "лимит достигнут: продолжать";
+            AeroCascadeLeaf.rearmDone(3, 128);
+            assert !AeroCascadeLeaf.rearmDue(100, 0) : "сдвиг меньше RADIUS/4: не пора";
+            assert AeroCascadeLeaf.rearmDue(256, 0) : "сдвиг на RADIUS/4: пора";
+            var it = AeroCascadeLeaf.skippedIterator();
+            assert it.hasNext() && it.next() == 42L;
+            it.remove();
+            assert AeroCascadeLeaf.drainRearmed() == 131 : "счётчик возвращённых";
+        }
         System.out.println("AeroCascadeLeafSelfCheck OK");
     }
 }

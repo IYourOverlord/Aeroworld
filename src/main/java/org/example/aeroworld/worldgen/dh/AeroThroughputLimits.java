@@ -219,8 +219,9 @@ public class AeroThroughputLimits {
                     if (pool != null) LOGGER.info("[AeroWorld DH SeedGen] Pool: {}", pool);
                     String prop = AeroPropStats.ENABLED ? AeroPropStats.drain(elapsedSec) : null;
                     long cascadeSkipped = AeroCascadeLeaf.RADIUS > 0 ? AeroCascadeLeaf.drainSkipped() : 0L;
-                    if (prop != null || cascadeSkipped > 0) {
-                        LOGGER.info("[AeroWorld DH SeedGen] Prop: {} | leaf cascade skipped (radius {}): {}", prop == null ? "none" : prop, AeroCascadeLeaf.RADIUS, cascadeSkipped);
+                    long cascadeRearmed = AeroCascadeLeaf.RADIUS > 0 ? AeroCascadeLeaf.drainRearmed() : 0L;
+                    if (prop != null || cascadeSkipped > 0 || cascadeRearmed > 0) {
+                        LOGGER.info("[AeroWorld DH SeedGen] Prop: {} | leaf cascade skipped (radius {}): {}, rearmed: {}", prop == null ? "none" : prop, AeroCascadeLeaf.RADIUS, cascadeSkipped, cascadeRearmed);
                     }
                 }
             }

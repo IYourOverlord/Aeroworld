@@ -4,6 +4,7 @@ import com.seibel.distanthorizons.core.file.fullDatafile.V2.FullDataSourceProvid
 import com.seibel.distanthorizons.core.pos.DhSectionPos;
 import com.seibel.distanthorizons.core.pos.blockPos.DhBlockPos;
 import com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker;
+import java.util.Iterator;
 import java.util.Set;
 import org.example.aeroworld.worldgen.dh.AeroCascadeLeaf;
 import org.example.aeroworld.worldgen.dh.AeroPropStats;
@@ -24,7 +25,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p>
  * Ручка ({@code -Daeroworld.dhCascadeLeafRadius=N}, блоки, 0 = выключено): в {@code runChildUpdates} родитель детализации 7
  * дальше N блоков от игрока не ставится в работу, а его флаг {@code ApplyToChildren} сбрасывается (иначе он выбирался бы
- * каждый проход). Для DH это выглядит как «позиция уже обновляется» ({@code continue}).
+ * каждый проход). Для DH это выглядит как «позиция уже обновляется» ({@code continue}). Пропущенные запоминаются и
+ * возвращаются (флаг ставится снова), когда игрок приблизился ({@link AeroCascadeLeaf#rearmDue}).
  * Плагин подмешивает класс, если включён любой из флагов. {@code require = 0}: при другой версии DH молча не работает.
  */
 @Mixin(targets = "com.seibel.distanthorizons.core.file.fullDatafile.V2.FullDataUpdatePropagatorV2", remap = false)
@@ -48,6 +50,22 @@ public class PropagateStatsMixin {
     @Inject(method = "runChildUpdates", at = @At("HEAD"), require = 0)
     private void aeroworld$childTarget(PriorityTaskPicker.Executor executor, DhBlockPos targetBlockPos, CallbackInfo info) {
         AeroCascadeLeaf.setTarget(targetBlockPos.getX(), targetBlockPos.getZ());
+        if (AeroCascadeLeaf.rearmDue(targetBlockPos.getX(), targetBlockPos.getZ())) {
+            // игрок сдвинулся: вернуть в очередь пропагатора ранее пропущенных родителей, которые теперь в радиусе
+            final int cap = 128;
+            int n = 0;
+            Iterator<Long> it = AeroCascadeLeaf.skippedIterator();
+            while (it.hasNext() && n < cap) {
+                long p = it.next();
+                if (!AeroCascadeLeaf.isFar(DhSectionPos.getDetailLevel(p), DhSectionPos.getMinCornerBlockX(p),
+                        DhSectionPos.getMinCornerBlockZ(p), DhSectionPos.getBlockWidth(p))) {
+                    it.remove();
+                    this.provider.repo.setApplyToChild(p, true);
+                    n++;
+                }
+            }
+            AeroCascadeLeaf.rearmDone(n, cap);
+        }
     }
 
     @Redirect(method = "runChildUpdates", at = @At(value = "INVOKE", target = "Ljava/util/Set;add(Ljava/lang/Object;)Z"), require = 0)
@@ -56,6 +74,7 @@ public class PropagateStatsMixin {
         if (AeroCascadeLeaf.RADIUS > 0 && AeroCascadeLeaf.skip(DhSectionPos.getDetailLevel(pos),
                 DhSectionPos.getMinCornerBlockX(pos), DhSectionPos.getMinCornerBlockZ(pos), DhSectionPos.getBlockWidth(pos))) {
             if (AeroCascadeLeaf.firstUse()) AeroThroughputLimits.logCascadeLeafActive(AeroCascadeLeaf.RADIUS);
+            AeroCascadeLeaf.remember(pos);
             this.provider.repo.setApplyToChild(pos, false);
             return false;
         }
