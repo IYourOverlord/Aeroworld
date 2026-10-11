@@ -60,6 +60,13 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
+		// Миксин пропагатора (измерение и ручка каскада в листья): только при -Daeroworld.dhPoolStats=true
+		// или -Daeroworld.dhCascadeLeafRadius=N (N > 0).
+		if (mixinClassName.endsWith(".PropagateStatsMixin") && !Boolean.getBoolean("aeroworld.dhPoolStats")
+			&& Integer.getInteger("aeroworld.dhCascadeLeafRadius", 0) <= 0)
+		{
+			return false;
+		}
 		return this.distantHorizonsPresent;
 	}
 

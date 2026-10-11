@@ -217,6 +217,11 @@ public class AeroThroughputLimits {
                             drainAnalyticSummary(elapsedSec));
                     String pool = poolStats.drain(elapsedSec, distantHorizonsThreadCount());
                     if (pool != null) LOGGER.info("[AeroWorld DH SeedGen] Pool: {}", pool);
+                    String prop = AeroPropStats.ENABLED ? AeroPropStats.drain(elapsedSec) : null;
+                    long cascadeSkipped = AeroCascadeLeaf.RADIUS > 0 ? AeroCascadeLeaf.drainSkipped() : 0L;
+                    if (prop != null || cascadeSkipped > 0) {
+                        LOGGER.info("[AeroWorld DH SeedGen] Prop: {} | leaf cascade skipped (radius {}): {}", prop == null ? "none" : prop, AeroCascadeLeaf.RADIUS, cascadeSkipped);
+                    }
                 }
             }
         }
@@ -238,9 +243,9 @@ public class AeroThroughputLimits {
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int dhThreads = distantHorizonsThreadCount();
-        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} renderLoaderPriority={} " +
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} renderLoaderPriority={} cascadeLeafRadius={} " +
                         "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
-                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY);
+                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY, AeroCascadeLeaf.RADIUS);
     }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);
@@ -282,6 +287,11 @@ public class AeroThroughputLimits {
         if (RENDER_PRIORITY_LOGGED.compareAndSet(false, true)) {
             GATE_LOGGER.info("[AeroWorld DH] RenderLoaderPriority active: dh={} aeroworld={}", dhPriority, RENDER_LOADER_PRIORITY);
         }
+    }
+
+    /** Одна строка в лог при первом пропуске каскада в листья: так видно, что инъекция в {@code runChildUpdates} сработала. */
+    public static void logCascadeLeafActive(int radiusBlocks) {
+        GATE_LOGGER.info("[AeroWorld DH] CascadeLeaf active: radius={} blocks (first skipped leaf cascade)", radiusBlocks);
     }
 
     private static void reportGatesIfDue() {
