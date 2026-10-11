@@ -42,11 +42,15 @@ final class AeroExecutorSampler {
                 ThreadPoolUtil.getChunkToLodBuilderExecutor()}; // порядок как в AeroPoolStats.POOLS
         int[] running = new int[ex.length];
         int[] queue = new int[ex.length];
+        long[] completed = new long[ex.length];
+        double[] avgMs = new double[ex.length];
         for (int i = 0; i < ex.length; i++) {
             if (ex[i] == null) continue;
             running[i] = ex[i].getRunningTaskCount();
             queue[i] = ex[i].getQueueSize();
+            completed[i] = ex[i].getCompletedTaskCount();
+            avgMs[i] = ex[i].getAverageRunTimeInMs();
         }
-        AeroPoolStats.sample(ex[0] == null || ex[0].canRun(), running, queue);
+        AeroPoolStats.sample(ex[0] == null || ex[0].canRun(), running, queue, completed, avgMs);
     }
 }

@@ -49,6 +49,12 @@ public class AeroThroughputLimits {
      */
     public static final int REAL_LEAF_CAP = Math.max(0, Integer.getInteger("aeroworld.dhRealLeafCap", 0));
 
+    /**
+     * {@code -Daeroworld.dhRenderLoaderPriority=N} (1..10, штатно 6 = NORM_PRIORITY + 1): приоритет пула Render Loader в общем
+     * диспетчере потоков DH. Пулы с большим числом выбираются первыми; 5 ставит загрузку рендера наравне с генерацией (этап 4в).
+     */
+    public static final int RENDER_LOADER_PRIORITY = Math.max(1, Math.min(10, Integer.getInteger("aeroworld.dhRenderLoaderPriority", 6)));
+
     public static final int WORLD_GEN_BORDER = Math.max(0, Math.min(8, Integer.getInteger("aeroworld.dhBorder", 0)));
 
     public static final int QUEUE_SCALE = 4;
@@ -232,9 +238,9 @@ public class AeroThroughputLimits {
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int dhThreads = distantHorizonsThreadCount();
-        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} " +
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} renderLoaderPriority={} " +
                         "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
-                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP);
+                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY);
     }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);
@@ -267,6 +273,15 @@ public class AeroThroughputLimits {
         backlogGateMaxInProgress.updateAndGet(prev -> Math.max(prev, inProgress));
         backlogGateLastAllowed = allowed;
         reportGatesIfDue();
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean RENDER_PRIORITY_LOGGED = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** Одна строка в лог при первом срабатывании {@code RenderLoaderPriorityMixin}: так видно, что миксин применился. */
+    public static void logRenderLoaderPriorityOnce(int dhPriority) {
+        if (RENDER_PRIORITY_LOGGED.compareAndSet(false, true)) {
+            GATE_LOGGER.info("[AeroWorld DH] RenderLoaderPriority active: dh={} aeroworld={}", dhPriority, RENDER_LOADER_PRIORITY);
+        }
     }
 
     private static void reportGatesIfDue() {

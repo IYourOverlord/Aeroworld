@@ -35,15 +35,17 @@ public final class AeroPoolStatsSelfCheck {
         assert new AeroPoolStats(false).wrap(direct, 0, 0L, body) == direct; // выключено: пул не оборачивается
 
         // срезы пулов: 4 среза, генерация на паузе в одном из них
-        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{40, 3, 10, 5, 0});
-        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{44, 3, 10, 5, 0});
-        AeroPoolStats.sample(false, new int[]{0, 2, 6, 1, 1}, new int[]{48, 3, 10, 5, 0});
-        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{52, 3, 10, 5, 0});
+        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{40, 3, 10, 5, 0}, new long[]{0, 10, 100, 5, 0},   new double[]{100, 20, 4, 8, 1});
+        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{44, 3, 10, 5, 0}, new long[]{3, 15, 400, 6, 0},   new double[]{100, 20, 4, 8, 1});
+        AeroPoolStats.sample(false, new int[]{0, 2, 6, 1, 1}, new int[]{48, 3, 10, 5, 0}, new long[]{3, 20, 800, 8, 1},   new double[]{100, 20, 6, 8, 1});
+        AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{52, 3, 10, 5, 0}, new long[]{8, 30, 1100, 10, 2}, new double[]{100, 20, 6, 8, 1});
         AeroPoolStats p = new AeroPoolStats(true);
         p.record(3, 1_000_000L, 2_000_000L, 1_500_000L);
-        String sm = p.drain(1.0, 14);
+        String sm = p.drain(2.0, 14); // за 2 с: wg +8, prop +20, render +1000, io +5, lod +2
         assert sm.contains("samples=4 wg paused 25% | avg running wg=3.0 prop=2.0 render=6.0 io=1.0 lod=1.0 (all=13.0 of 14)") : sm;
         assert sm.contains("avg queue wg=46 prop=3 render=10 io=5 lod=0") : sm;
+        assert sm.contains("completed/s wg=4.0 prop=10.0 render=500.0 io=2.5 lod=1.0") : sm;
+        assert sm.contains("avg task ms wg=100.0 prop=20.0 render=5.0 io=8.0 lod=1.0") : sm; // render: (4+4+6+6)/4
         p.record(3, 1_000_000L, 2_000_000L, 1_500_000L);
         assert !p.drain(1.0, 14).contains("samples="); // срезы обнулены
 

@@ -27,6 +27,15 @@ final class AeroPoolStats {
     private static final AtomicLong WG_PAUSED = new AtomicLong();
     private static final AtomicLongArray SUM_RUNNING = new AtomicLongArray(POOLS.length);
     private static final AtomicLongArray SUM_QUEUE = new AtomicLongArray(POOLS.length);
+    private static final AtomicLongArray SUM_AVG_MICROS = new AtomicLongArray(POOLS.length);
+    /** Накопительный счётчик завершённых задач пула: последнее значение и значение на начало окна ({@code -1} = ещё не задано). */
+    private static final long[] LATEST_COMPLETED = new long[POOLS.length];
+    private static final long[] BASE_COMPLETED = new long[POOLS.length];
+    private static final Object COMPLETED_LOCK = new Object();
+    static {
+        java.util.Arrays.fill(BASE_COMPLETED, -1L);
+        java.util.Arrays.fill(LATEST_COMPLETED, -1L);
+    }
 
     private final boolean enabled;
     private final AtomicLongArray count = new AtomicLongArray(MAX_DETAIL);
@@ -59,14 +68,22 @@ final class AeroPoolStats {
 
     /**
      * Один срез состояния пулов DH (раз в секунду): {@code worldGenCanRun}, сколько задач выполняется и ждёт в очереди у каждого
-     * пула из {@link #POOLS}. Показывает, кто занимает общие потоки и не стоит ли пул генерации на паузе.
+     * пула из {@link #POOLS}, накопительное число завершённых задач и среднее время задачи (скользящее среднее DH, мс).
+     * Показывает, кто занимает общие потоки, не стоит ли пул генерации на паузе и сколько стоит одна задача каждого пула.
      */
-    static void sample(boolean worldGenCanRun, int[] running, int[] queue) {
+    static void sample(boolean worldGenCanRun, int[] running, int[] queue, long[] completed, double[] avgTaskMs) {
         SAMPLES.incrementAndGet();
         if (!worldGenCanRun) WG_PAUSED.incrementAndGet();
         for (int i = 0; i < POOLS.length; i++) {
             SUM_RUNNING.addAndGet(i, running[i]);
             SUM_QUEUE.addAndGet(i, queue[i]);
+            SUM_AVG_MICROS.addAndGet(i, Math.round(avgTaskMs[i] * 1000.0));
+        }
+        synchronized (COMPLETED_LOCK) {
+            for (int i = 0; i < POOLS.length; i++) {
+                LATEST_COMPLETED[i] = completed[i];
+                if (BASE_COMPLETED[i] < 0) BASE_COMPLETED[i] = completed[i];
+            }
         }
     }
 
@@ -98,15 +115,24 @@ final class AeroPoolStats {
                 "tasks=%d threads=%d busy=%.0f%% (body %.0f%% + after-body %.0f%%) | queue wait avg %s ms max %d ms | after-body max %d ms | per detail (avg ms):%s",
                 tn, threads, 100.0 * tt / capacityNs, 100.0 * tb / capacityNs, 100.0 * Math.max(0L, tt - tb) / capacityNs,
                 ms(tw, tn), waitMax / 1_000_000L, afterMax / 1_000_000L, per);
-        return line + drainSamples(threads);
+        return line + drainSamples(threads, elapsedSec);
     }
 
-    private static String drainSamples(int threads) {
+    private static String drainSamples(int threads, double elapsedSec) {
         long n = SAMPLES.getAndSet(0), paused = WG_PAUSED.getAndSet(0);
-        long[] run = new long[POOLS.length], que = new long[POOLS.length];
+        long[] run = new long[POOLS.length], que = new long[POOLS.length], micros = new long[POOLS.length];
+        double[] perSec = new double[POOLS.length];
         for (int i = 0; i < POOLS.length; i++) {
             run[i] = SUM_RUNNING.getAndSet(i, 0);
             que[i] = SUM_QUEUE.getAndSet(i, 0);
+            micros[i] = SUM_AVG_MICROS.getAndSet(i, 0);
+        }
+        synchronized (COMPLETED_LOCK) {
+            for (int i = 0; i < POOLS.length; i++) {
+                if (BASE_COMPLETED[i] < 0 || LATEST_COMPLETED[i] < 0) continue; // срезов ещё не было: базу не трогаем
+                perSec[i] = (LATEST_COMPLETED[i] - BASE_COMPLETED[i]) / Math.max(elapsedSec, 1e-9);
+                BASE_COMPLETED[i] = LATEST_COMPLETED[i];
+            }
         }
         if (n == 0) return "";
         StringBuilder sb = new StringBuilder(String.format(Locale.ROOT, " | samples=%d wg paused %.0f%% | avg running", n, 100.0 * paused / n));
@@ -117,6 +143,10 @@ final class AeroPoolStats {
         }
         sb.append(String.format(Locale.ROOT, " (all=%.1f of %d) | avg queue", all, threads));
         for (int i = 0; i < POOLS.length; i++) sb.append(String.format(Locale.ROOT, " %s=%.0f", POOLS[i], (double) que[i] / n));
+        sb.append(" | completed/s");
+        for (int i = 0; i < POOLS.length; i++) sb.append(String.format(Locale.ROOT, " %s=%.1f", POOLS[i], perSec[i]));
+        sb.append(" | avg task ms");
+        for (int i = 0; i < POOLS.length; i++) sb.append(String.format(Locale.ROOT, " %s=%.1f", POOLS[i], micros[i] / 1000.0 / n));
         return sb.toString();
     }
 

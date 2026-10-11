@@ -66,6 +66,7 @@ org.example.aeroworld
 │   │   ├── CanQueueStatsMixin.java                      - этап 4, только измерение: причины отказа canQueueRetrievalNow и несохранённые секции (AeroHybridStats), применяется только при `-Daeroworld.dhStatsMixins=true`
 │   │   ├── QueueOrderStatsMixin.java                    - этап 0, только измерение: при старте листовой задачи считает ждущие грубые задачи и сколько из них накрывают лист (AeroHybridStats), удаляется вместе с ней
 │   │   ├── RegenGateStatsMixin.java                     - этап 0, только измерение: попытки перезапроса листьев и условие-стопер queueRegeneration (AeroHybridStats.RegenGate), require = 0
+│   │   ├── RenderLoaderPriorityMixin.java               - этап 4в, эксперимент: подмена приоритета пула Render Loader (константа 6 в ThreadPoolUtil.setupThreadPools) флагом `-Daeroworld.dhRenderLoaderPriority`, по умолчанию без изменений, require = 0
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
