@@ -92,6 +92,7 @@ public class AeroThroughputLimits {
     // чем заняты слоты, когда аналитика молчит. Учёт на генератор (измерение), как и основной отчёт.
     private final AeroLeafSlots realSlots = new AeroLeafSlots();
     private final AeroPoolStats poolStats = new AeroPoolStats(AeroPoolStats.ENABLED_BY_FLAG);
+    { if (AeroPoolStats.ENABLED_BY_FLAG) AeroExecutorSampler.startOnce(); }
     private final AtomicLong windowRealDeclined = new AtomicLong();
     private final AtomicLong totalRealDone = new AtomicLong();
     private final AtomicLong windowRealDone = new AtomicLong();
