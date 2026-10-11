@@ -81,6 +81,7 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
         this.leafLedger = ledger;
         LOGGER.info("[AeroWorld DH] Real-chunk region border = {} (-Daeroworld.dhBorder, default 0), real radius = {} chunks",
                 AeroThroughputLimits.WORLD_GEN_BORDER, AeroWorldConfig.DH_REAL_CHUNK_RADIUS.get());
+        LOGGER.info("[AeroWorld DH] Level seed for {} = {}", dimension, serverLevel.getSeed());
         LOGGER.info("[AeroWorld DH] Real-chunk mode for {}: {} (-Daeroworld.dhTwoPhase, default false)",
                 dimension, AeroThroughputLimits.TWO_PHASE ? "two-phase (analytic SURFACE, then DH regeneration)" : "single-phase (real chunks on first request)");
         this.columnWriter = new AeroColumnWriter(levelWrapper);
@@ -249,13 +250,20 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
             // Однофазный режим: реальные чанки сразу при первом запросе листа. Порядок задаёт очередь DH (ближние первыми),
             // путь регенерации DH не нужен: он голодает, пока очередь забита листьями вне R (измерения этапа 0).
             DhWorldGenerator real = realGenerator();
-            if (real != null) {
-                return throughputLimits.trackRealLeaf(real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
-                        pooledFullDataSource, mode, executor, resultConsumer));
+            if (real == null) {
+                hybridLeaf = false; // DH-уровень ещё недоступен: отдаём FEATURES аналитикой
+            } else {
+                CompletableFuture<Void> realLeaf = throughputLimits.startRealLeaf(AeroThroughputLimits.REAL_LEAF_CAP,
+                        () -> real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
+                                pooledFullDataSource, mode, executor, resultConsumer));
+                if (realLeaf != null) return realLeaf;
+                // Лимит dhRealLeafCap исчерпан: лист уходит аналитикой SURFACE (phaseOne).
+                // ponytail: замер 2026-10-10 (cap=14, R=20): DH НЕ перезапросил 63 отказанных листа за 3 мин, они остаются
+                // аналитикой, реальных листьев 28 вместо 107. Флаг экспериментальный, по умолчанию выключен.
+                // Апгрейд: возвращать отказанные листья в очередь DH (сброс секции), см. PROGRESS.md, этап 1б.
             }
-            hybridLeaf = false; // DH-уровень ещё недоступен: отдаём FEATURES аналитикой
         }
-        if (hybridLeaf && leafLedger.contains(leafKey)) {
+        if (hybridLeaf && AeroThroughputLimits.TWO_PHASE && leafLedger.contains(leafKey)) {
             DhWorldGenerator real = realGenerator();
             if (real != null) {
                 return throughputLimits.trackRealLeaf(real.generateLod(chunkPosMinX, chunkPosMinZ, lodPosX, lodPosZ, detailLevel,
@@ -264,6 +272,8 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
             hybridLeaf = false; // DH-уровень ещё недоступен: не крутим перезапросы, отдаём FEATURES
         }
         final boolean phaseOne = hybridLeaf;
+        final long submitNs = System.nanoTime();
+        final long[] bodyNs = new long[1]; // время тела задачи для AeroPoolStats
 
         return CompletableFuture.runAsync(() -> {
             long taskStartNs = System.nanoTime();
@@ -327,15 +337,17 @@ public class AeroSeedWorldGenerator implements IDhApiWorldGenerator {
                 }
 
                 resultConsumer.accept(pooledFullDataSource);
-                if (phaseOne) leafLedger.add(leafKey); // после отдачи данных: сбой выше не загонит лист в фазу 2 вхолостую
+                if (phaseOne && AeroThroughputLimits.TWO_PHASE) leafLedger.add(leafKey); // после отдачи данных: сбой выше не загонит лист в фазу 2 вхолостую
                 int footprintChunks = (width * step) >> 4;
                 throughputLimits.recordAnalyticTask(detailLevel, System.nanoTime() - taskStartNs);
                 throughputLimits.recordChunksGenerated(footprintChunks * footprintChunks);
             } catch (Throwable t) {
                 LOGGER.error("Failed to generate DH LOD data at chunk ({}, {}), detailLevel {}:",
                         chunkPosMinX, chunkPosMinZ, detailLevel, t);
+            } finally {
+                bodyNs[0] = System.nanoTime() - taskStartNs;
             }
-        }, executor);
+        }, throughputLimits.timedExecutor(executor, detailLevel, submitNs, bodyNs));
     }
 
     /**

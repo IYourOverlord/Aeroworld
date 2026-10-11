@@ -78,6 +78,10 @@ public final class AeroHybridStats {
     private static final AtomicLong QUEUE_WAITING_SUM = new AtomicLong();
     private static final AtomicLong QUEUE_CHECKS = new AtomicLong();
     private static final AtomicLong QUEUE_MAX = new AtomicLong();
+    private static final AtomicLong UNSAVED_AT_LIMIT = new AtomicLong();
+    private static final AtomicLong UNSAVED_MAX = new AtomicLong();
+    private static final AtomicLong REMAINING_LAST_LOG_MS = new AtomicLong();
+    private static final long REMAINING_LOG_INTERVAL_MS = 5_000L;
 
     private static final AtomicLong NEXT_REPORT_MS = new AtomicLong(System.currentTimeMillis() + REPORT_INTERVAL_MS);
 
@@ -146,6 +150,30 @@ public final class AeroHybridStats {
         maybeReport();
     }
 
+    /**
+     * Вход в {@code canQueueRetrievalNow}: {@code unsaved} несохранённых секций при лимите {@code max}. При {@code unsaved >= max}
+     * DH делает flush, но только если метод дошёл до этой проверки; на входе считаем верхнюю оценку таких случаев.
+     */
+    public static void onUnsaved(int unsaved, int max) {
+        if (!ENABLED) return;
+        if (unsaved >= max) UNSAVED_AT_LIMIT.incrementAndGet();
+        UNSAVED_MAX.accumulateAndGet(unsaved, Math::max);
+    }
+
+    /**
+     * Счётчик «N chunks left» из DH считается как {@code estimate + queuedChunks}: {@code estimate} задаёт {@code LodQuadTree}
+     * (недостающие позиции или секции, помеченные на регенерацию), {@code queuedChunks} это чанки в ждущих задачах очереди.
+     * Пишет строку не чаще раза в 5 с, чтобы по логу было видно, на каком значении и из чего он застревает.
+     */
+    public static void onRemaining(long estimate, int queuedChunks, int waiting, int inProgress) {
+        if (!ENABLED) return;
+        long now = System.currentTimeMillis();
+        long last = REMAINING_LAST_LOG_MS.get();
+        if (now - last < REMAINING_LOG_INTERVAL_MS || !REMAINING_LAST_LOG_MS.compareAndSet(last, now)) return;
+        LOG.info("[Remaining] left={} (estimate={} + queued chunks={}) | waiting tasks={} inProgress={}",
+                estimate + queuedChunks, estimate, queuedChunks, waiting, inProgress);
+    }
+
     public static void onAnalytic(int detailLevel, long nanos) {
         if (!ENABLED) return;
         int d = Math.min(detailLevel, MAX_DETAIL - 1);
@@ -210,9 +238,10 @@ public final class AeroHybridStats {
         StringBuilder cq = new StringBuilder();
         for (QueueGate g : QueueGate.values()) cq.append(' ').append(g).append('=').append(CAN_QUEUE.get(g.ordinal()));
         long checks = QUEUE_CHECKS.get();
-        LOG.info("[Regen] tryQueueRegeneration={} | queueRegeneration gates:{} | canQueueRetrievalNow:{} | avg waiting={} of max={}",
+        LOG.info("[Regen] tryQueueRegeneration={} | queueRegeneration gates:{} | canQueueRetrievalNow:{} | avg waiting={} of max={} | unsaved>=max at entry={} (max unsaved seen={})",
                 REGEN_TRY.get(), rg, cq,
-                checks == 0 ? "?" : String.format(java.util.Locale.ROOT, "%.0f", QUEUE_WAITING_SUM.get() / (double) checks), QUEUE_MAX.get());
+                checks == 0 ? "?" : String.format(java.util.Locale.ROOT, "%.0f", QUEUE_WAITING_SUM.get() / (double) checks), QUEUE_MAX.get(),
+                UNSAVED_AT_LIMIT.get(), UNSAVED_MAX.get());
 
         reportStuck(System.currentTimeMillis());
 

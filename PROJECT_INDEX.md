@@ -61,6 +61,7 @@ org.example.aeroworld
 │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
 │   │   ├── LodRenderSectionAdjDiagMixin.java            - диагностика швов на границах секций LOD (getRenderSourceForPos), счётчик пустых соседей
+│   │   ├── CanQueueStatsMixin.java                      - этап 4, только измерение: причины отказа canQueueRetrievalNow и несохранённые секции (AeroHybridStats), применяется только при `-Daeroworld.dhStatsMixins=true`
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
@@ -109,12 +110,14 @@ worldgen/
 │   ├── AeroAdjacencyCache.java        - LRU-кэш декодированных FullDataSourceV2 соседних секций (StandInTerrain)
 │   ├── AeroCompleteSectionCache.java  - LRU-кэш подтверждённо полных секций, закорачивает getPositionsToRetrieve
 │   ├── AeroFastDistantTerrain.java    - пороги detailLevel для раздельного упрощения геометрии слоёв
+│   ├── AeroLeafSlots.java             - чистый (без MC) счётчик одновременных реальных листьев с атомарным резервированием под лимит `-Daeroworld.dhRealLeafCap` (этап 1б), проверка: AeroLeafSlotsSelfCheck
+│   ├── AeroPoolStats.java             - чистая (без MC) диагностика этапа 4в: ожидание в очереди пула, тело задачи и время после тела (цепочка колбэков DH) для аналитических задач; включается `-Daeroworld.dhPoolStats=true`, проверка: AeroPoolStatsSelfCheck
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках
 │   ├── AeroSeedWorldGenBinding.java   - слушатель DhApiLevelLoadEvent, регистрация оверрайда и stand-down логика
 │   ├── AeroSeedWorldGenerator.java    - реализация IDhApiWorldGenerator (EDhApiWorldGeneratorReturnType.API_CHUNKS)
 │   ├── AeroStructureMarkers.java      - миниатюры структур на LOD (detail <= 5), стоят на земле своего слоя; позиции пробным createStructures на одноразовом ProtoChunk (кэш по ячейкам 32x32 чанка, подземные структуры и End City пропущены, см. AeroStructureIcon.shownOnLod); -Daeroworld.dhStructures=false отключает
 │   ├── AeroStructureIcon.java         - чистые (без MC) воксельные шаблоны миниатюр по id структуры (послойные ASCII-схемы), проверка: AeroStructureIconSelfCheck
-│   └── AeroThroughputLimits.java      - счётчик чанков и секций, периодический отчёт производительности (chunks/s, sections/s)
+│   └── AeroThroughputLimits.java      - счётчик чанков и секций, периодический отчёт производительности (chunks/s, sections/s, declined листьев); `startRealLeaf` запускает реальный лист под лимитом `REAL_LEAF_CAP`
 ├── feature/
 │   ├── Layer1OreFilter.java           - в applyBiomeDecoration заменяет руду на камень/сланец в секциях Y <= 320
 │   └── vault/                         - Vault и Trial Spawner на островах всех трёх слоёв

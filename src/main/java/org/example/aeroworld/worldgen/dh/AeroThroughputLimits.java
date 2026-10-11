@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.function.Supplier;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
@@ -39,6 +41,13 @@ public class AeroThroughputLimits {
      * По умолчанию однофазный: по логам этапа 0 регенерация голодает, пока очередь забита листьями вне R (38% листьев R не дошли до фазы 2).
      */
     public static final boolean TWO_PHASE = Boolean.getBoolean("aeroworld.dhTwoPhase");
+
+    /**
+     * {@code -Daeroworld.dhRealLeafCap=N} — не больше N одновременных реальных листьев в однофазном режиме (этап 1б); 0 = без лимита
+     * (по умолчанию, поведение как раньше). Остальные листья в R отдаются аналитикой SURFACE. Экспериментальный: по замеру
+     * cap=14 (R=20) DH не перезапрашивал отказанные листья, и реальными осталась треть (28 из ~91), см. PROGRESS.md, этап 1б.
+     */
+    public static final int REAL_LEAF_CAP = Math.max(0, Integer.getInteger("aeroworld.dhRealLeafCap", 0));
 
     public static final int WORLD_GEN_BORDER = Math.max(0, Math.min(8, Integer.getInteger("aeroworld.dhBorder", 0)));
 
@@ -81,17 +90,37 @@ public class AeroThroughputLimits {
 
     // Реальные листья (делегат DH chunk-gen) не входят в chunks выше: считаем их отдельно, чтобы в логе было видно,
     // чем заняты слоты, когда аналитика молчит. Учёт на генератор (измерение), как и основной отчёт.
-    private final AtomicInteger realInFlight = new AtomicInteger();
+    private final AeroLeafSlots realSlots = new AeroLeafSlots();
+    private final AeroPoolStats poolStats = new AeroPoolStats(AeroPoolStats.ENABLED_BY_FLAG);
+    private final AtomicLong windowRealDeclined = new AtomicLong();
     private final AtomicLong totalRealDone = new AtomicLong();
     private final AtomicLong windowRealDone = new AtomicLong();
     private final AtomicLong windowRealNs = new AtomicLong();
 
-    /** Оборачивает фьючу реального листа (то же значение возвращается DH); время включает ожидание в пуле. */
+    /** Оборачивает фьючу реального листа без лимита (двухфазный режим); время включает ожидание в пуле. */
     public CompletableFuture<Void> trackRealLeaf(CompletableFuture<Void> future) {
+        return startRealLeaf(0, () -> future);
+    }
+
+    /**
+     * Запускает реальный лист, если занято меньше {@code cap} слотов ({@code cap <= 0} — без лимита); иначе {@code null},
+     * {@code start} не вызывается. Возвращается та же фьюча, что отдал {@code start}.
+     */
+    public CompletableFuture<Void> startRealLeaf(int cap, Supplier<CompletableFuture<Void>> start) {
+        if (!realSlots.tryAcquire(cap)) {
+            windowRealDeclined.incrementAndGet();
+            return null;
+        }
         long t0 = System.nanoTime();
-        realInFlight.incrementAndGet();
+        CompletableFuture<Void> future;
+        try {
+            future = start.get();
+        } catch (Throwable t) {
+            realSlots.release();
+            throw t;
+        }
         future.whenComplete((v, err) -> {
-            realInFlight.decrementAndGet();
+            realSlots.release();
             totalRealDone.incrementAndGet();
             windowRealDone.incrementAndGet();
             windowRealNs.addAndGet(System.nanoTime() - t0);
@@ -106,6 +135,14 @@ public class AeroThroughputLimits {
     private static final int MAX_DETAIL_TRACKED = 16;
     private final AtomicLongArray windowDetailTasks = new AtomicLongArray(MAX_DETAIL_TRACKED);
     private final AtomicLongArray windowDetailNs = new AtomicLongArray(MAX_DETAIL_TRACKED);
+
+    /**
+     * Пул для аналитической задачи: при {@code -Daeroworld.dhPoolStats=true} оборачивается для замера ожидания и времени потока
+     * (см. {@link AeroPoolStats}), иначе возвращается без изменений. {@code body[0]} задача заполняет временем своего тела.
+     */
+    public Executor timedExecutor(Executor executor, int detailLevel, long submitNs, long[] body) {
+        return poolStats.wrap(executor, detailLevel, submitNs, body);
+    }
 
     /** Завершена аналитическая задача уровня {@code detailLevel}; {@code computeNanos} — время работы самого генератора. */
     public void recordAnalyticTask(int detailLevel, long computeNanos) {
@@ -160,7 +197,7 @@ public class AeroThroughputLimits {
 
                     long realDone = windowRealDone.getAndSet(0);
                     long realNs = windowRealNs.getAndSet(0);
-                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {} | real leaves: {} done ({}/s, avg {} ms), inFlight={}, total={} | analytic tasks by detail: {}",
+                    LOGGER.info("[AeroWorld DH SeedGen] Throughput: {} chunks ({} chunks/s, {} sections/s) over last {}s | Total chunks: {} | real leaves: {} done ({}/s, avg {} ms), inFlight={}, total={}, declined={} | analytic tasks by detail: {}",
                             chunks,
                             String.format(java.util.Locale.ROOT, "%.1f", chunksPerSec),
                             String.format(java.util.Locale.ROOT, "%.1f", sectionsPerSec),
@@ -169,8 +206,10 @@ public class AeroThroughputLimits {
                             realDone,
                             String.format(java.util.Locale.ROOT, "%.1f", elapsedSec > 0 ? realDone / elapsedSec : 0.0),
                             realDone == 0 ? 0 : realNs / 1_000_000L / realDone,
-                            realInFlight.get(), totalRealDone.get(),
+                            realSlots.get(), totalRealDone.get(), windowRealDeclined.getAndSet(0),
                             drainAnalyticSummary(elapsedSec));
+                    String pool = poolStats.drain(elapsedSec, distantHorizonsThreadCount());
+                    if (pool != null) LOGGER.info("[AeroWorld DH SeedGen] Pool: {}", pool);
                 }
             }
         }
@@ -192,9 +231,9 @@ public class AeroThroughputLimits {
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int dhThreads = distantHorizonsThreadCount();
-        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} " +
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} " +
                         "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
-                cores, dhThreads, SAVE_DELAY_MS);
+                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP);
     }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);

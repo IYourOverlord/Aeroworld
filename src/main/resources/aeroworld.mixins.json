@@ -9,6 +9,7 @@
     "LodRenderSectionAdjDiagMixin",
     "TranslucentAdjWallMixin",
     "RetrievalQueueLimitMixin",
+    "CanQueueStatsMixin",
     "GeneratorBusyMixin",
     "WorldGenSpeedGateMixin",
     "SaveDelayMixin",

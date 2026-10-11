@@ -55,6 +55,11 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName)
 	{
+		// Измерительный миксин этапа 4 включается только флагом -Daeroworld.dhStatsMixins=true (по умолчанию выключен).
+		if (mixinClassName.endsWith(".CanQueueStatsMixin") && !Boolean.getBoolean("aeroworld.dhStatsMixins"))
+		{
+			return false;
+		}
 		return this.distantHorizonsPresent;
 	}
 
