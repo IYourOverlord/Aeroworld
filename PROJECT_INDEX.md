@@ -2,11 +2,11 @@
 
 Мод для Minecraft 1.21.1 (NeoForge 21.1.228, Java 21, ModDevGradle 2.0.141, `mod_version` 1.0.12). Кастомное измерение с многослойной генерацией: поверхность + три слоя парящих островов, разделённых большими пустыми зазорами (зазоры являются частью дизайна: до островов должно быть трудно добраться).
 
-Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizonsApi-*.jar`, `DistantHorizons-3_3_1-1_21_1-fabric-neoforge.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` и класс `Layer3StructurePlacer` удалены; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
+Зависимости: `compileOnly` jar из `libs/` (`physical_structures-*.jar`, `DistantHorizons-*.jar`). В `neoforge.mods.toml` обязательна только `physical_structures [1,)`. DH является опциональной мягкой зависимостью (soft dependency). Регистрация `HAUL-01.excraft` удалена; в `ProximityTriggerHandler` осталась ветка для id с namespace `excraft`, которая в текущей конфигурации не срабатывает (в очередь ставится только `physical_structures:tank21`).
 
 Пакет: `org.example.aeroworld`. Корень исходников: `src/main/java/org/example/aeroworld/`.
 
-Индекс сверен с кодовой базой 2026-09-22. Список расхождений и актуальный статус см. раздел 8.
+Индекс сверен с кодовой базой 2026-10-11.
 
 ---
 
@@ -58,16 +58,21 @@ org.example.aeroworld
 ├── mixin/
 │   ├── dh/                            - миксины оптимизации throughput, исправления багов и диагностики Distant Horizons
 │   │   ├── BatchGenerationEnvironmentNeoforgeMixin.java - фикс бага DH: бордер региона и структуры на стыке батча (таргет DH 3.3.x: DhChunkGenerator_neoforge.generateChunks)
+│   │   ├── CompleteSectionCacheMixin.java             - закорачивает getPositionsToRetrieve для подтверждённо полных секций (HEAD/RETURN-инъекции в кэш AeroCompleteSectionCache, аналог CompleteSectionCache из DH SeedGen)
 │   │   ├── DhWorldGenBorderMixinPlugin.java             - IMixinConfigPlugin: soft dependency проверка наличия DH
 │   │   ├── GeneratorBusyMixin.java                      - масштабирование порога занятости генератора (IN_FLIGHT_SCALE)
+│   │   ├── LodQuadTreeRealRadiusMixin.java              - держит detail 0 (лист) до реального радиуса R*16 блоков вокруг игрока (штатная формула calcDetailLevelFromDistance даёт лишь 24-44 чанка)
 │   │   ├── LodRenderSectionAdjDiagMixin.java            - диагностика швов на границах секций LOD (getRenderSourceForPos), счётчик пустых соседей
 │   │   ├── CanQueueStatsMixin.java                      - этап 4, только измерение: причины отказа canQueueRetrievalNow и несохранённые секции (AeroHybridStats), применяется только при `-Daeroworld.dhStatsMixins=true`
+│   │   ├── QueueOrderStatsMixin.java                    - этап 0, только измерение: при старте листовой задачи считает ждущие грубые задачи и сколько из них накрывают лист (AeroHybridStats), удаляется вместе с ней
+│   │   ├── RegenGateStatsMixin.java                     - этап 0, только измерение: попытки перезапроса листьев и условие-стопер queueRegeneration (AeroHybridStats.RegenGate), require = 0
 │   │   ├── RetrievalQueueLimitMixin.java                - масштабирование очереди выборки LOD (QUEUE_SCALE), цель GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I
 │   │   ├── SaveDelayMixin.java                          - задержка сброса LOD на диск (SAVE_DELAY_MS = 10000)
 │   │   ├── SqliteTuningMixin.java                       - тюнинг PRAGMA SQLite (cache_size, mmap_size, synchronous)
 │   │   ├── StandInTerrainMixin.java                     - устранение дыр рендера LOD каскадным downsample родительских секций
 │   │   ├── TranslucentAdjWallMixin.java                 - скрытие паразитных вертикальных граней воды на стыках с неготовыми соседними секциями
-│   │   └── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
+│   │   ├── WorldGenSpeedGateMixin.java                  - устранение замедления генерации при очереди рендера
+│   │   └── WorldGenUtilRegenRadiusMixin.java            - лимит штатной регенерации листьев 2*R*16+128 вместо surfaceRegenMaxDistancePercent от дальности LOD (R=0 -> 0: второй проход выключен)
 │   └── structure/                     - инжекции в ванильные структуры для привязки к слоям AeroWorld
 │       ├── EndCityStructureAccessor.java     - аксессор ванильного generatePieces в EndCityStructure
 │       ├── EndCityStructureMixin.java        - принудительный спавн End City на планетах Layer 3, вырезка корабля
@@ -105,12 +110,18 @@ worldgen/
 ├── carver/SinkholeCarver.java         - карстовые воронки (НЕ ВЫЗЫВАЕТСЯ: applyCarvers пустой)
 ├── column/
 │   ├── AeroColumnModel.java           - единое ядро столбцовой генерации: аналитический расчёт спанов [bottomY..topY, state, biome]
-│   └── AeroColumnWriter.java          - конвертер спанов AeroColumnModel в DhApiTerrainDataPoint (detailLevel=0, эксклюзивный topY, воздух в пустотах, порядок сверху вниз) с кэшированием обёрток
+│   ├── AeroColumnWriter.java          - конвертер спанов AeroColumnModel в DhApiTerrainDataPoint (detailLevel=0, эксклюзивный topY, воздух в пустотах, порядок сверху вниз) с кэшированием обёрток
+│   ├── AeroStructureCover.java        - аналитическая модель покрытия структурами для LOD: детерминированный предикат End City на планете Layer 3 + вертикальный шаблон блоков поверх спанов AeroColumnModel (без RNG и StructureManager)
+│   ├── AeroTreeCover.java             - аналитическая модель деревьев для LOD: детерминированные спаны стволов и крон по климатическим группам биомов без запуска ванильного Feature-пайплайна
+│   └── SliceVote.java                 - слияние колонок по Y-срезам по схеме DH (твёрдое побеждает пустоту, среди твёрдых побеждает самое частое), carve() для вставки шаблонов; проверка: SliceVoteSelfCheck
 ├── dh/
 │   ├── AeroAdjacencyCache.java        - LRU-кэш декодированных FullDataSourceV2 соседних секций (StandInTerrain)
 │   ├── AeroCompleteSectionCache.java  - LRU-кэш подтверждённо полных секций, закорачивает getPositionsToRetrieve
 │   ├── AeroFastDistantTerrain.java    - пороги detailLevel для раздельного упрощения геометрии слоёв
+│   ├── AeroHybridStats.java           - этап 0 гибридной прогрузки: только счётчики и лог 30 с (повторные запросы секций, порядок очереди, цена реальных чанков); отключается `-Daeroworld.dhstats=false`, удаляется после этапа 0; проверка: AeroHybridStatsSelfCheck
+│   ├── AeroLeafLedger.java            - журнал листовых секций detail 0, которым аналитика уже отдала картинку (шаг SURFACE): append-only файл на диске уровня, фаза 2 (реальный chunk-gen) переживает перезапуск; проверка: AeroLeafLedgerSelfCheck
 │   ├── AeroLeafSlots.java             - чистый (без MC) счётчик одновременных реальных листьев с атомарным резервированием под лимит `-Daeroworld.dhRealLeafCap` (этап 1б), проверка: AeroLeafSlotsSelfCheck
+│   ├── AeroPlayerAnchors.java         - снимок XZ-позиций игроков по измерениям (обновляется раз в 20 тиков на server thread) для потоков DH world-gen: чтение ServerLevel.players() с чужого потока небезопасно
 │   ├── AeroPoolStats.java             - чистая (без MC) диагностика этапа 4в: ожидание в очереди пула, тело задачи и время после тела (цепочка колбэков DH) для аналитических задач; включается `-Daeroworld.dhPoolStats=true`, проверка: AeroPoolStatsSelfCheck
 │   ├── AeroSeedGenValidation.java     - dev-валидатор: поблочное сравнение AeroColumnModel и getBaseColumn на N точках
 │   ├── AeroSeedWorldGenBinding.java   - слушатель DhApiLevelLoadEvent, регистрация оверрайда и stand-down логика
@@ -132,7 +143,9 @@ worldgen/
 │   ├── Layer1TerrainGenerator.java    - весь Layer 1: высоты, пещера, заливка, декор пещеры, buildSurface
 │   ├── AeroRiverNetwork.java          - чистая (без MC) сеть рек и озёр: узлы сетки 640 блоков стекают к соседу с меньшей континентальностью, русла расширяются к устью, замкнутые впадины и часть узлов дают озёра; Layer1TerrainGenerator.getHeight вырезает русла/чаши ниже SEA_LEVEL, в горах (height > 20..50) реки гасятся; `Sample.deep` и `deepLakeCentre(chunkX, chunkZ)` для глубоких озёр (центр в мире решается обратным преобразованием искажения); проверка: AeroRiverNetworkSelfCheck
 │   ├── Layer1FlatGenerator.java        - тонкая обёртка (surfaceHeight/topmostHeight) для валидатора и биомов
+│   ├── PlateauTerrace.java            - чистая (без MC) математика плато `ashen_plateau`: террасы, каньоны, овраги, останцы, мосты с пустотой под декой, биом-маска; проверка: PlateauTerraceSelfCheck
 │   ├── LowerIslandGenerator.java       - Layer 2: fillChunk, placeTreesInRegion, clearVanillaVegetationInCentralZone
+│   ├── LowerIslandGeneratorAccess.java - узкий интерфейс доступа к world seed нижних островов для кода, которому нужен только сид, без зависимости от полного генератора (реализует LowerIslandGenerator)
 │   ├── HighIslandGenerator.java        - Layer 3: полые метеориты с кратерами и планеты с кольцами астероидов
 │   ├── UpperIslandGenerator.java       - Layer 4: купол + трассировка щупалец в AABB чанка
 │   └── Layer2StructurePlacer.java      - в fillFromNoise ставит tank21 в очередь для обычных RICH-островов
@@ -145,7 +158,7 @@ worldgen/
 │   ├── AncientCityIslandSupportPlacer.java - ступенчатая deepslate-платформа под ancient_city до пола пещеры
 │   ├── StructureCategory.java         - SURFACE, ISLAND, UNDERGROUND, WATER, SKY_FLOATING, DENY
 │   ├── StructureCategoryResolver.java - deny-список, токены путей, resolveForActualLayer
-│   ├── StructureSupportValidator.java - вызывается ТОЛЬКО из createStructures
+│   ├── StructureSupportValidator.java - вызывается ТОЛЬКО из createStructures; проверка медианы подошвы (medianOf, глубокие выбросы не смещают): StructureSoleYSelfCheck
 │   ├── SupportSample.java             - record сэмпла неудачной опоры структуры (x, z)
 │   ├── ValidationResult.java          - результат валидации структуры (accepted, rejectionReason, supportRatio)
 │   └── TerrainColumnSampler.java      - опора под структурой, глубина скана 24
@@ -240,59 +253,4 @@ worldgen/
 - `README.md`: историческое описание патча Vault/Trial для Layer 3.
 - `build.gradle`: `options.encoding = 'UTF-8'` обязателен из-за кириллицы в исходниках. Зависимости включают `compileOnly` библиотеки DH и Physical Structures.
 
----
 
-## 8. Расхождения и статус кодовой базы (2026-09-22)
-
-### Добавленные и актуализированные компоненты:
-1. Пакет `org.example.aeroworld.mixin.dh`: 9 файлов интеграции, диагностики и тюнинга Distant Horizons (включая `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`). Удалены устаревшие/неиспользуемые `LodQuadTreeAccessor` и `ReloadCoalesceMixin`.
-2. Пакет `org.example.aeroworld.mixin.structure`: миксины End City и Nether Fortress для корректного позиционирования в слоях AeroWorld.
-3. Пакет `org.example.aeroworld.worldgen.column`: `AeroColumnModel` (единое аналитическое ядро) и `AeroColumnWriter` (конвертер span -> DH).
-4. Пакет `org.example.aeroworld.worldgen.dh`: `AeroSeedWorldGenerator`, `AeroSeedWorldGenBinding`, `AeroThroughputLimits`, `AeroFastDistantTerrain`, `AeroSeedGenValidation`.
-5. Конфигурации: `DhOverrideSettings.java`, `Layer3BodySettings.java`, обновлённый `AeroWorldConfig.java` с клиентскими настройками DH-оверрайда.
-6. Модели и энумы: `BodyType.java` (планеты и метеориты Layer 3).
-7. Рефакторинг: `getBaseColumn` и `getBaseHeight` в `AeroWorldChunkGenerator` переведены на делегирование в `AeroColumnModel`.
-
-### Исправлено: миксины DH не применялись ("loaded too early"):
-- `DhWorldGenBorderMixinPlugin` в `onLoad()` по строковому литералу грузил таргет-класс
-  `BatchGenerationEnvironment_neoforge` через `Class.forName(...)`. Это полностью загружало
-  (линковало) класс, который является таргетом `BatchGenerationEnvironmentNeoforgeMixin`,
-  ДО того как Mixin успевал применить трансформацию -> в логах
-  "Critical problem: ... loaded too early", инжекты не срабатывали, и батчевая генерация
-  DH не сохраняла результат в LOD (на клиенте ничего не рендерилось, хотя счётчик прогресса рос).
-- Фикс: детектор наличия DH заменён на не-таргетный класс `com.seibel.distanthorizons.core.Initializer`,
-  который не является таргетом ни одного миксина. Мягкая зависимость сохранена, а
-  `BatchGenerationEnvironmentNeoforgeMixin` теперь корректно применяется.
-
-### Исправлено: дальние LOD не отображаются (applyToParent у API-пути SeedGen):
-- Симптом (подтверждён логами и БД): DH-оверлей показывает огромную сгенерированную территорию
-  (в `FullData` overworld-БД лежат ~82k источников, ~318 МБ), но в 3D-рендере виден только небольшой
-  участок вокруг спавна; все миксины применяются, ошибок нет.
-- Причина: vanilla-путь DH (`LodDataBuilder.createFromChunk`) выставляет на создаваемом
-  `FullDataSourceV2` флаг `applyToParent = TRUE`, из-за чего DH даунсемплит точные LOD-данные в
-  грубые родительские уровни, которые рендер использует для дальних блоков. API-путь SeedGen
-  (`LodDataBuilder.createFromApiChunkData`) этот флаг НЕ ставит -> иерархия грубых LOD не строится:
-  в БД у всех источников `ApplyToParent=0`, грубая пирамида обрывается на detail 8, выше ничего нет.
-- Фикс (миксин `LodDataBuilderApplyToParentMixin` позже удалён: в DH 3.3.2 `WorldGenerationQueue` сам ставит `applyToParent`): миксин в `createFromApiChunkData` выставляет
-  `applyToParent = TRUE` на возвращаемый источник (зеркально vanilla `createFromChunk`).
-  `FullDataSourceV2.updateFromDataSource()` прокидывает флаг в агрегированный источник
-  (guard detail < 15), и грубые LOD-уровни строятся.
-
-### Миграция на Distant Horizons 3.3.1 (краш при создании мира):
-- `RetrievalQueueLimitMixin`: константа 20 больше не внутри `canQueueRetrievalNow(Z)Z`, она перенесена в
-  `GeneratedFullDataSourceProvider.getMaxRetrievalQueueCount()I` (static). Отсутствие цели с `defaultRequire = 1`
-  давало `InjectionError: Critical injection failure` и краш при загрузке DH. Хендлер теперь static.
-- `BatchGenerationEnvironmentNeoforgeMixin`: класс DH переименован в `DhChunkGenerator_neoforge`, метод
-  `generateEvent` -> `generateChunks(ChunkGenEvent_neoforge)`. Добавился третий вызов `getIterator` (ordinal 2,
-  выдача результата батча), он не редиректится.
-- `SchedulerPriorityMixin` и `ExecutorNameAccessor` удалены: компаратор в `PriorityTaskPicker` теперь двухаргументный
-  (сначала priority, затем runtime), а DH сам создаёт `Render Loader` с priority 6 против 5 у `World Gen`.
-- Без изменений (сверены по байткоду 3.3.1): `GeneratorBusyMixin`, `WorldGenSpeedGateMixin`, `SaveDelayMixin`,
-  `SqliteTuningMixin`, `LodRenderSectionAdjDiagMixin`, `TranslucentAdjWallMixin`, вся API-часть SeedGen.
-- В `libs/` должен лежать только один `DistantHorizons-*.jar` (3.3.1), старый 3.2.0-b удалить.
-
-### Мёртвый код и известные ограничения:
-- `SinkholeCarver.java` не вызывается (`applyCarvers` пустой).
-- `Layer1FlatGenerator.setVanillaSource`: no-op метод.
-- `AeroColumnModel` (LOD-модель): слой 1 получает поверхность по биому/высоте через `Layer1TerrainGenerator.surfaceBlocks` (трава/песок/снег/подзол/гравий + 3 подповерхностных блока, единая логика с `buildSurface`); острова слоя 2 — перевёрнутый конус (`getDeformedBottomY`) с травой/землёй сверху, слоя 3 — эллипсоид (`getEllipsoidTop/BottomY`), слоя 4 — купол (`getCapTop/BottomY`). Не отражены в LOD: щупальца слоя 4, кольца планет, полость метеорита, мосты, деревья, растительность. `getBaseHeight` для островов всё ещё использует цилиндр (расхождение с `getBaseColumn`).
-- Валидация `/aeroworld validateSeedGen 10000` и замеры производительности throughput (секции/сек) подготовлены в коде, но требуют запуска и фиксации результатов в работающей тестовой среде с DH.
