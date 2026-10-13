@@ -18,7 +18,8 @@
     "StandInTerrainMixin",
     "CompleteSectionCacheMixin",
     "WorldGenUtilRegenRadiusMixin",
-    "PropagateStatsMixin"
+    "PropagateStatsMixin",
+    "AdjReadStatsMixin"
   ],
   "client": [],
   "server": [],

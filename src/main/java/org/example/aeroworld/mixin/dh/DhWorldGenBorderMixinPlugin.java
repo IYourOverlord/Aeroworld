@@ -60,8 +60,8 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
-		// Измерительный миксин пропагатора только при -Daeroworld.dhPoolStats=true.
-		if (mixinClassName.endsWith(".PropagateStatsMixin") && !Boolean.getBoolean("aeroworld.dhPoolStats"))
+		// Измерительные миксины пропагатора и чтений соседей только при -Daeroworld.dhPoolStats=true.
+		if ((mixinClassName.endsWith(".PropagateStatsMixin") || mixinClassName.endsWith(".AdjReadStatsMixin")) && !Boolean.getBoolean("aeroworld.dhPoolStats"))
 		{
 			return false;
 		}

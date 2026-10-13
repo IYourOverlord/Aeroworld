@@ -219,6 +219,8 @@ public class AeroThroughputLimits {
                     if (pool != null) LOGGER.info("[AeroWorld DH SeedGen] Pool: {}", pool);
                     String prop = AeroPropStats.ENABLED ? AeroPropStats.drain(elapsedSec) : null;
                     if (prop != null) LOGGER.info("[AeroWorld DH SeedGen] Prop: {}", prop);
+                    String adj = AeroAdjReadStats.ENABLED ? AeroAdjReadStats.drain(elapsedSec) : null;
+                    if (adj != null) LOGGER.info("[AeroWorld DH SeedGen] AdjRead: {}", adj);
                 }
             }
         }
