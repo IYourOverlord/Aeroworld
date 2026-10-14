@@ -60,8 +60,13 @@ public final class DhWorldGenBorderMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
-		// Измерительные миксины пропагатора и чтений соседей только при -Daeroworld.dhPoolStats=true.
-		if ((mixinClassName.endsWith(".PropagateStatsMixin") || mixinClassName.endsWith(".AdjReadStatsMixin")) && !Boolean.getBoolean("aeroworld.dhPoolStats"))
+		// Измерительные миксины пропагатора, чтений соседей и перезагрузок секций только при -Daeroworld.dhPoolStats=true.
+		if ((mixinClassName.endsWith(".PropagateStatsMixin") || mixinClassName.endsWith(".AdjReadStatsMixin") || mixinClassName.endsWith(".ReloadStatsMixin")) && !Boolean.getBoolean("aeroworld.dhPoolStats"))
+		{
+			return false;
+		}
+		// Склейка перезагрузок секций (этап 5б): по умолчанию включена (2500 мс, как в AeroReloadCoalescer), -Daeroworld.dhReloadQuietMs=0 выключает.
+		if (mixinClassName.endsWith(".ReloadCoalesceMixin") && Long.getLong("aeroworld.dhReloadQuietMs", 2500L) <= 0)
 		{
 			return false;
 		}

@@ -19,7 +19,9 @@
     "CompleteSectionCacheMixin",
     "WorldGenUtilRegenRadiusMixin",
     "PropagateStatsMixin",
-    "AdjReadStatsMixin"
+    "AdjReadStatsMixin",
+    "ReloadStatsMixin",
+    "ReloadCoalesceMixin"
   ],
   "client": [],
   "server": [],

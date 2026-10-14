@@ -221,6 +221,10 @@ public class AeroThroughputLimits {
                     if (prop != null) LOGGER.info("[AeroWorld DH SeedGen] Prop: {}", prop);
                     String adj = AeroAdjReadStats.ENABLED ? AeroAdjReadStats.drain(elapsedSec) : null;
                     if (adj != null) LOGGER.info("[AeroWorld DH SeedGen] AdjRead: {}", adj);
+                    String reload = AeroReloadStats.ENABLED ? AeroReloadStats.drain(elapsedSec) : null;
+                    if (reload != null) LOGGER.info("[AeroWorld DH SeedGen] Reload: {}", reload);
+                    String coalesce = AeroReloadCoalescer.ENABLED ? AeroReloadCoalescer.drainStats(elapsedSec) : null;
+                    if (coalesce != null) LOGGER.info("[AeroWorld DH SeedGen] ReloadCoalesce: {}", coalesce);
                 }
             }
         }
@@ -242,9 +246,10 @@ public class AeroThroughputLimits {
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int dhThreads = distantHorizonsThreadCount();
-        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} renderLoaderPriority={} " +
+        GATE_LOGGER.info("[Environment] availableProcessors={} distantHorizonsThreadCount={} saveDelayMs={} realLeafCap={} renderLoaderPriority={} reloadQuietMs={} reloadHoldMs={} reloadExemptBelowDetail={} " +
                         "(DH runs ~5-6 pools at this size each: WorldGen/UpdatePropagator/RenderLoader/IO/LODBuilder)",
-                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY);
+                cores, dhThreads, SAVE_DELAY_MS, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY,
+                AeroReloadCoalescer.QUIET_MS, AeroReloadCoalescer.HOLD_MS, AeroReloadCoalescer.EXEMPT_BELOW_DETAIL);
     }
 
     private static final AtomicLong renderGateChecks = new AtomicLong(0);
