@@ -145,6 +145,10 @@ public class Layer1TerrainGenerator {
 
     /** Плоское дно глубокого озера (там ставится океанический монумент). */
     public static final int DEEP_LAKE_FLOOR_Y = -50;
+    /** Высота, выше которой рельеф считается «горным» и сжимается в долине реки (верх обычной равнины). */
+    private static final double VALLEY_BASE_Y = 8.0;
+    /** Доля горного рельефа, остающаяся у самого русла (0 = ровно до VALLEY_BASE_Y). */
+    private static final double VALLEY_MIN_ALLOW = 0.15;
     /** Сила глубокого озера, выше которой колонка получает биом {@code deep_lake}. */
     private static final double DEEP_LAKE_BIOME_THRESHOLD = 0.5;
     /** Глубокое озеро считается настоящим, если дно реально не выше этой отметки (на горах чаша гасится). */
@@ -288,6 +292,17 @@ public class Layer1TerrainGenerator {
         height = lerp(height, beach, smoothstep(-0.20, -0.02, continentality));
         height = lerp(height, land, smoothstep(-0.06, 0.10, continentality));
 
+        // Долины рек: рельеф над базовой равниной ограничен расстоянием до русла (AeroRiverNetwork.Sample.valley:
+        // 0 у русла, 1 за пределами долины). Горы отступают от реки, долина образуется сама. Идёт до плато и до
+        // вырезания русла: ниже подножия lowland уже не гасит реку, и она доходит дальше в предгорья.
+        AeroRiverNetwork.Sample net = rivers.sample(wx, wz, continentality);
+        if (net.valley() < 1.0) {
+            double relief = height - VALLEY_BASE_Y;
+            if (relief > 0.0) {
+                height = VALLEY_BASE_Y + relief * (VALLEY_MIN_ALLOW + (1.0 - VALLEY_MIN_ALLOW) * net.valley());
+            }
+        }
+
         // Плато ashen_plateau: кайма из плит (подъём + террасы шагом 6) и каньон в центре. До рек: на плато высота > 50,
         // lowland гасит реки сам. Маска берётся из getPlateauMask, той же функции, что выбирает биом.
         if (PlateauTerrace.gate(continentality, ridge) > 0.0) {
@@ -299,7 +314,6 @@ public class Layer1TerrainGenerator {
         // Реки и озёра: сеть стекает к океану и озёрам (AeroRiverNetwork), русла и чаши уходят под уровень моря,
         // воду доливает обычная заливка. В горах и на высокой суше реки гасятся: они кончаются у подножия, а не
         // прорезают каньоны. Маска побережья не нужна: min() никогда не поднимает дно океана.
-        AeroRiverNetwork.Sample net = rivers.sample(wx, wz, continentality);
         double lowland = 1.0 - smoothstep(20.0, 50.0, height);
         double riverBed = SEA_LEVEL - (5.0 + riverNoise.noise2D(wx * 0.018, wz * 0.018) * 0.5);
         height = lerp(height, Math.min(height, riverBed), net.river() * lowland);

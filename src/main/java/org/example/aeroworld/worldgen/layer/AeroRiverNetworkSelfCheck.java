@@ -40,6 +40,7 @@ public final class AeroRiverNetworkSelfCheck {
                 Cell b = net.cell(c.ti(), c.tj());
                 int mx = (int) Math.round((c.node().x() + b.node().x()) / 2), mz = (int) Math.round((c.node().z() + b.node().z()) / 2);
                 assert net.sample(mx, mz, cont.applyAsDouble(mx, mz)).river() > 0.99 : "нет русла на середине ребра";
+                assert net.sample(mx, mz, cont.applyAsDouble(mx, mz)).valley() < 0.01 : "в русле долина должна быть полной";
             }
         }
         assert shown > 20 && lakes > 3 && ends > 5 : shown + " " + lakes + " " + ends;
@@ -51,6 +52,7 @@ public final class AeroRiverNetworkSelfCheck {
                 AeroRiverNetwork.Sample s = warped.sample(x, z, cont.applyAsDouble(x, z));
                 assert s.river() >= 0 && s.river() <= 1 && s.lake() >= 0 && s.lake() <= 1;
                 assert s.deep() >= 0 && s.deep() <= s.lake() : "deep выходит за lake";
+                assert s.valley() >= 0 && s.valley() <= 1 : "valley вне 0..1";
                 assert s.equals(warped.sample(x, z, cont.applyAsDouble(x, z))) : "недетерминировано";
             }
         }

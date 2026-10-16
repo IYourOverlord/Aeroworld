@@ -25,6 +25,13 @@ final class AeroPoolStats {
     // Состояние выборки занятости пулов общее для всех экземпляров (сэмплер один на JVM).
     private static final AtomicLong SAMPLES = new AtomicLong();
     private static final AtomicLong WG_PAUSED = new AtomicLong();
+    /** Причины паузы генерации (независимые условия, считаются по срезам): скорость камеры, очередь LOD Builder, нездоровый сервер, пауза без видимой причины. */
+    private static final AtomicLong R_CAMERA = new AtomicLong();
+    private static final AtomicLong R_LODQ = new AtomicLong();
+    private static final AtomicLong R_UNHEALTHY = new AtomicLong();
+    private static final AtomicLong R_UNEXPLAINED = new AtomicLong();
+    private static final AtomicLong R_SPEED_MAX_X10 = new AtomicLong();
+    private static final AtomicLong R_LODQ_MAX = new AtomicLong();
     private static final AtomicLongArray SUM_RUNNING = new AtomicLongArray(POOLS.length);
     private static final AtomicLongArray SUM_QUEUE = new AtomicLongArray(POOLS.length);
     private static final AtomicLongArray SUM_AVG_MICROS = new AtomicLongArray(POOLS.length);
@@ -71,6 +78,19 @@ final class AeroPoolStats {
      * пула из {@link #POOLS}, накопительное число завершённых задач и среднее время задачи (скользящее среднее DH, мс).
      * Показывает, кто занимает общие потоки, не стоит ли пул генерации на паузе и сколько стоит одна задача каждого пула.
      */
+    /**
+     * Причины паузы генерации в том же срезе (вызывать сразу после {@link #sample}): условия из {@code ThreadPoolUtil.worldGenThreadsCanRun}
+     * DH считаются сэмплером отдельно, поведение DH не меняется. {@code paused} = генерация сейчас не может работать.
+     */
+    static void sampleReasons(boolean paused, boolean camera, boolean lodQueueOver, boolean serverUnhealthy, double cameraSpeed, int lodQueue) {
+        if (camera) R_CAMERA.incrementAndGet();
+        if (lodQueueOver) R_LODQ.incrementAndGet();
+        if (serverUnhealthy) R_UNHEALTHY.incrementAndGet();
+        if (paused && !camera && !lodQueueOver && !serverUnhealthy) R_UNEXPLAINED.incrementAndGet();
+        R_SPEED_MAX_X10.accumulateAndGet(Math.round(cameraSpeed * 10.0), Math::max);
+        R_LODQ_MAX.accumulateAndGet(lodQueue, Math::max);
+    }
+
     static void sample(boolean worldGenCanRun, int[] running, int[] queue, long[] completed, double[] avgTaskMs) {
         SAMPLES.incrementAndGet();
         if (!worldGenCanRun) WG_PAUSED.incrementAndGet();
@@ -120,6 +140,8 @@ final class AeroPoolStats {
 
     private static String drainSamples(int threads, double elapsedSec) {
         long n = SAMPLES.getAndSet(0), paused = WG_PAUSED.getAndSet(0);
+        long rCam = R_CAMERA.getAndSet(0), rLodq = R_LODQ.getAndSet(0), rUnh = R_UNHEALTHY.getAndSet(0), rUnx = R_UNEXPLAINED.getAndSet(0),
+                rSpeed = R_SPEED_MAX_X10.getAndSet(0), rLodqMax = R_LODQ_MAX.getAndSet(0);
         long[] run = new long[POOLS.length], que = new long[POOLS.length], micros = new long[POOLS.length];
         double[] perSec = new double[POOLS.length];
         for (int i = 0; i < POOLS.length; i++) {
@@ -147,6 +169,8 @@ final class AeroPoolStats {
         for (int i = 0; i < POOLS.length; i++) sb.append(String.format(Locale.ROOT, " %s=%.1f", POOLS[i], perSec[i]));
         sb.append(" | avg task ms");
         for (int i = 0; i < POOLS.length; i++) sb.append(String.format(Locale.ROOT, " %s=%.1f", POOLS[i], micros[i] / 1000.0 / n));
+        sb.append(String.format(Locale.ROOT, " | wg pause reasons (share of samples): camera=%.0f%% lod-queue>1000=%.0f%% server-unhealthy=%.0f%% unexplained=%.0f%% | camera speed max=%.0f b/s lod queue max=%d",
+                100.0 * rCam / n, 100.0 * rLodq / n, 100.0 * rUnh / n, 100.0 * rUnx / n, rSpeed / 10.0, rLodqMax));
         return sb.toString();
     }
 

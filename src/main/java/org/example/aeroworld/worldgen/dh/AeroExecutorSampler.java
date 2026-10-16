@@ -1,7 +1,12 @@
 package org.example.aeroworld.worldgen.dh;
 
+import com.seibel.distanthorizons.core.api.internal.ClientApi;
+import com.seibel.distanthorizons.core.config.Config;
+import com.seibel.distanthorizons.core.dependencyInjection.SingletonInjector;
+import com.seibel.distanthorizons.core.util.LodUtil;
 import com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker;
 import com.seibel.distanthorizons.core.util.threading.ThreadPoolUtil;
+import com.seibel.distanthorizons.core.wrapperInterfaces.minecraft.IMinecraftSharedWrapper;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,6 +56,27 @@ final class AeroExecutorSampler {
             completed[i] = ex[i].getCompletedTaskCount();
             avgMs[i] = ex[i].getAverageRunTimeInMs();
         }
-        AeroPoolStats.sample(ex[0] == null || ex[0].canRun(), running, queue, completed, avgMs);
+        boolean canRun = ex[0] == null || ex[0].canRun();
+        AeroPoolStats.sample(canRun, running, queue, completed, avgMs);
+        sampleReasons(!canRun, queue[4]);
+    }
+
+    /** Условия паузы генерации из {@code ThreadPoolUtil.worldGenThreadsCanRun} (DH 3.3.2), посчитанные заново только для диагностики. */
+    private static void sampleReasons(boolean paused, int lodQueue) {
+        double speed = 0;
+        boolean camera = false, unhealthy = false;
+        try {
+            speed = ClientApi.INSTANCE.getAvgCameraSpeed();
+            camera = Config.Common.WorldGenerator.pauseIfMovingQuickly.get() && speed > LodUtil.ROCKET_ELYTRA_SPEED_IN_BLOCKS_PER_SEC - 10.0;
+        } catch (Throwable ignored) {
+            // клиентского API может не быть (выделенный сервер) или DH другой версии: причина просто не считается
+        }
+        try {
+            unhealthy = Config.Common.WorldGenerator.limitIfServerUnhealthy.get()
+                    && !SingletonInjector.INSTANCE.get(IMinecraftSharedWrapper.class).isServerThreadHealthy();
+        } catch (Throwable ignored) {
+            // см. выше
+        }
+        AeroPoolStats.sampleReasons(paused, camera, lodQueue > 1000, unhealthy, speed, lodQueue);
     }
 }

@@ -39,6 +39,11 @@ public final class AeroPoolStatsSelfCheck {
         AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{44, 3, 10, 5, 0}, new long[]{3, 15, 400, 6, 0},   new double[]{100, 20, 4, 8, 1});
         AeroPoolStats.sample(false, new int[]{0, 2, 6, 1, 1}, new int[]{48, 3, 10, 5, 0}, new long[]{3, 20, 800, 8, 1},   new double[]{100, 20, 6, 8, 1});
         AeroPoolStats.sample(true,  new int[]{4, 2, 6, 1, 1}, new int[]{52, 3, 10, 5, 0}, new long[]{8, 30, 1100, 10, 2}, new double[]{100, 20, 6, 8, 1});
+        // причины паузы за те же 4 среза: камера в 1, нездоровый сервер в 2 (в одном из них и пауза), очередь LOD > 1000 в 1, пауза без причины в 1
+        AeroPoolStats.sampleReasons(false, true,  false, false, 55.5, 10);
+        AeroPoolStats.sampleReasons(false, false, false, true,  3.0,  1200);
+        AeroPoolStats.sampleReasons(true,  false, true,  true,  4.0,  1100);
+        AeroPoolStats.sampleReasons(true,  false, false, false, 2.0,  7);
         AeroPoolStats p = new AeroPoolStats(true);
         p.record(3, 1_000_000L, 2_000_000L, 1_500_000L);
         String sm = p.drain(2.0, 14); // за 2 с: wg +8, prop +20, render +1000, io +5, lod +2
@@ -46,6 +51,7 @@ public final class AeroPoolStatsSelfCheck {
         assert sm.contains("avg queue wg=46 prop=3 render=10 io=5 lod=0") : sm;
         assert sm.contains("completed/s wg=4.0 prop=10.0 render=500.0 io=2.5 lod=1.0") : sm;
         assert sm.contains("avg task ms wg=100.0 prop=20.0 render=5.0 io=8.0 lod=1.0") : sm; // render: (4+4+6+6)/4
+        assert sm.contains("camera=25% lod-queue>1000=25% server-unhealthy=50% unexplained=25% | camera speed max=56 b/s lod queue max=1200") : sm;
         p.record(3, 1_000_000L, 2_000_000L, 1_500_000L);
         assert !p.drain(1.0, 14).contains("samples="); // срезы обнулены
 

@@ -1,6 +1,6 @@
 # AeroWorld - Project Index
 
-Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-14 (git efdbe51). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
+Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-15 (git ddfdc78). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
 
 ## How to read this file
 
@@ -10,6 +10,45 @@ Code card catalog and dependency graph of everything under `src/`. Verified agai
 - `UNWIRED` / `NOT REGISTERED` / `usedBy: NONE` mark code that nothing executes today.
 - Tags: entry, event, command, client, config, registry, structure (placement queue), gen-core, gen-layer (island layers), gen-layer1 (surface layer), structure-gen (start validation), vault, biome, cache, noise, util, data, lod-core (analytic LOD model), lod-dh (DH adapters), dh-core, dh-cache, dh-diag (measurement only), dh-exp (experiment), mixin (vanilla), mixin-dh (Distant Horizons), selfcheck (standalone main), doc-only.
 - Update rule: when a file is added, removed or its role changes, change its card in the same commit, and keep the date and hash above current. Keep descriptions factual (what it does, who calls it); no history, no TODOs.
+
+## Keeping this file readable for check-index.ps1
+
+- Every `.java` file needs its own card; the script looks for the class name as a whole word (a name that is only the beginning of a longer class name does not count).
+- Every capitalised compound word in this file (an upper-case letter, lower-case letters, then another upper-case letter) is treated as a class name. If it is not a project class, not in the script's `$skip` list and not a class of the reference sources, it lands in section A. So write log tags, flag values and plain concepts in lower case or as ordinary words, and name an external class only if the code imports it (or add it to `$skip`).
+- The script finds each name in the sources with `Select-String` without the all-matches switch, so only the first match on a line is seen. A nested class name that always follows another listed name on the same line (an outer class, then a dollar sign) is reported as NOT FOUND; describe such a class in words.
+- A class that was removed but must stay mentioned: every index line naming it has to contain the Russian word "удал" (for example "удалён"); the script then reports it as ok.
+- Mixin registration is read from the `*.mixins.json` files (section C), not from this index. A mixin class missing there stays documented here as NOT REGISTERED.
+- The first `YYYY-MM-DD` date in this file is used as the index date: section B marks files that git added after it as NEWER. Keep the verification date in the header as the first date.
+
+## Files per package
+
+Direct `.java` files per folder (not recursive), checked by section D of `check-index.ps1`. The word after the number must start with the Russian "файл" because that is what the script's pattern looks for. Update the numbers whenever a file is added or removed.
+
+| Package | Files |
+|---|---|
+| `org.example.aeroworld.client` | 1 файл |
+| `org.example.aeroworld.command` | 1 файл |
+| `org.example.aeroworld.config` | 7 файлов |
+| `org.example.aeroworld.event` | 4 файла |
+| `org.example.aeroworld.mixin.dh` | 21 файл |
+| `org.example.aeroworld.mixin.structure` | 5 файлов |
+| `org.example.aeroworld.registry` | 4 файла |
+| `org.example.aeroworld.spawning` | 1 файл |
+| `org.example.aeroworld.structure` | 4 файла |
+| `org.example.aeroworld.worldgen` | 1 файл |
+| `org.example.aeroworld.worldgen.biome` | 2 файла |
+| `org.example.aeroworld.worldgen.cache` | 6 файлов |
+| `org.example.aeroworld.worldgen.carver` | 1 файл |
+| `org.example.aeroworld.worldgen.column` | 6 файлов |
+| `org.example.aeroworld.worldgen.dh` | 30 файлов |
+| `org.example.aeroworld.worldgen.feature` | 1 файл |
+| `org.example.aeroworld.worldgen.feature.vault` | 7 файлов |
+| `org.example.aeroworld.worldgen.layer` | 11 файлов |
+| `org.example.aeroworld.worldgen.noise` | 3 файла |
+| `org.example.aeroworld.worldgen.structure` | 9 файлов |
+| `org.example.aeroworld.worldgen.util` | 3 файла |
+
+The root package holds 1 file (AeroWorld, not checkable by the script because its pattern needs a sub-package); `mixin` has no files of its own. Total under `src`: 129 `.java` files, the same number the script prints as "Your .java files".
 
 ## Layers (values verified in code)
 
@@ -39,7 +78,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: AeroWorldChunkGenerator, Layer2StructurePlacer, ProximityTriggerHandler
 
 ### config  - Config spec + codec settings records
-- **AeroWorldConfig** [config] class, 95L - ModConfigSpec (type CLIENT) for config/aeroworld-client.toml, section [distant_horizons], values held in DH_* fields: dhOverrideEnabled (true), throughputLogIntervalSec (30), adjacencyCache{Enabled (true), Size (512), TtlSec (10)}, completeSectionCache{Enabled (true), Size (65536)}, extendedRenderDistance{Enabled (false), Chunks (128)}, horizontalQuality (HIGH), realChunkRadius (64 chunks; 0 = no real-chunk leaves), renderYieldQueue (2500). Read by DH classes only; callers on server threads must tolerate an unloaded config (they catch IllegalStateException).
+- **AeroWorldConfig** [config] class, 95L - ModConfigSpec (type CLIENT) for config/aeroworld-client.toml, section [distant_horizons], values held in DH_* fields: dhOverrideEnabled (true), throughputLogIntervalSec (30), adjacencyCacheEnabled (true), adjacencyCacheSize (512), adjacencyCacheTtlSec (10), completeSectionCacheEnabled (true), completeSectionCacheSize (65536), extendedRenderDistanceEnabled (false), extendedRenderDistanceChunks (128), horizontalQuality (HIGH), realChunkRadius (64 chunks; 0 = no real-chunk leaves), renderYieldQueue (2500). Read by DH classes only; callers on server threads must tolerate an unloaded config (they fall back to a default).
    - api: register(ModContainer); static DH_* value holders
    - usedBy: AeroAdjacencyCache, AeroCompleteSectionCache, AeroSeedWorldGenBinding, AeroSeedWorldGenerator, AeroThroughputLimits, AeroWorld
 - **AeroWorldSettings** [config] record, 68L - Root codec record `aero_settings` stored inside the dimension JSON generator: layer2, layer3, layer4, dhOverride. Default-valued fallback ctor omits dhOverride.
@@ -55,10 +94,10 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **Layer3Settings** [config] record, 71L - Codec record for high islands: spawnChance, gridChunks, min/maxRadius, maxHeight, noiseDeform, nested body (Layer3BodySettings). Exposes body fields through delegate accessors.
    - uses: Layer3BodySettings
    - usedBy: AeroWorldSettings, HighIslandGenerator
-- **Layer4Settings** [config] record, 62L - Codec record for jellyfish islands: spawnChance, gridChunks, min/maxRadius, min/maxHeight, tentacleCount, tentacleMin/MaxLen, tentacleBend.
+- **Layer4Settings** [config] record, 62L - Codec record for jellyfish islands: spawnChance, gridChunks, min/maxRadius, min/maxHeight, tentacleCount, tentacleMinLen/tentacleMaxLen, tentacleBend.
    - usedBy: AeroWorldSettings, UpperIslandGenerator
 
-### registry  - DeferredRegisters and resource keys
+### registry  - Deferred registers and resource keys
 - **AeroDimensions** [registry] class, 19L - DeferredRegister for CHUNK_GENERATOR codecs; registers `aeroworld:aero_generator` -> AeroWorldChunkGenerator codec.
    - api: CHUNK_GENERATORS, AERO_CHUNK_GENERATOR
    - uses: AeroWorldChunkGenerator
@@ -118,16 +157,16 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: AeroWorld, ProximityTriggerHandler
 
 ### worldgen  - Dimension ChunkGenerator
-- **AeroWorldChunkGenerator** [gen-core] class extends NoiseBasedChunkGenerator, 487L - The dimension ChunkGenerator (extends NoiseBasedChunkGenerator; super is invoked only in createState, createBiomes, createStructures and applyBiomeDecoration). Owns all layer generators and caches, lazily seeded via createState/initializeWithSeed; applying a seed also recreates AeroWorld.structureScheduler. Pipeline: fillFromNoise -> Layer1 fillTerrain, then lower/high/upper fillChunk per Y overlap (Layer 2 also calls Layer2StructurePlacer); buildSurface is a separate stage -> Layer1 buildSurface; applyBiomeDecoration -> vanilla decoration, structure postPlacementCleanup, Layer1OreFilter, Layer 2 island trees (clearVanillaVegetationInCentralZone + placeTreesInRegion), Layer2/3/4 vault/trial placers, AncientCity support. createStructures runs vanilla generation with the IS_GENERATING thread-local set, then validates every start and reference via StructureSupportValidator. minY -64, genDepth 2164, seaLevel 0. Flag -Daeroworld.biomeSync.
+- **AeroWorldChunkGenerator** [gen-core] class extends NoiseBasedChunkGenerator, 487L - The dimension ChunkGenerator (extends NoiseBasedChunkGenerator; super is invoked only in createState, createBiomes, createStructures and applyBiomeDecoration). Owns all layer generators and caches, lazily seeded via createState/initializeWithSeed; applying a seed also recreates AeroWorld.structureScheduler. Pipeline: fillFromNoise -> Layer1 fillTerrain, then lower/high/upper fillChunk per Y overlap (Layer 2 also calls Layer2StructurePlacer); buildSurface is a separate stage -> Layer1 buildSurface; applyBiomeDecoration -> vanilla decoration, structure postPlacementCleanup, Layer1OreFilter, Layer 2 island trees (clearVanillaVegetationInCentralZone + placeTreesInRegion), Layer2/3/4 vault/trial placers, Ancient City support. createStructures runs vanilla generation with the IS_GENERATING thread-local set, then validates every start and reference via StructureSupportValidator. minY -64, genDepth 2164, seaLevel 0. Flag -Daeroworld.biomeSync.
    - api: getLowerIslands/getHighIslands/getUpperIslands/getLayer1Terrain/getSettings/getAeroBiomeSource; getBaseColumn; initializeWithSeed(long); CODEC
    - uses: AeroBiomeSource, AeroColumnModel, AeroWorld, AeroWorldSettings, AncientCityIslandSupportPlacer, ChunkAccessWriter, ChunkIslandCache, ChunkKey, ChunkWriter, HighIslandGenerator, IslandData, IslandStructureScheduler, IslandVaultTrialCache, Layer1FlatGenerator, Layer1OreFilter, Layer1TerrainGenerator, Layer2StructurePlacer, Layer2VaultTrialPlacer, Layer3VaultTrialPlacer, Layer4VaultTrialPlacer, LowerIslandGenerator, SectionDirectChunkWriter, StructureSupportValidator, UpperIslandGenerator, ValidationResult
    - usedBy: AeroDimensions, AeroSeedGenValidation, AeroSeedWorldGenBinding, AeroSeedWorldGenerator, AeroStructureMarkers, AeroWorldCommands, DeepLakeMonumentPlacement, EndCityStructureMixin, NetherFortressStructureMixin, OceanMonumentStructureMixin
 
 ### worldgen/biome  - Biome source and registry cache
-- **AeroBiomeRegistryCache** [biome] class, 108L - Caches the full dynamic biome registry (including aeroworld:* clones) at ServerAboutToStart so biome lookup works off the main thread; get(id) caches found holders only. The server, render and main threads get an empty result while the registry is not ready, other threads wait for it. Cleared on server stop.
+- **AeroBiomeRegistryCache** [biome] class, 108L - Caches the full dynamic biome registry (including aeroworld:* clones) when the server is about to start so biome lookup works off the main thread; get(id) caches found holders only. The server, render and main threads get an empty result while the registry is not ready, other threads wait for it. Cleared on server stop.
    - api: get(ResourceLocation) -> Optional<Holder<Biome>>
    - usedBy: AeroBiomeSource, AeroWorld
-- **AeroBiomeSource** [biome] class extends BiomeSource, 456L - BiomeSource: Layer 1 biomes chosen from continentality/erosion/ridge/plateau/temperature noise (resolveLayer1Biome), deep_lake and deep_dark by position, aeroworld:* biomes for islands. Reconfigurable per seed; wraps a MultiNoiseBiomeSource delegate. Nested Params, BiomeColumnCache.
+- **AeroBiomeSource** [biome] class extends BiomeSource, 456L - BiomeSource: Layer 1 biomes chosen from continentality/erosion/ridge/plateau/temperature noise (resolveLayer1Biome), deep_lake and deep_dark by position, aeroworld:* biomes for islands. Reconfigurable per seed; wraps a vanilla multi-noise biome source delegate. Nested Params, BiomeColumnCache.
    - api: getNoiseBiome; static resolveLayer1Biome(...); withSeed; reconfigure; CODEC
    - uses: AeroBiomeRegistryCache, AeroNoise, Layer1FlatGenerator, Layer1TerrainGenerator, PlateauTerrace
    - usedBy: AeroColumnModel, AeroRegistries, AeroSeedWorldGenerator, AeroWorldChunkGenerator, AeroWorldCommands
@@ -165,7 +204,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - uses: ChunkWriter
    - usedBy: AeroWorldChunkGenerator
 
-### worldgen/noise  - Noise, island grid, island SDF shape
+### worldgen/noise  - Noise, island grid, island radial-profile shape
 - **AeroNoise** [noise] class, 138L - Lightweight seeded Perlin-style gradient noise (permutation table, quintic fade) with 2D/3D evaluation and fBm; the noise primitive of all custom generators.
    - api: noise2D; noise3D; fbm2D; fbm3D
    - usedBy: AeroBiomeSource, AeroRiverNetwork, HighIslandGenerator, IslandShape, Layer1TerrainGenerator, LowerIslandGenerator, PlateauTerrace, UpperIslandGenerator
@@ -280,7 +319,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: groundHeightAt; hasSolidBelow; isWaterCoveredAt; getIslandTopY; hasCollision; resolveActualLayer
    - uses: ChunkIslandCache, ChunkKey, HighIslandGenerator, IslandData, Layer1FlatGenerator, LowerIslandGenerator, StructureSupportValidator, UpperIslandGenerator
    - usedBy: StructureSupportValidator
-- **ValidationResult** [structure-gen] class, 137L - Outcome of structure validation: accepted/denied/void-gap/insufficient-support/sky-floating/water, with bounds and failed SupportSamples.
+- **ValidationResult** [structure-gen] class, 137L - Outcome of structure validation: accepted/denied/void-gap/insufficient-support/sky-floating/water, with bounds and the grid points (SupportSample records) that failed the support check.
    - api: static factories accepted/denied/voidGap/...; isAccepted()
    - uses: StructureCategory, SupportSample
    - usedBy: AeroWorldChunkGenerator, StructureSupportValidator
@@ -324,7 +363,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: isConfirmedComplete; markComplete; invalidate; clear; logSummary
    - uses: AeroWorldConfig
    - usedBy: CompleteSectionCacheMixin, SqliteTuningMixin
-- **AeroExecutorSampler** [dh-diag] class, 56L - Package-private. Daemon thread started once (by AeroThroughputLimits when dhPoolStats is on) that samples the DH pools (WorldGen, UpdatePropagator, RenderLoading, IO, ChunkToLodBuilder) every second into AeroPoolStats.
+- **AeroExecutorSampler** [dh-diag] class, 56L - Package-private. Daemon thread started once (by AeroThroughputLimits when dhPoolStats is on) that samples the DH world-generation, update-propagator, render-loading, file-handler and chunk-to-LOD-builder executors every second into AeroPoolStats.
    - api: startOnce()
    - uses: AeroPoolStats
    - usedBy: AeroThroughputLimits
@@ -355,6 +394,14 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: notePending(pos,detail); wrap(kind,task); drain
    - usedBy: AeroThroughputLimits, PropagateStatsMixin
 - **AeroPropStatsSelfCheck** [selfcheck] class, 33L - Standalone `main` self-check (javac + java -ea) for AeroPropStats. Not part of the mod runtime.
+- **AeroReloadCoalescer** [dh-core] class, 82L - Holds DH quad-tree reload requests until the section has been quiet. Per position it keeps the first and last trigger time; releaseReady hands a position on once QUIET_MS passed since its last trigger, or once HOLD_MS passed since its first trigger (forced). Static counters (held, absorbed, released, forced, bypassed) feed the `ReloadCoalesce:` log line. Flags: -Daeroworld.dhReloadQuietMs (default 2500; 0 = off and ReloadCoalesceMixin is not applied), dhReloadHoldMs (default 8000, never below quiet), dhReloadExemptBelowDetail (default 7: sections with a lower detail level bypass the delay).
+   - api: QUIET_MS; HOLD_MS; EXEMPT_BELOW_DETAIL; ENABLED; trigger(pos,nowNs); releaseReady(nowNs,sink); noteBypass(); pendingCount(); drainStats(elapsedSec)
+   - usedBy: AeroThroughputLimits, ReloadCoalesceMixin
+- **AeroReloadCoalescerSelfCheck** [selfcheck] class, 49L - Standalone `main` self-check (javac + java -ea) for AeroReloadCoalescer. Not part of the mod runtime.
+- **AeroReloadStats** [dh-diag] class, 105L - Measures DH section reloads when -Daeroworld.dhPoolStats=true: per detail level the number of reload triggers (a trigger and its four neighbours), share of first triggers and of repeats within 2.5 s, and rebuilds started or failed to start; gap histograms (<0.1 s, <1 s, <2.5 s, <8 s) between repeats of the same section. The per-position maps are cleared at 1,000,000 keys. Logged as the `Reload:` line.
+   - api: noteTrigger(detail,pos,nowNs); noteRebuild(detail,pos,nowNs,started); drain(elapsedSec)
+   - usedBy: AeroThroughputLimits, ReloadStatsMixin
+- **AeroReloadStatsSelfCheck** [selfcheck] class, 36L - Standalone `main` self-check (javac + java -ea) for AeroReloadStats. Not part of the mod runtime.
 - **AeroSeedGenValidation** [dh-core] class, 122L - Dev validation: for N random XZ within +-100000 compares block by block AeroColumnModel.buildSpans (sampleBiomes off) with AeroWorldChunkGenerator.getBaseColumn over the full height, logging the first 20 mismatching columns; backs `/aeroworld validateSeedGen`.
    - api: runValidation(ctx,sampleCount)
    - uses: AeroColumnModel, AeroWorldChunkGenerator
@@ -363,7 +410,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: registerIfDhPresent()
    - uses: AeroSeedWorldGenerator, AeroWorldChunkGenerator, AeroWorldConfig
    - usedBy: AeroWorld
-- **AeroSeedWorldGenerator** [dh-core] class implements IDhApiWorldGenerator, 428L - IDhApiWorldGenerator override with a hybrid strategy. Leaves (detail 0) within realChunkRadius+32 blocks of a player (when DH chunk generation is enabled and mode is not PRE_EXISTING_ONLY) use DH's real chunk generator in single-phase mode (default; capped by REAL_LEAF_CAP, analytic fallback if declined), or with dhTwoPhase an analytic SURFACE pass first and real generation on the repeat request (AeroLeafLedger). Everything else is analytic from AeroColumnModel with detail-based sub-sampling (buildDominantSpans + SliceVote), structure markers, FastDistantTerrain coarse layers; FEATURES step for detail 0, SURFACE otherwise.
+- **AeroSeedWorldGenerator** [dh-core] class implements IDhApiWorldGenerator, 428L - IDhApiWorldGenerator override with a hybrid strategy. Leaves (detail 0) within realChunkRadius+32 blocks of a player (when DH chunk generation is enabled and mode is not PRE_EXISTING_ONLY) use DH's real chunk generator in single-phase mode (default; capped by REAL_LEAF_CAP, analytic fallback if declined), or with dhTwoPhase an analytic SURFACE pass first and real generation on the repeat request (AeroLeafLedger). Everything else is analytic from AeroColumnModel with detail-based sub-sampling (buildDominantSpans + SliceVote), structure markers, AeroFastDistantTerrain coarse layers; FEATURES step for detail 0, SURFACE otherwise.
    - api: generateLod(...); generateApiChunks(...); buildDominantSpans(...); getReturnType; close
    - uses: AeroBiomeSource, AeroColumnModel, AeroColumnWriter, AeroFastDistantTerrain, AeroLeafLedger, AeroPlayerAnchors, AeroStructureMarkers, AeroThroughputLimits, AeroWorldChunkGenerator, AeroWorldConfig, HighIslandGenerator, Layer1ColumnCache, Layer1TerrainGenerator, LowerIslandGenerator, SliceVote, UpperIslandGenerator
    - usedBy: AeroSeedWorldGenBinding, AeroWorldCommands
@@ -375,9 +422,9 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: forSection(baseX,baseZ,width,step) -> Map<Integer,Placed>; apply(spans,placed,maxY); records Marker, Placed
    - uses: AeroColumnModel, AeroStructureIcon, AeroWorldChunkGenerator, SliceVote
    - usedBy: AeroSeedWorldGenerator
-- **AeroThroughputLimits** [dh-core] class, 318L - Central DH tuning hub: static constants from the dh flags (TWO_PHASE, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY 1..10 default 6, WORLD_GEN_BORDER 0..8, SAVE_DELAY_MS 250..30000 default 1000), constants (SQLITE_SYNC "NORMAL", QUEUE_SCALE 4, IN_FLIGHT_SCALE 4, SECTIONS_PER_CHUNK 131), real radius / render yield from config; per-generator instance owns the real-leaf slots, throughput logging and pool-stats wrappers, and the static gate diagnostics (RenderYieldGate/BacklogGate every 5 s). Consumed by most DH mixins.
+- **AeroThroughputLimits** [dh-core] class, 323L - Central DH tuning hub: static constants from the dh flags (TWO_PHASE, REAL_LEAF_CAP, RENDER_LOADER_PRIORITY 1..10 default 6, WORLD_GEN_BORDER 0..8, SAVE_DELAY_MS 250..30000 default 1000), constants (SQLITE_SYNC "NORMAL", QUEUE_SCALE 4, IN_FLIGHT_SCALE 4, SECTIONS_PER_CHUNK 131), real radius / render yield from config; per-generator instance owns the real-leaf slots, throughput logging (Throughput, Pool, Prop, AdjRead, Reload and ReloadCoalesce lines; the last four only when their stats are enabled) and pool-stats wrappers, and the static gate diagnostics (RenderYieldGate/BacklogGate every 5 s). The [Environment] log line includes the reload quiet/hold/exempt settings. Consumed by most DH mixins.
    - api: realRadiusBlocks(); renderYieldQueue(); distantHorizonsThreadCount(); trackRealLeaf; startRealLeaf(cap,start); timedExecutor; recordAnalyticTask; recordChunksGenerated
-   - uses: AeroAdjReadStats, AeroExecutorSampler, AeroLeafSlots, AeroPoolStats, AeroPropStats, AeroWorldConfig
+   - uses: AeroAdjReadStats, AeroExecutorSampler, AeroLeafSlots, AeroPoolStats, AeroPropStats, AeroReloadCoalescer, AeroReloadStats, AeroWorldConfig
    - usedBy: AeroSeedWorldGenerator, BatchGenerationEnvironmentNeoforgeMixin, GeneratorBusyMixin, LodQuadTreeRealRadiusMixin, RenderLoaderPriorityMixin, RetrievalQueueLimitMixin, SaveDelayMixin, SqliteTuningMixin, WorldGenSpeedGateMixin, WorldGenUtilRegenRadiusMixin
 
 ### mixin/structure  - Vanilla structure mixins (required)
@@ -390,8 +437,8 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **NetherFortressStructureMixin** [mixin] class, 71L - Redirect in NetherFortressStructure.generatePieces: pins the fortress to Y -55..-50 (inside the Layer 1 giant cave).
    - api: target: NetherFortressStructure#generatePieces; config: aeroworld_structures.mixins.json
    - uses: AeroWorldChunkGenerator
-- **OceanMonumentBuildingMixin** [mixin] class, 41L - Adapts OceanMonumentPieces.MonumentBuilding constants (vanilla min Y 39, water fill top) to the deep-lake floor Y -50.
-   - api: target: OceanMonumentPieces$MonumentBuilding (<init> constant 39, postProcess Math.max); config: aeroworld_structures.mixins.json
+- **OceanMonumentBuildingMixin** [mixin] class, 41L - Adapts the main building of the ocean monument (nested class of OceanMonumentPieces, named in the @Mixin targets string): the constructor constant 39 (vanilla bottom Y) is replaced by DeepLakeMonumentPlacement.MONUMENT_MIN_Y when it is set, and in postProcess the water fill top becomes the Layer 1 sea level when the piece's bounding box starts below Y 0 (deep-lake monument), otherwise vanilla.
+   - api: @ModifyConstant on <init> (constant 39), @Redirect of Math.max in postProcess; config: aeroworld_structures.mixins.json
    - uses: DeepLakeMonumentPlacement, Layer1TerrainGenerator
 - **OceanMonumentStructureMixin** [mixin] class, 71L - Overrides OceanMonumentStructure.findGenerationPoint: monuments exist only at the deep-lake centre chunk, one per lake, base at the flat lake floor.
    - api: target: OceanMonumentStructure#findGenerationPoint; config: aeroworld_structures.mixins.json
@@ -410,7 +457,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **CompleteSectionCacheMixin** [mixin-dh] class, 58L - Short-circuits getPositionsToRetrieve for sections already confirmed complete; records completion on RETURN.
    - api: target: GeneratedFullDataSourceProvider#getPositionsToRetrieve(JB) (HEAD cancellable + RETURN); uses AeroCompleteSectionCache
    - uses: AeroCompleteSectionCache
-- **DhWorldGenBorderMixinPlugin** [mixin-dh] class implements IMixinConfigPlugin, 82L - IMixinConfigPlugin of aeroworld.mixins.json: applies DH mixins only if DH core Initializer is on the classpath and -Daeroworld.dhOff is not set; gates CanQueueStatsMixin by dhStatsMixins and PropagateStatsMixin/AdjReadStatsMixin by dhPoolStats. getMixins() returns null (adds nothing).
+- **DhWorldGenBorderMixinPlugin** [mixin-dh] class implements IMixinConfigPlugin, 87L - IMixinConfigPlugin of aeroworld.mixins.json: applies DH mixins only if DH core Initializer is on the classpath and -Daeroworld.dhOff is not set; gates CanQueueStatsMixin by dhStatsMixins, PropagateStatsMixin, AdjReadStatsMixin and ReloadStatsMixin by dhPoolStats, and ReloadCoalesceMixin by dhReloadQuietMs (not applied when 0 or less). getMixins() returns null (adds nothing).
    - api: shouldApplyMixin; onLoad
 - **GeneratorBusyMixin** [mixin-dh] class, 32L - When DH reports the generation queue busy and a world-gen executor exists, reports busy only if in-progress tasks exceed DH thread count x IN_FLIGHT_SCALE (4); records the check in AeroThroughputLimits (BacklogGate).
    - api: target: WorldGenerationQueue#isGeneratorBusy (RETURN, cancellable)
@@ -430,6 +477,12 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **RegenGateStatsMixin** [mixin-dh] class, 48L - Measurement only: why DH regeneration requests stop (gate conditions). NOT REGISTERED: inactive.
    - api: target: FullDataUpdatePropagatorV2#tryQueueRegeneration, queueRegeneration (HEAD); uses AeroHybridStats
    - uses: AeroHybridStats
+- **ReloadCoalesceMixin** [mixin-dh] class, 71L - Delays DH quad-tree reloads (LodQuadTree). @Inject at HEAD of queuePosToReload (cancellable) takes the section and its four cardinal neighbours: positions below dhReloadExemptBelowDetail go straight to sectionsToReload, the others to this tree's AeroReloadCoalescer, and the original call is cancelled. @Inject at HEAD of reloadQueuedSections moves the positions that became ready into sectionsToReload. Applied unless -Daeroworld.dhReloadQuietMs is 0 or less (decided by DhWorldGenBorderMixinPlugin).
+   - api: target: LodQuadTree#queuePosToReload, reloadQueuedSections; shadows sectionsToReload; require = 0; config: aeroworld.mixins.json
+   - uses: AeroReloadCoalescer
+- **ReloadStatsMixin** [mixin-dh] class, 49L - Measurement only (dhPoolStats): @Inject at HEAD of LodQuadTree#queuePosToReload records the trigger for the section and its four neighbours, and a @Redirect of uploadRenderDataToGpuAsync inside reloadQueuedSections records each rebuild and whether it started.
+   - api: target: LodQuadTree#queuePosToReload (@Inject), reloadQueuedSections (@Redirect); uses AeroReloadStats; require = 0; config: aeroworld.mixins.json
+   - uses: AeroReloadStats
 - **RenderLoaderPriorityMixin** [mixin-dh] class, 22L - Replaces the Render Loader pool priority constant 6 in setupThreadPools with RENDER_LOADER_PRIORITY (default 6, so unchanged) and logs the values once; require = 0.
    - api: target: ThreadPoolUtil#setupThreadPools (@ModifyConstant 6)
    - uses: AeroThroughputLimits
@@ -459,7 +512,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 
 | Config (resources/) | Package | required | Plugin | Entries |
 |---|---|---|---|---|
-| aeroworld.mixins.json | mixin.dh | false | DhWorldGenBorderMixinPlugin | BatchGenerationEnvironmentNeoforgeMixin, LodRenderSectionAdjDiagMixin, TranslucentAdjWallMixin, RetrievalQueueLimitMixin, CanQueueStatsMixin, RenderLoaderPriorityMixin, GeneratorBusyMixin, WorldGenSpeedGateMixin, SaveDelayMixin, SqliteTuningMixin, StandInTerrainMixin, CompleteSectionCacheMixin, WorldGenUtilRegenRadiusMixin, PropagateStatsMixin, AdjReadStatsMixin |
+| aeroworld.mixins.json | mixin.dh | false | DhWorldGenBorderMixinPlugin | BatchGenerationEnvironmentNeoforgeMixin, LodRenderSectionAdjDiagMixin, TranslucentAdjWallMixin, RetrievalQueueLimitMixin, CanQueueStatsMixin, RenderLoaderPriorityMixin, GeneratorBusyMixin, WorldGenSpeedGateMixin, SaveDelayMixin, SqliteTuningMixin, StandInTerrainMixin, CompleteSectionCacheMixin, WorldGenUtilRegenRadiusMixin, PropagateStatsMixin, AdjReadStatsMixin, ReloadStatsMixin, ReloadCoalesceMixin |
 | aeroworld_structures.mixins.json | mixin.structure | true | none | NetherFortressStructureMixin, EndCityStructureMixin, EndCityStructureAccessor, OceanMonumentStructureMixin, OceanMonumentBuildingMixin |
 
 Both are listed in `templates/META-INF/neoforge.mods.toml`. Classes in `mixin/dh` missing from the table (LodQuadTreeRealRadiusMixin, QueueOrderStatsMixin, RegenGateStatsMixin) are not registered and never apply (the plugin's `getMixins()` returns null). All DH targets live under `com.seibel.distanthorizons.*`.
@@ -469,7 +522,7 @@ Both are listed in `templates/META-INF/neoforge.mods.toml`. Classes in `mixin/dh
 | Flag | Default | Read by | Effect |
 |---|---|---|---|
 | dhOff | false | DhWorldGenBorderMixinPlugin, AeroSeedWorldGenBinding | no DH mixins, no DH generator override |
-| dhPoolStats | false | DhWorldGenBorderMixinPlugin, AeroPoolStats, AeroPropStats, AeroAdjReadStats | enables PropagateStatsMixin, AdjReadStatsMixin and pool/propagator/adjacent-read measurement |
+| dhPoolStats | false | DhWorldGenBorderMixinPlugin, AeroPoolStats, AeroPropStats, AeroAdjReadStats, AeroReloadStats | enables PropagateStatsMixin, AdjReadStatsMixin, ReloadStatsMixin and pool/propagator/adjacent-read/reload measurement |
 | dhStatsMixins | false | DhWorldGenBorderMixinPlugin | enables CanQueueStatsMixin |
 | dhstats | true | AeroHybridStats | hybrid loading counters and 30 s log (fed only by CanQueueStatsMixin today) |
 | dhTwoPhase | false | AeroThroughputLimits | analytic SURFACE first, real chunk generation on repeat request (uses AeroLeafLedger) |
@@ -477,6 +530,9 @@ Both are listed in `templates/META-INF/neoforge.mods.toml`. Classes in `mixin/dh
 | dhRenderLoaderPriority | 6 (1..10) | AeroThroughputLimits | Render Loader pool thread priority |
 | dhBorder | 0 (0..8) | AeroThroughputLimits | extra neighbour border for DH chunk generation |
 | dhSaveDelayMs | 1000 (250..30000) | AeroThroughputLimits | LOD save delay |
+| dhReloadQuietMs | 2500 | DhWorldGenBorderMixinPlugin, AeroReloadCoalescer | quiet time before a held section reload is released; 0 or less disables the coalescing (ReloadCoalesceMixin not applied) |
+| dhReloadHoldMs | 8000 (min = quiet) | AeroReloadCoalescer | ceiling on how long a held reload can be postponed |
+| dhReloadExemptBelowDetail | 7 | AeroReloadCoalescer | sections with a lower detail level are reloaded without delay |
 | dhCascadeLeafRadius | 0 | AeroCascadeLeaf | experiment radius; 0 = off (class unwired) |
 | dhStructures | true | AeroStructureMarkers | `false` disables structure icons on LOD |
 | biomeSync | false | AeroWorldChunkGenerator | experimental. `false`: seeding replaces only a copy of the biome source and real chunks and LOD read the field instance. `true`: seed and Layer 1 ring checker are applied to that instance in place, which changes real-chunk biomes; do not enable on existing worlds |

@@ -43,7 +43,23 @@ public final class AeroRiverNetwork {
      * Вырезание: сила реки и озера, 0..1. {@code deep} — сила только глубоких озёр (максимум по их ячейкам, всегда
      * {@code <= lake}): 1 на плоском дне чаши, к берегу плавно падает до 0.
      */
-    public record Sample(double river, double lake, double deep) {}
+    public record Sample(double river, double lake, double deep, double valley) {
+        /** Без долины: рельеф ничем не ограничен. */
+        public Sample(double river, double lake, double deep) {
+            this(river, lake, deep, 1.0);
+        }
+    }
+
+    /**
+     * Долина реки: рельеф над равниной ограничен расстоянием до русла. Вплотную к руслу (дальше полуширины,
+     * умноженной на {@link #VALLEY_FLAT}) допускается 0 от высоты гор, к {@code outer} допуск плавно растёт до 1.
+     * {@code outer} не больше {@link #VALLEY_OUTER_MAX}: она обязана быть меньше 0.2 * {@link #CELL}, иначе
+     * ребро, исходящее из ячейки за пределами окна 3x3, могло бы пройти ближе, чем видит {@link #sample}, и на краю
+     * окна возник бы шов.
+     */
+    static final double VALLEY_FLAT = 1.5;
+    static final double VALLEY_RAMP = 110.0;
+    static final double VALLEY_OUTER_MAX = 120.0;
 
     /** Доля глубоких среди сток-озёр. */
     static final double DEEP_LAKE_SHARE = 0.10;
@@ -171,7 +187,7 @@ public final class AeroRiverNetwork {
         double estuary = 1.0 + 2.2 * smoothstep(0.30, -0.02, cont);
         double shore = 1.0 + 0.18 * noise.noise2D(wx * 0.01 + 101.0, wz * 0.01 - 77.0);
 
-        double river = 0, lake = 0, deep = 0;
+        double river = 0, lake = 0, deep = 0, valley = 1.0;
         for (int di = -1; di <= 1; di++) {
             for (int dj = -1; dj <= 1; dj++) {
                 Cell a = cell(ci + di, cj + dj);
@@ -190,10 +206,13 @@ public final class AeroRiverNetwork {
                     double d = Math.hypot(px - (a.node().x() + s * abx), pz - (a.node().z() + s * abz));
                     double hw = (baseHalfWidth(a.imp()) * (1 - s) + baseHalfWidth(b.imp()) * s) * estuary;
                     river = Math.max(river, 1.0 - smoothstep(0.45 * hw, hw, d));
+                    double flat = hw * VALLEY_FLAT;
+                    double outer = Math.min(VALLEY_OUTER_MAX, flat + VALLEY_RAMP);
+                    valley = Math.min(valley, smoothstep(flat, outer, d));
                 }
             }
         }
-        return new Sample(river, lake, deep);
+        return new Sample(river, lake, deep, valley);
     }
 
     /**
