@@ -48,6 +48,10 @@ public class AeroBiomeSource extends BiomeSource {
      * Всё, что зависит от сида мира и Layer1, одним неизменяемым блоком: {@link #reconfigure} подменяет его целиком,
      * поэтому читатели (потоки генерации чанков и LOD) всегда видят согласованный набор.
      */
+    /** Соли шума температуры и влажности: их же использует {@code Layer1TerrainGenerator} для проверки биома jungle. */
+    public static final long TEMP_SALT = 0x11223344L;
+    public static final long HUMID_SALT = 0x55667788L;
+
     private static final class Params {
         final long seed;
         final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
@@ -58,8 +62,8 @@ public class AeroBiomeSource extends BiomeSource {
         Params(long seed, org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
             this.seed          = seed;
             this.layer1        = layer1;
-            this.tempNoise     = new AeroNoise(seed ^ 0x11223344L);
-            this.humidityNoise = new AeroNoise(seed ^ 0x55667788L);
+            this.tempNoise     = new AeroNoise(seed ^ TEMP_SALT);
+            this.humidityNoise = new AeroNoise(seed ^ HUMID_SALT);
             this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
         }
     }

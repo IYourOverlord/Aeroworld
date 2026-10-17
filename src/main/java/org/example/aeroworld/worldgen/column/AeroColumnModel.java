@@ -12,6 +12,7 @@ import org.example.aeroworld.worldgen.cache.BodyType;
 import org.example.aeroworld.worldgen.cache.ChunkKey;
 import org.example.aeroworld.worldgen.cache.IslandData;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
+import org.example.aeroworld.worldgen.layer.AeroCenote;
 import org.example.aeroworld.worldgen.layer.HighIslandGenerator;
 import org.example.aeroworld.worldgen.layer.Layer1TerrainGenerator;
 import org.example.aeroworld.worldgen.layer.LowerIslandGenerator;
@@ -153,6 +154,8 @@ public final class AeroColumnModel {
             int caveBottom;
             int lushAirTop;
             int lushFloor;
+            int cenoteFloor;
+            int cenoteWater;
 
             if (columnCache != null && columnCache.isForChunk(x >> 4, z >> 4)) {
                 int idx = ((x & 15) << 4) | (z & 15);
@@ -162,6 +165,8 @@ public final class AeroColumnModel {
                 caveBottom = hasCave ? columnCache.caveBottom[idx] : Integer.MAX_VALUE;
                 lushAirTop = columnCache.lushAirTop[idx];
                 lushFloor = columnCache.lushFloor[idx];
+                cenoteFloor = columnCache.cenoteFloor[idx];
+                cenoteWater = columnCache.cenoteWater[idx];
             } else {
                 surfaceY = layer1Terrain.getHeight(x, z);
                 hasCave = surfaceY >= seaLevel;
@@ -169,8 +174,11 @@ public final class AeroColumnModel {
                 caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
                 lushAirTop = layer1Terrain.lushAirTop(x, z, surfaceY);
                 lushFloor = lushAirTop != Layer1TerrainGenerator.LUSH_NONE ? layer1Terrain.lushFloorY(x, z) : Layer1TerrainGenerator.LUSH_NONE;
+                cenoteFloor = layer1Terrain.cenoteFloorY(x, z);
+                cenoteWater = cenoteFloor != AeroCenote.NONE ? layer1Terrain.cenoteAt(x, z).waterY() : AeroCenote.NONE;
             }
             boolean lush = lushAirTop != Layer1TerrainGenerator.LUSH_NONE;
+            boolean cenote = cenoteFloor != AeroCenote.NONE;
 
             int stoneTop = Math.min(surfaceY, levelMax);
             boolean plateau = surfaceY >= seaLevel && layer1Terrain.isPlateau(x, z);
@@ -195,7 +203,9 @@ public final class AeroColumnModel {
                     }
                     int upperBottom = Math.max(caveTop + 1, minY);
                     if (stoneTop >= upperBottom) {
-                        if (lush) {
+                        if (cenote) {
+                            addCenoteColumn(spans, upperBottom, stoneTop, cenoteFloor, cenoteWater, layer1BiomeName, layer1BiomeHolder);
+                        } else if (lush) {
                             addLushColumn(spans, upperBottom, stoneTop, surfaceY, lushAirTop, lushFloor,
                                     layer1Terrain.lushVineLength(x, z, lushAirTop, lushFloor),
                                     surface, layer1BiomeName, layer1BiomeHolder);
@@ -203,6 +213,8 @@ public final class AeroColumnModel {
                             addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
                         }
                     }
+                } else if (cenote) {
+                    addCenoteColumn(spans, minY, stoneTop, cenoteFloor, cenoteWater, layer1BiomeName, layer1BiomeHolder);
                 } else if (lush) {
                     addLushColumn(spans, minY, stoneTop, surfaceY, lushAirTop, lushFloor,
                             layer1Terrain.lushVineLength(x, z, lushAirTop, lushFloor),
@@ -212,7 +224,7 @@ public final class AeroColumnModel {
                 }
 
                 // Деревья Layer 1 на LOD
-                if (sampleBiomes && !plateau && stoneTop == surfaceY && surfaceY >= seaLevel) {
+                if (sampleBiomes && !plateau && !cenote && stoneTop == surfaceY && surfaceY >= seaLevel) {
                     AeroTreeCover.TreeSpans tree = AeroTreeCover.sampleLayer1(
                             layer1Terrain.getSeed(), x, z, surfaceY, layer1BiomeName, layer1Terrain);
                     if (tree != null) {
@@ -453,6 +465,17 @@ public final class AeroColumnModel {
         } else {
             addClamped(spans, from, stoneTop, airTop + 2, surfaceY, BS_STONE, biomeName, biomeHolder);
         }
+    }
+
+    /**
+     * Колонка сенота (аналитический двойник {@code Layer1TerrainGenerator.decorateCenote}), снизу вверх: камень, глина
+     * на дне, вода до {@code waterY}; выше воздух. Лианы на стенах в LOD не входят.
+     */
+    private static void addCenoteColumn(List<Span> spans, int from, int stoneTop, int floorY, int waterY,
+                                        @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
+        addClamped(spans, from, stoneTop, from, floorY - 1, BS_STONE, biomeName, biomeHolder);
+        addClamped(spans, from, stoneTop, floorY, floorY, BS_CLAY, biomeName, biomeHolder);
+        addClamped(spans, from, stoneTop, floorY + 1, waterY, BS_WATER, biomeName, biomeHolder);
     }
 
     /** Добавляет span [lo..hi], обрезанный до [from..top]; пустой диапазон пропускает. */

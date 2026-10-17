@@ -7,14 +7,17 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.MultifaceBlock;
+import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import org.example.aeroworld.worldgen.biome.AeroBiomeSource;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
 import org.example.aeroworld.worldgen.util.ChunkWriter;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 
 /**
@@ -202,6 +205,26 @@ public class Layer1TerrainGenerator {
             .setValue(BlockStateProperties.BERRIES, true)
             .setValue(BlockStateProperties.AGE_25, 25);
 
+    // ── Сенот (провал с озером) в биоме jungle ───────────────────────────────────────────────────────────
+    /** Размер ячейки сетки: в каждой не больше одного сенота. */
+    private static final int CENOTE_CELL = 128;
+    /** Отступ центра от края ячейки (больше радиуса + волны + запаса), чтобы шахта не вышла за ячейку. */
+    private static final int CENOTE_MARGIN = 13;
+    /** Доля ячеек джунглей, в которых есть сенот. */
+    private static final double CENOTE_CHANCE = 0.5;
+    private static final int CENOTE_RADIUS_MIN = 6;
+    private static final int CENOTE_RADIUS_RANGE = 4;
+    /** Уровень воды: на столько ниже самой низкой точки кольца вокруг шахты. */
+    private static final int CENOTE_DROP = 8;
+    /** Кольцо вокруг шахты: самая низкая точка не ниже и не выше этих отметок, перепад не больше CENOTE_MAX_SPREAD. */
+    private static final int CENOTE_MIN_RIM = 6;
+    private static final int CENOTE_MAX_RIM = 30;
+    private static final int CENOTE_MAX_SPREAD = 8;
+    private static final int CENOTE_CACHE_LIMIT = 4096;
+    /** Максимальная длина лианы на стене шахты - 3 (длина 3..11). */
+    private static final int CENOTE_VINE_SPAN = 9;
+    private static final BlockState BS_VINE = Blocks.VINE.defaultBlockState();
+
     private final long seed;
     private final AeroNoise continentNoise;
     private final AeroNoise erosionNoise;
@@ -212,6 +235,10 @@ public class Layer1TerrainGenerator {
     private final AeroNoise caveLushNoise;
     private final AeroNoise lushFloorNoise;
     private final AeroNoise lushVineNoise;
+    private final AeroNoise cenoteWobble;
+    private final AeroNoise cenoteTempNoise;
+    private final AeroNoise cenoteHumidNoise;
+    private final ConcurrentHashMap<Long, AeroCenote> cenotes = new ConcurrentHashMap<>();
     private final AeroNoise oceanVegNoise;
     private final AeroNoise coralNoise;
     private final AeroNoise ridgeNoise;
@@ -230,6 +257,9 @@ public class Layer1TerrainGenerator {
         this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
         this.lushFloorNoise   = new AeroNoise(seed ^ 0x6D2B79F5L);
         this.lushVineNoise    = new AeroNoise(seed ^ 0x3C6EF372L);
+        this.cenoteWobble     = new AeroNoise(seed ^ 0x2F6B1A93L);
+        this.cenoteTempNoise  = new AeroNoise(seed ^ AeroBiomeSource.TEMP_SALT);
+        this.cenoteHumidNoise = new AeroNoise(seed ^ AeroBiomeSource.HUMID_SALT);
         this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
         this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
@@ -261,6 +291,68 @@ public class Layer1TerrainGenerator {
         double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
         int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
         return Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+    }
+
+    /**
+     * Сенот ячейки, содержащей колонку, или {@link AeroCenote#ABSENT}. Чистая функция seed и координат (рельеф, биом),
+     * поэтому реальные чанки и LOD видят один и тот же провал.
+     * <p>ponytail: кэш ячеек сбрасывается целиком при переполнении ({@link #CENOTE_CACHE_LIMIT}); апгрейд - LRU.
+     */
+    public AeroCenote cenoteAt(int wx, int wz) {
+        int gx = Math.floorDiv(wx, CENOTE_CELL);
+        int gz = Math.floorDiv(wz, CENOTE_CELL);
+        long key = ((long) gx << 32) ^ (gz & 0xFFFFFFFFL);
+        AeroCenote c = cenotes.get(key);
+        if (c == null) {
+            if (cenotes.size() > CENOTE_CACHE_LIMIT) cenotes.clear();
+            c = computeCenote(gx, gz);
+            cenotes.put(key, c);
+        }
+        return c;
+    }
+
+    /** Дно озера сенота в колонке или {@link AeroCenote#NONE}, если колонка вне шахты. */
+    public int cenoteFloorY(int wx, int wz) {
+        AeroCenote c = cenoteAt(wx, wz);
+        if (c.radius() == 0) return AeroCenote.NONE;
+        int dx = wx - c.cx(), dz = wz - c.cz();
+        int reach = c.radius() + 2;
+        if (dx * dx + dz * dz > reach * reach) return AeroCenote.NONE;
+        return c.floorY(wx, wz, cenoteWobble.noise2D(wx * 0.2, wz * 0.2) * 1.2);
+    }
+
+    private AeroCenote computeCenote(int gx, int gz) {
+        long h = lushHash(gx, gz, 0x0CE07E01L);
+        if (((h >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_CHANCE) return AeroCenote.ABSENT;
+        long h2 = lushHash(gz, gx, 0x5A17B0C3L);
+        int span = CENOTE_CELL - 2 * CENOTE_MARGIN;
+        int cx = gx * CENOTE_CELL + CENOTE_MARGIN + (int) (((h >>> 27) & 0xFFFF) % span);
+        int cz = gz * CENOTE_CELL + CENOTE_MARGIN + (int) (((h2 >>> 27) & 0xFFFF) % span);
+        int r = CENOTE_RADIUS_MIN + (int) (((h2 >>> 43) & 0xFFFF) % CENOTE_RADIUS_RANGE);
+        if (!isJungle(cx, cz)) return AeroCenote.ABSENT;
+
+        int ring = r + 3;
+        int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+        for (int i = 0; i < 8; i++) {
+            double a = i * Math.PI / 4.0;
+            int y = getHeight(cx + (int) Math.round(Math.cos(a) * ring), cz + (int) Math.round(Math.sin(a) * ring));
+            min = Math.min(min, y);
+            max = Math.max(max, y);
+        }
+        if (min < CENOTE_MIN_RIM || min > CENOTE_MAX_RIM || max - min > CENOTE_MAX_SPREAD) return AeroCenote.ABSENT;
+        return new AeroCenote(cx, cz, r, min - CENOTE_DROP);
+    }
+
+    /** Биом джунглей в точке: тот же {@code resolveLayer1Biome} и те же шумы, что у {@code AeroBiomeSource}. */
+    private boolean isJungle(int wx, int wz) {
+        double qx = (wx >> 2) << 2;
+        double qz = (wz >> 2) << 2;
+        double cont = getContinentality(qx, qz);
+        double ridge = getRidgeStrength((int) qx, (int) qz);
+        double temp = cenoteTempNoise.fbm2D(qx * 0.0008, qz * 0.0008, 3, 2.0, 0.5);
+        double humid = cenoteHumidNoise.fbm2D(qx * 0.0010, qz * 0.0010, 3, 2.0, 0.5);
+        double plateau = getPlateauMask((int) qx, (int) qz, cont, ridge);
+        return "jungle".equals(AeroBiomeSource.resolveLayer1Biome(cont, getErosion(qx, qz), ridge, plateau, temp, humid, false));
     }
 
     /**
@@ -567,6 +659,7 @@ public class Layer1TerrainGenerator {
                 int caveBottom = cache.caveBottom[idx];
                 int lushTop = cache.lushAirTop[idx];
                 int lushFloor = cache.lushFloor[idx];
+                int cenoteFloor = cache.cenoteFloor[idx];
 
                 // Бедрок на дне (0..4 слоя от MIN_Y)
                 for (int y = MIN_Y; y < MIN_Y + BEDROCK_LAYERS; y++) {
@@ -588,6 +681,11 @@ public class Layer1TerrainGenerator {
                     }
                     // Lush-полость в горе: воздух от пола до верхнего воздушного блока (мох/вода/декор ставит decorateLushCavity)
                     if (lushTop != LUSH_NONE && y > lushFloor && y <= lushTop) {
+                        continue;
+                    }
+
+                    // Сенот: шахта до дна озера (воду, дно и лианы ставит decorateCenote)
+                    if (cenoteFloor != AeroCenote.NONE && y > cenoteFloor) {
                         continue;
                     }
 
@@ -613,6 +711,66 @@ public class Layer1TerrainGenerator {
         decorateCaveCeiling(writer, chunkX, chunkZ, cache);
         decorateCaveFloor(writer, chunkX, chunkZ, cache);
         decorateLushCavity(writer, chunkX, chunkZ, cache);
+        decorateCenote(writer, chunkX, chunkZ, cache);
+    }
+
+    /**
+     * Оформляет сенот: глина на дне, вода до {@code waterY}, на стенах шахты лианы (vine), свисающие от края к воде.
+     * Дно и вода совпадают с LOD-моделью {@code AeroColumnModel}; лианы есть только в реальных чанках.
+     */
+    private void decorateCenote(ChunkWriter writer, int chunkX, int chunkZ, Layer1ColumnCache cache) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+        Direction[] dirs = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+                int idx = (lx << 4) | lz;
+                int floorY = cache.cenoteFloor[idx];
+                if (floorY == AeroCenote.NONE) continue;
+                int waterY = cache.cenoteWater[idx];
+
+                writer.setBlockState(wx, floorY, wz, BS_CLAY);
+                for (int y = floorY + 1; y <= waterY; y++) {
+                    writer.setBlockState(wx, y, wz, BS_WATER);
+                }
+
+                // Лианы только у стены: соседние колонки вне шахты. Лиана цепляется к стороне соседнего твёрдого блока.
+                long vh = lushHash(wx, wz, 0x7E11C0DEL);
+                if (((vh >>> 11) & 0xFFFF) / 65536.0 >= 0.8) continue;
+                int len = 3 + (int) (((vh >>> 29) & 0xFFFF) % CENOTE_VINE_SPAN);
+                boolean[] wall = new boolean[4];
+                int[] wallTop = new int[4];
+                int top = Integer.MIN_VALUE;
+                for (int i = 0; i < 4; i++) {
+                    int nx = wx + dirs[i].getStepX(), nz = wz + dirs[i].getStepZ();
+                    if (cenoteFloorY(nx, nz) != AeroCenote.NONE) continue;
+                    int lnx = lx + dirs[i].getStepX(), lnz = lz + dirs[i].getStepZ();
+                    wall[i] = true;
+                    wallTop[i] = (lnx >= 0 && lnx < 16 && lnz >= 0 && lnz < 16) ? cache.surfaceY[(lnx << 4) | lnz] : getHeight(nx, nz);
+                    top = Math.max(top, wallTop[i]);
+                }
+                if (top == Integer.MIN_VALUE) continue;
+                for (int y = top; y > top - len && y > waterY; y--) {
+                    BlockState vine = BS_VINE;
+                    for (int i = 0; i < 4; i++) {
+                        if (wall[i] && y <= wallTop[i]) vine = vine.setValue(vineFace(dirs[i]), true);
+                    }
+                    writer.setBlockState(wx, y, wz, vine);
+                }
+            }
+        }
+    }
+
+    private static net.minecraft.world.level.block.state.properties.BooleanProperty vineFace(Direction d) {
+        return switch (d) {
+            case NORTH -> VineBlock.NORTH;
+            case EAST -> VineBlock.EAST;
+            case SOUTH -> VineBlock.SOUTH;
+            default -> VineBlock.WEST;
+        };
     }
 
     /**
@@ -848,8 +1006,8 @@ public class Layer1TerrainGenerator {
 
     public record BiomeSurfaceInfo(SurfaceType type, boolean isCold, boolean isWarmOcean, boolean isFrozenOcean) {}
 
-    private final java.util.concurrent.ConcurrentHashMap<Holder<Biome>, BiomeSurfaceInfo> surfaceInfoCache =
-            new java.util.concurrent.ConcurrentHashMap<>(64);
+    private final ConcurrentHashMap<Holder<Biome>, BiomeSurfaceInfo> surfaceInfoCache =
+            new ConcurrentHashMap<>(64);
 
     private BiomeSurfaceInfo getSurfaceInfo(Holder<Biome> holder) {
         return surfaceInfoCache.computeIfAbsent(holder, this::classifyBiome);
@@ -860,8 +1018,8 @@ public class Layer1TerrainGenerator {
         return classifyPath(path);
     }
 
-    private static final java.util.concurrent.ConcurrentHashMap<String, BiomeSurfaceInfo> PATH_INFO_CACHE =
-            new java.util.concurrent.ConcurrentHashMap<>(64);
+    private static final ConcurrentHashMap<String, BiomeSurfaceInfo> PATH_INFO_CACHE =
+            new ConcurrentHashMap<>(64);
 
     /** Классификация поверхности по имени биома ("aeroworld:desert" или "desert") — для LOD-генератора. */
     public static BiomeSurfaceInfo surfaceInfoForBiomeName(String biomeName) {
@@ -942,6 +1100,9 @@ public class Layer1TerrainGenerator {
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
                 int idx = xOffset | lz;
+
+                // Сенот: дно и стены уже оформлены в fillTerrain, поверхностный слой здесь не нужен
+                if (cache.cenoteFloor[idx] != AeroCenote.NONE) continue;
 
                 int surfaceY = cache.surfaceY[idx];
                 Holder<Biome> biomeHolder = biomeGetter.apply(wx, wz);

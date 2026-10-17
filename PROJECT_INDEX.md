@@ -43,12 +43,12 @@ Direct `.java` files per folder (not recursive), checked by section D of `check-
 | `org.example.aeroworld.worldgen.dh` | 30 файлов |
 | `org.example.aeroworld.worldgen.feature` | 1 файл |
 | `org.example.aeroworld.worldgen.feature.vault` | 7 файлов |
-| `org.example.aeroworld.worldgen.layer` | 11 файлов |
+| `org.example.aeroworld.worldgen.layer` | 13 файлов |
 | `org.example.aeroworld.worldgen.noise` | 3 файла |
 | `org.example.aeroworld.worldgen.structure` | 9 файлов |
 | `org.example.aeroworld.worldgen.util` | 3 файла |
 
-The root package holds 1 file (AeroWorld, not checkable by the script because its pattern needs a sub-package); `mixin` has no files of its own. Total under `src`: 129 `.java` files, the same number the script prints as "Your .java files".
+The root package holds 1 file (AeroWorld, not checkable by the script because its pattern needs a sub-package); `mixin` has no files of its own. Total under `src`: 131 `.java` files, the same number the script prints as "Your .java files".
 
 ## Layers (values verified in code)
 
@@ -218,6 +218,10 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: IslandVaultTrialGenerator, Layer2StructurePlacer, Layer2VaultTrialPlacer, LowerIslandGenerator
 
 ### worldgen/layer  - Per-layer terrain and island generators
+- **AeroCenote** [gen-layer1] record, 30L - Geometry of a jungle sinkhole (cenote): centre, radius, lake water level; floorY gives the lake bed in a column (bowl 2..7 blocks under the water, edge widened by a wobble) or NONE outside the shaft. Pure, no Minecraft classes.
+   - api: floorY(wx,wz,wobble); NONE; ABSENT
+   - usedBy: AeroColumnModel, Layer1ColumnCache, Layer1TerrainGenerator
+- **AeroCenoteSelfCheck** [selfcheck] class, 28L - Standalone `main` self-check (javac + java -ea) for AeroCenote. Not part of the mod runtime.
 - **AeroRiverNetwork** [gen-layer1] class, 246L - Pure function of seed and coordinates producing river channels, lake bowls, deep-lake mask and a valley allowance (cell/node graph draining to ocean). Only carves; water fill comes from Layer 1 sea fill. DEEP_LAKE_SHARE = 10% of sink lakes. Sample.valley is 0 at a river channel and grows smoothly to 1 at a distance of at most VALLEY_OUTER_MAX = 120 blocks (kept below 0.2 x CELL so edges outside the 3x3 cell window cannot cause seams); lakes do not produce a valley.
    - api: sample(wx,wz,cont) -> Sample(river,lake,deep,valley); deepLakeCentre(chunkX,chunkZ)
    - uses: AeroNoise
@@ -231,7 +235,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: getTerrainGenerator(); surfaceHeight; topmostHeight
    - uses: Layer1TerrainGenerator
    - usedBy: AeroBiomeSource, AeroWorldChunkGenerator, StructureCategoryResolver, StructureSupportValidator, TerrainColumnSampler
-- **Layer1TerrainGenerator** [gen-layer1] class, 1049L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges), river valleys (relief above Y 8 is scaled towards the river by Sample.valley, 15% of it stays at the channel; applied before the plateau and before the channel carve), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, lush cave inside every mountain (column and its four side neighbours at surface Y >= LUSH_MIN_SURFACE 36: 2-block crust on top = surface block + one under it, then a moss block ceiling, air down to a terraced floor on Y 12..20 in 1-block steps, pools filled with water to LUSH_WATER_Y 15 over clay, dry terraces moss with grass/moss carpet/azalea, lily pads on water, cave vines with glow berries 1..9 long hanging from the moss; the air top is cut at the neighbour minimum so it never touches outside air; the geometry functions are shared with AeroColumnModel; grass, carpet, azalea and lily pads exist in real chunks only), bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface (on lush columns the layers under the top block are limited to the crust). Nested records SurfaceBlocks, BiomeSurfaceInfo.
+- **Layer1TerrainGenerator** [gen-layer1] class, 1049L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges), river valleys (relief above Y 8 is scaled towards the river by Sample.valley, 15% of it stays at the channel; applied before the plateau and before the channel carve), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, lush cave inside every mountain (column and its four side neighbours at surface Y >= LUSH_MIN_SURFACE 36: 2-block crust on top = surface block + one under it, then a moss block ceiling, air down to a terraced floor on Y 12..20 in 1-block steps, pools filled with water to LUSH_WATER_Y 15 over clay, dry terraces moss with grass/moss carpet/azalea, lily pads on water, cave vines with glow berries 1..9 long hanging from the moss; the air top is cut at the neighbour minimum so it never touches outside air; the geometry functions are shared with AeroColumnModel; grass, carpet, azalea and lily pads exist in real chunks only), jungle cenote (one candidate per 128-block cell in the jungle biome, checked with the same noises and resolver as the biome source; a 6..9 block shaft cut down to a clay lake bed under water, water level 8 below the lowest rim point, vines on the shaft wall in real chunks only; the shaft is dropped when the rim is under Y 6, above Y 30 or uneven), bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface (on lush columns the layers under the top block are limited to the crust). Nested records SurfaceBlocks, BiomeSurfaceInfo.
    - api: getHeight/getTopmostHeight(wx,wz); fillTerrain(ChunkWriter,cx,cz); buildSurface(chunk,biomeFn); isDeepLake; getDeepLakeCentre; getContinentality/getErosion; computeCaveTop/Bottom; lush cave geometry (static lushAirTopFromMin, lushIsWet; per column lushAirTop, lushFloorY, lushVineLength; constants LUSH_NONE, LUSH_MIN_SURFACE, LUSH_CRUST, LUSH_WATER_Y, BS_VINE_PLANT_BERRIES); getPlateauMask
    - uses: AeroNoise, AeroRiverNetwork, ChunkWriter, Layer1ColumnCache, PlateauTerrace
    - usedBy: AeroBiomeSource, AeroColumnModel, AeroSeedWorldGenerator, AeroTreeCover, AeroWorldChunkGenerator, AncientCityIslandSupportPlacer, DeepLakeMonumentPlacement, Layer1ColumnCache, Layer1FlatGenerator, OceanMonumentBuildingMixin, OceanMonumentStructureMixin, StructureSupportValidator
