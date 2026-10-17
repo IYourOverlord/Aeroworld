@@ -43,6 +43,8 @@ public final class AeroColumnModel {
     private static final BlockState BS_GRASS = Blocks.GRASS_BLOCK.defaultBlockState();
     private static final BlockState BS_DIRT = Blocks.DIRT.defaultBlockState();
     private static final BlockState BS_ICE = Blocks.ICE.defaultBlockState();
+    private static final BlockState BS_MOSS_BLOCK = Blocks.MOSS_BLOCK.defaultBlockState();
+    private static final BlockState BS_CLAY = Blocks.CLAY.defaultBlockState();
 
     /**
      * Замерзает ли вода на уровне моря в этом биоме так же, как у freeze_top_layer: ровно та же проверка климата, что у ванили
@@ -149,6 +151,8 @@ public final class AeroColumnModel {
             boolean hasCave;
             int caveTop;
             int caveBottom;
+            int lushAirTop;
+            int lushFloor;
 
             if (columnCache != null && columnCache.isForChunk(x >> 4, z >> 4)) {
                 int idx = ((x & 15) << 4) | (z & 15);
@@ -156,12 +160,17 @@ public final class AeroColumnModel {
                 hasCave = surfaceY >= seaLevel;
                 caveTop = hasCave ? columnCache.caveTop[idx] : Integer.MIN_VALUE;
                 caveBottom = hasCave ? columnCache.caveBottom[idx] : Integer.MAX_VALUE;
+                lushAirTop = columnCache.lushAirTop[idx];
+                lushFloor = columnCache.lushFloor[idx];
             } else {
                 surfaceY = layer1Terrain.getHeight(x, z);
                 hasCave = surfaceY >= seaLevel;
                 caveTop = hasCave ? layer1Terrain.computeCaveTop(x, z) : Integer.MIN_VALUE;
                 caveBottom = hasCave ? layer1Terrain.computeCaveBottom(x, z) : Integer.MAX_VALUE;
+                lushAirTop = layer1Terrain.lushAirTop(x, z, surfaceY);
+                lushFloor = lushAirTop != Layer1TerrainGenerator.LUSH_NONE ? layer1Terrain.lushFloorY(x, z) : Layer1TerrainGenerator.LUSH_NONE;
             }
+            boolean lush = lushAirTop != Layer1TerrainGenerator.LUSH_NONE;
 
             int stoneTop = Math.min(surfaceY, levelMax);
             boolean plateau = surfaceY >= seaLevel && layer1Terrain.isPlateau(x, z);
@@ -186,8 +195,18 @@ public final class AeroColumnModel {
                     }
                     int upperBottom = Math.max(caveTop + 1, minY);
                     if (stoneTop >= upperBottom) {
-                        addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
+                        if (lush) {
+                            addLushColumn(spans, upperBottom, stoneTop, surfaceY, lushAirTop, lushFloor,
+                                    layer1Terrain.lushVineLength(x, z, lushAirTop, lushFloor),
+                                    surface, layer1BiomeName, layer1BiomeHolder);
+                        } else {
+                            addSurfaceColumn(spans, upperBottom, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
+                        }
                     }
+                } else if (lush) {
+                    addLushColumn(spans, minY, stoneTop, surfaceY, lushAirTop, lushFloor,
+                            layer1Terrain.lushVineLength(x, z, lushAirTop, lushFloor),
+                            surface, layer1BiomeName, layer1BiomeHolder);
                 } else {
                     addSurfaceColumn(spans, minY, stoneTop, BS_STONE, surface, surfaceInfo, layer1BiomeName, layer1BiomeHolder);
                 }
@@ -400,6 +419,48 @@ public final class AeroColumnModel {
         }
 
         return mergeSpans(spans);
+    }
+
+    /**
+     * Колонка горы с lush-полостью (аналитический двойник {@code Layer1TerrainGenerator.decorateLushCavity}),
+     * снизу вверх: камень, пол (мох на сухом, глина и вода до уровня бассейна на затопленном), воздух с лианой
+     * под сводом, слой мха, камень, корка в 2 блока (верх поверхности и один под ним). Диапазон ограничен
+     * {@code [from..stoneTop]}; корка получает материал поверхности только когда {@code surface != null}
+     * (поверхность не обрезана верхом запрашиваемого диапазона). Трава, ковёр, азалии и кувшинки в LOD не входят.
+     */
+    private static void addLushColumn(List<Span> spans, int from, int stoneTop, int surfaceY, int airTop, int floorY,
+                                      int vineLen, @Nullable Layer1TerrainGenerator.SurfaceBlocks surface,
+                                      @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
+        boolean wet = Layer1TerrainGenerator.lushIsWet(floorY);
+        if (wet) {
+            addClamped(spans, from, stoneTop, from, floorY - 2, BS_STONE, biomeName, biomeHolder);
+            addClamped(spans, from, stoneTop, floorY - 1, floorY, BS_CLAY, biomeName, biomeHolder);
+            addClamped(spans, from, stoneTop, floorY + 1, Layer1TerrainGenerator.LUSH_WATER_Y, BS_WATER, biomeName, biomeHolder);
+        } else {
+            addClamped(spans, from, stoneTop, from, floorY - 1, BS_STONE, biomeName, biomeHolder);
+            addClamped(spans, from, stoneTop, floorY, floorY, BS_MOSS_BLOCK, biomeName, biomeHolder);
+        }
+        if (vineLen > 0) {
+            // ponytail: один представительный блок лианы с ягодами на всю длину (в реальных чанках тело и кончик различаются)
+            addClamped(spans, from, stoneTop, airTop - vineLen + 1, airTop, Layer1TerrainGenerator.BS_VINE_PLANT_BERRIES,
+                    biomeName, biomeHolder);
+        }
+        addClamped(spans, from, stoneTop, airTop + 1, airTop + 1, BS_MOSS_BLOCK, biomeName, biomeHolder);
+        if (surface != null) {
+            addClamped(spans, from, stoneTop, airTop + 2, surfaceY - 2, BS_STONE, biomeName, biomeHolder);
+            addClamped(spans, from, stoneTop, surfaceY - 1, surfaceY - 1, surface.under(), biomeName, biomeHolder);
+            addClamped(spans, from, stoneTop, surfaceY, surfaceY, surface.top(), biomeName, biomeHolder);
+        } else {
+            addClamped(spans, from, stoneTop, airTop + 2, surfaceY, BS_STONE, biomeName, biomeHolder);
+        }
+    }
+
+    /** Добавляет span [lo..hi], обрезанный до [from..top]; пустой диапазон пропускает. */
+    private static void addClamped(List<Span> spans, int from, int top, int lo, int hi, BlockState state,
+                                   @Nullable String biomeName, @Nullable Holder<Biome> biomeHolder) {
+        int b = Math.max(lo, from);
+        int t = Math.min(hi, top);
+        if (t >= b) spans.add(new Span(b, t, state, biomeName, biomeHolder));
     }
 
     /**

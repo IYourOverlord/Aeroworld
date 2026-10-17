@@ -5,9 +5,11 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import org.example.aeroworld.worldgen.cache.Layer1ColumnCache;
 import org.example.aeroworld.worldgen.noise.AeroNoise;
@@ -158,6 +160,45 @@ public class Layer1TerrainGenerator {
     public static final int CAVE_TOP_Y = -25;
     private static final double CAVE_MID_Y = (CAVE_TOP_Y + CAVE_BOTTOM_Y) / 2.0; // -37.5
 
+    // ── Lush-полость внутри гор ───────────────────────────────────────────────────────────────────────────
+    /** Нет полости в колонке (влезает в short, чтобы лежать в {@link Layer1ColumnCache} без пересчёта). */
+    public static final int LUSH_NONE = Short.MIN_VALUE;
+    /**
+     * Гора: полость есть, только если поверхность самой колонки И её четырёх соседей по сторонам не ниже этой
+     * отметки. Холмы и равнины (до ~35) остаются сплошными.
+     */
+    public static final int LUSH_MIN_SURFACE = 36;
+    /** Толщина верхней корки горы: верхний блок поверхности плюс один подповерхностный. */
+    public static final int LUSH_CRUST = 2;
+    /** Нижняя отметка пола полости; пол лежит на {@code LUSH_FLOOR_BASE .. LUSH_FLOOR_BASE + LUSH_FLOOR_RANGE - 1}. */
+    public static final int LUSH_FLOOR_BASE = 12;
+    /** Число ступеней террас (шаг ступени 1 блок: по ним можно ходить). */
+    public static final int LUSH_FLOOR_RANGE = 9;
+    /** Уровень воды в бассейнах: пол ниже него затоплен до этой отметки включительно. */
+    public static final int LUSH_WATER_Y = 15;
+    /** Максимальная длина лианы. */
+    private static final int LUSH_VINE_MAX = 9;
+
+    private static final BlockState BS_MOSS_BLOCK = Blocks.MOSS_BLOCK.defaultBlockState();
+    private static final BlockState BS_CLAY = Blocks.CLAY.defaultBlockState();
+    private static final BlockState BS_MOSS_CARPET = Blocks.MOSS_CARPET.defaultBlockState();
+    private static final BlockState BS_SHORT_GRASS = Blocks.SHORT_GRASS.defaultBlockState();
+    private static final BlockState BS_TALL_GRASS_LOWER = Blocks.TALL_GRASS.defaultBlockState();
+    private static final BlockState BS_TALL_GRASS_UPPER = Blocks.TALL_GRASS.defaultBlockState()
+            .setValue(DoublePlantBlock.HALF, DoubleBlockHalf.UPPER);
+    private static final BlockState BS_AZALEA = Blocks.AZALEA.defaultBlockState();
+    private static final BlockState BS_FLOWERING_AZALEA = Blocks.FLOWERING_AZALEA.defaultBlockState();
+    private static final BlockState BS_LILY_PAD = Blocks.LILY_PAD.defaultBlockState();
+    /** Тело лианы с ягодами (светятся). */
+    public static final BlockState BS_VINE_PLANT_BERRIES = Blocks.CAVE_VINES_PLANT.defaultBlockState()
+            .setValue(BlockStateProperties.BERRIES, true);
+    private static final BlockState BS_VINE_PLANT_BARE = Blocks.CAVE_VINES_PLANT.defaultBlockState()
+            .setValue(BlockStateProperties.BERRIES, false);
+    /** Кончик лианы с ягодами; возраст 25 останавливает дальнейший рост. */
+    private static final BlockState BS_VINE_HEAD_BERRIES = Blocks.CAVE_VINES.defaultBlockState()
+            .setValue(BlockStateProperties.BERRIES, true)
+            .setValue(BlockStateProperties.AGE_25, 25);
+
     private final long seed;
     private final AeroNoise continentNoise;
     private final AeroNoise erosionNoise;
@@ -166,6 +207,8 @@ public class Layer1TerrainGenerator {
     private final AeroNoise caveCeilingNoise;
     private final AeroNoise caveFloorNoise;
     private final AeroNoise caveLushNoise;
+    private final AeroNoise lushFloorNoise;
+    private final AeroNoise lushVineNoise;
     private final AeroNoise oceanVegNoise;
     private final AeroNoise coralNoise;
     private final AeroNoise ridgeNoise;
@@ -182,6 +225,8 @@ public class Layer1TerrainGenerator {
         this.caveCeilingNoise = new AeroNoise(seed ^ 0xBBCCDDEEL);
         this.caveFloorNoise   = new AeroNoise(seed ^ 0x13579BDFL);
         this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
+        this.lushFloorNoise   = new AeroNoise(seed ^ 0x6D2B79F5L);
+        this.lushVineNoise    = new AeroNoise(seed ^ 0x3C6EF372L);
         this.oceanVegNoise    = new AeroNoise(seed ^ 0x44556677L);
         this.coralNoise       = new AeroNoise(seed ^ 0x8899AABBL);
         this.ridgeNoise       = new AeroNoise(seed ^ 0x71D63A4BL);
@@ -213,6 +258,71 @@ public class Layer1TerrainGenerator {
         double floorDetail = caveFloorNoise.noise2D(wx * 0.08, wz * 0.08) * 3.0;
         int bottom = (int) Math.round(CAVE_BOTTOM_Y + floorHills + floorDetail);
         return Math.min(bottom, (int) Math.floor(CAVE_MID_Y - 3));
+    }
+
+    /**
+     * Верхний воздушный блок lush-полости, если все пять точек (колонка и четыре соседа по сторонам) не ниже
+     * {@link #LUSH_MIN_SURFACE}; иначе {@link #LUSH_NONE}. Принимает минимум поверхности по этим пяти точкам.
+     * Минимум по соседям гарантирует, что воздух полости никогда не касается наружного воздуха (корка не
+     * прорывается на крутых склонах): воздух ниже {@code min - LUSH_CRUST - 1}, под ним слой мха.
+     */
+    public static int lushAirTopFromMin(int minSurface) {
+        return minSurface >= LUSH_MIN_SURFACE ? minSurface - LUSH_CRUST - 1 : LUSH_NONE;
+    }
+
+    /**
+     * Верх полости в колонке без кэша (LOD, getBaseColumn). Соседей считает только для колонок, уже прошедших
+     * порог горы, и бросает счёт при первом же соседе ниже порога.
+     */
+    public int lushAirTop(int wx, int wz, int surfaceY) {
+        if (surfaceY < LUSH_MIN_SURFACE) return LUSH_NONE;
+        int m = surfaceY;
+        m = Math.min(m, getHeight(wx - 1, wz));
+        if (m < LUSH_MIN_SURFACE) return LUSH_NONE;
+        m = Math.min(m, getHeight(wx + 1, wz));
+        if (m < LUSH_MIN_SURFACE) return LUSH_NONE;
+        m = Math.min(m, getHeight(wx, wz - 1));
+        if (m < LUSH_MIN_SURFACE) return LUSH_NONE;
+        m = Math.min(m, getHeight(wx, wz + 1));
+        return lushAirTopFromMin(m);
+    }
+
+    /** Верхний блок пола полости (террасы шагом 1 блок на {@code LUSH_FLOOR_BASE..+LUSH_FLOOR_RANGE-1}). */
+    public int lushFloorY(int wx, int wz) {
+        double n = lushFloorNoise.fbm2D(wx * 0.022, wz * 0.022, 3, 2.0, 0.5);
+        double t = Math.max(0.0, Math.min(0.999, 0.5 + n * 1.1));
+        return LUSH_FLOOR_BASE + (int) (t * LUSH_FLOOR_RANGE);
+    }
+
+    /** Пол затоплен: сверху глина и вода до {@link #LUSH_WATER_Y}. */
+    public static boolean lushIsWet(int floorY) {
+        return floorY < LUSH_WATER_Y;
+    }
+
+    /**
+     * Длина лианы под мхом (0 = нет лианы). Детерминирована от seed и колонки, поэтому реальные чанки и LOD
+     * получают одно и то же. Лианы растут пятнами (низкочастотный шум задаёт густоту), длина 1..9, не короче
+     * свободного места над водой или полом.
+     */
+    public int lushVineLength(int wx, int wz, int airTop, int floorY) {
+        int room = airTop - Math.max(floorY, LUSH_WATER_Y) - 1;
+        if (room <= 0) return 0;
+        double density = 0.28 + 0.42 * Math.max(0.0, Math.min(1.0, 0.5 + lushVineNoise.noise2D(wx * 0.06, wz * 0.06)));
+        long h = lushHash(wx, wz, 0x51ED270BL);
+        if (((h >>> 11) & 0xFFFF) / 65536.0 >= density) return 0;
+        int len = 1 + (int) (((h >>> 29) & 0xFFFF) % LUSH_VINE_MAX);
+        return Math.min(len, room);
+    }
+
+    private long lushHash(int wx, int wz, long salt) {
+        long h = seed ^ salt;
+        h ^= wx * 0x9E3779B97F4A7C15L;
+        h = Long.rotateLeft(h, 27) * 0xBF58476D1CE4E5B9L;
+        h ^= wz * 0x94D049BB133111EBL;
+        h ^= h >>> 31;
+        h *= 0xD6E8FEB86659FD93L;
+        h ^= h >>> 32;
+        return h;
     }
 
     /**
@@ -452,6 +562,8 @@ public class Layer1TerrainGenerator {
                 boolean hasCave = surfaceY >= SEA_LEVEL;
                 int caveTop = cache.caveTop[idx];
                 int caveBottom = cache.caveBottom[idx];
+                int lushTop = cache.lushAirTop[idx];
+                int lushFloor = cache.lushFloor[idx];
 
                 // Бедрок на дне (0..4 слоя от MIN_Y)
                 for (int y = MIN_Y; y < MIN_Y + BEDROCK_LAYERS; y++) {
@@ -469,6 +581,10 @@ public class Layer1TerrainGenerator {
                     // Проверяем полость гигантской пещеры:
                     // если это суша и точка попадает в пещеру, то блок не ставим (оставляем воздух)
                     if (hasCave && y >= caveBottom && y <= caveTop) {
+                        continue;
+                    }
+                    // Lush-полость в горе: воздух от пола до верхнего воздушного блока (мох/вода/декор ставит decorateLushCavity)
+                    if (lushTop != LUSH_NONE && y > lushFloor && y <= lushTop) {
                         continue;
                     }
 
@@ -493,6 +609,77 @@ public class Layer1TerrainGenerator {
 
         decorateCaveCeiling(writer, chunkX, chunkZ, cache);
         decorateCaveFloor(writer, chunkX, chunkZ, cache);
+        decorateLushCavity(writer, chunkX, chunkZ, cache);
+    }
+
+    /**
+     * Оформляет lush-полость внутри гор (прототип Lush Caves): мох на своде с лианами со светящимися ягодами,
+     * пол террасами (мох на сухих, глина и вода в бассейнах), на сухих террасах трава, мховый ковёр и азалии,
+     * на воде кувшинки. Геометрия (потолок, пол, вода, длина лиан) берётся из тех же функций, что у LOD-модели
+     * {@code AeroColumnModel}; трава, ковёр, азалии и кувшинки есть только в реальных чанках (в LOD их нет).
+     */
+    private void decorateLushCavity(ChunkWriter writer, int chunkX, int chunkZ, Layer1ColumnCache cache) {
+        int startX = chunkX << 4;
+        int startZ = chunkZ << 4;
+
+        for (int lx = 0; lx < 16; lx++) {
+            int wx = startX + lx;
+            int xOffset = lx << 4;
+            for (int lz = 0; lz < 16; lz++) {
+                int wz = startZ + lz;
+                int idx = xOffset | lz;
+
+                int airTop = cache.lushAirTop[idx];
+                if (airTop == LUSH_NONE) continue;
+                int floorY = cache.lushFloor[idx];
+
+                // Свод: сплошной слой мха сразу под коркой.
+                writer.setBlockState(wx, airTop + 1, wz, BS_MOSS_BLOCK);
+
+                // Пол и вода.
+                boolean wet = lushIsWet(floorY);
+                if (wet) {
+                    writer.setBlockState(wx, floorY, wz, BS_CLAY);
+                    writer.setBlockState(wx, floorY - 1, wz, BS_CLAY);
+                    for (int y = floorY + 1; y <= LUSH_WATER_Y; y++) {
+                        writer.setBlockState(wx, y, wz, BS_WATER);
+                    }
+                } else {
+                    writer.setBlockState(wx, floorY, wz, BS_MOSS_BLOCK);
+                }
+
+                // Лианы: тело с ягодами по жребию, кончик всегда с ягодами.
+                int vineLen = lushVineLength(wx, wz, airTop, floorY);
+                if (vineLen > 0) {
+                    long vh = lushHash(wx, wz, 0x7F4A7C15L);
+                    for (int i = 0; i < vineLen - 1; i++) {
+                        boolean berry = ((vh >>> i) & 3L) == 0L; // ~25% сегментов тела
+                        writer.setBlockState(wx, airTop - i, wz, berry ? BS_VINE_PLANT_BERRIES : BS_VINE_PLANT_BARE);
+                    }
+                    writer.setBlockState(wx, airTop - (vineLen - 1), wz, BS_VINE_HEAD_BERRIES);
+                }
+
+                // Растительность на полу (только реальные чанки).
+                double roll = (lushHash(wx, wz, 0x2545F491L) >>> 16 & 0xFFFF) / 65536.0;
+                if (wet) {
+                    if (roll < 0.05) writer.setBlockState(wx, LUSH_WATER_Y + 1, wz, BS_LILY_PAD);
+                } else if (airTop - floorY >= 3) {
+                    int py = floorY + 1;
+                    if (roll < 0.18) {
+                        writer.setBlockState(wx, py, wz, BS_SHORT_GRASS);
+                    } else if (roll < 0.26) {
+                        writer.setBlockState(wx, py, wz, BS_TALL_GRASS_LOWER);
+                        writer.setBlockState(wx, py + 1, wz, BS_TALL_GRASS_UPPER);
+                    } else if (roll < 0.36) {
+                        writer.setBlockState(wx, py, wz, BS_MOSS_CARPET);
+                    } else if (roll < 0.385) {
+                        writer.setBlockState(wx, py, wz, BS_AZALEA);
+                    } else if (roll < 0.40) {
+                        writer.setBlockState(wx, py, wz, BS_FLOWERING_AZALEA);
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -766,6 +953,9 @@ public class Layer1TerrainGenerator {
                 boolean hasStoneskyBands = info.type() == SurfaceType.STONY || info.type() == SurfaceType.KARST;
                 boolean hasStrataBands = info.type() == SurfaceType.STRATA;
                 int depth = hasBands ? BADLANDS_DEPTH : ((hasStoneskyBands || hasStrataBands) ? 8 : 3);
+                // Гора с полостью: корка только LUSH_CRUST блоков (верх + один под ним), глубже слои не пишем,
+                // иначе они забьют мох и воздух полости.
+                if (cache.lushAirTop[idx] != LUSH_NONE) depth = Math.min(depth, LUSH_CRUST - 1);
 
                 pos.set(wx, surfaceY, wz);
                 chunk.setBlockState(pos, topBlock, false);
