@@ -216,10 +216,11 @@ public class Layer1TerrainGenerator {
     private static final int CENOTE_RADIUS_RANGE = 4;
     /** Уровень воды: на столько ниже самой низкой точки кольца вокруг шахты. */
     private static final int CENOTE_DROP = 8;
-    /** Кольцо вокруг шахты: самая низкая точка не ниже и не выше этих отметок, перепад не больше CENOTE_MAX_SPREAD. */
+    /** Кольцо вокруг шахты: самая низкая точка не ниже CENOTE_MIN_RIM, перепад не больше CENOTE_MAX_SPREAD (холмистые джунгли). */
     private static final int CENOTE_MIN_RIM = 6;
-    private static final int CENOTE_MAX_RIM = 30;
-    private static final int CENOTE_MAX_SPREAD = 8;
+    private static final int CENOTE_MAX_SPREAD = 14;
+    /** Радиус (от радиуса шахты) каменного кольца вокруг неё, где lush-полость горы не вырезается. */
+    private static final int CENOTE_PILLAR = 5;
     private static final int CENOTE_CACHE_LIMIT = 4096;
     /** Максимальная длина лианы на стене шахты - 3 (длина 3..11). */
     private static final int CENOTE_VINE_SPAN = 9;
@@ -321,6 +322,19 @@ public class Layer1TerrainGenerator {
         return c.floorY(wx, wz, cenoteWobble.noise2D(wx * 0.2, wz * 0.2) * 1.2);
     }
 
+    /**
+     * Колонка в шахте сенота или в каменном кольце вокруг неё: lush-полость горы здесь не вырезается, иначе вода озера
+     * граничила бы с воздухом полости. Джунгли лежат и на горах (поверхность >= LUSH_MIN_SURFACE), поэтому сенот
+     * там стоит каменным столбом внутри полости.
+     */
+    public boolean cenoteBuffer(int wx, int wz) {
+        AeroCenote c = cenoteAt(wx, wz);
+        if (c.radius() == 0) return false;
+        int dx = wx - c.cx(), dz = wz - c.cz();
+        int reach = c.radius() + CENOTE_PILLAR;
+        return dx * dx + dz * dz <= reach * reach;
+    }
+
     private AeroCenote computeCenote(int gx, int gz) {
         long h = lushHash(gx, gz, 0x0CE07E01L);
         if (((h >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_CHANCE) return AeroCenote.ABSENT;
@@ -339,7 +353,7 @@ public class Layer1TerrainGenerator {
             min = Math.min(min, y);
             max = Math.max(max, y);
         }
-        if (min < CENOTE_MIN_RIM || min > CENOTE_MAX_RIM || max - min > CENOTE_MAX_SPREAD) return AeroCenote.ABSENT;
+        if (min < CENOTE_MIN_RIM || max - min > CENOTE_MAX_SPREAD) return AeroCenote.ABSENT;
         return new AeroCenote(cx, cz, r, min - CENOTE_DROP);
     }
 
@@ -370,7 +384,7 @@ public class Layer1TerrainGenerator {
      * порог горы, и бросает счёт при первом же соседе ниже порога.
      */
     public int lushAirTop(int wx, int wz, int surfaceY) {
-        if (surfaceY < LUSH_MIN_SURFACE) return LUSH_NONE;
+        if (surfaceY < LUSH_MIN_SURFACE || cenoteBuffer(wx, wz)) return LUSH_NONE;
         int m = surfaceY;
         m = Math.min(m, getHeight(wx - 1, wz));
         if (m < LUSH_MIN_SURFACE) return LUSH_NONE;
@@ -1007,7 +1021,7 @@ public class Layer1TerrainGenerator {
     public record BiomeSurfaceInfo(SurfaceType type, boolean isCold, boolean isWarmOcean, boolean isFrozenOcean) {}
 
     private final ConcurrentHashMap<Holder<Biome>, BiomeSurfaceInfo> surfaceInfoCache =
-            new ConcurrentHashMap<>(64);
+            new java.util.concurrent.ConcurrentHashMap<>(64);
 
     private BiomeSurfaceInfo getSurfaceInfo(Holder<Biome> holder) {
         return surfaceInfoCache.computeIfAbsent(holder, this::classifyBiome);
@@ -1018,8 +1032,8 @@ public class Layer1TerrainGenerator {
         return classifyPath(path);
     }
 
-    private static final ConcurrentHashMap<String, BiomeSurfaceInfo> PATH_INFO_CACHE =
-            new ConcurrentHashMap<>(64);
+    private static final java.util.concurrent.ConcurrentHashMap<String, BiomeSurfaceInfo> PATH_INFO_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>(64);
 
     /** Классификация поверхности по имени биома ("aeroworld:desert" или "desert") — для LOD-генератора. */
     public static BiomeSurfaceInfo surfaceInfoForBiomeName(String biomeName) {
