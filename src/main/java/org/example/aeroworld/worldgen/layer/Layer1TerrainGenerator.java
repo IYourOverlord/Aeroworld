@@ -189,6 +189,9 @@ public class Layer1TerrainGenerator {
     private static final BlockState BS_AZALEA = Blocks.AZALEA.defaultBlockState();
     private static final BlockState BS_FLOWERING_AZALEA = Blocks.FLOWERING_AZALEA.defaultBlockState();
     private static final BlockState BS_LILY_PAD = Blocks.LILY_PAD.defaultBlockState();
+    /** Светящийся лишайник на полу (грань DOWN: крепится к блоку под ним), свет 7. */
+    private static final BlockState BS_GLOW_LICHEN_FLOOR = Blocks.GLOW_LICHEN.defaultBlockState()
+            .setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
     /** Тело лианы с ягодами (светятся). */
     public static final BlockState BS_VINE_PLANT_BERRIES = Blocks.CAVE_VINES_PLANT.defaultBlockState()
             .setValue(BlockStateProperties.BERRIES, true);
@@ -614,7 +617,7 @@ public class Layer1TerrainGenerator {
 
     /**
      * Оформляет lush-полость внутри гор (прототип Lush Caves): мох на своде с лианами со светящимися ягодами,
-     * пол террасами (мох на сухих, глина и вода в бассейнах), на сухих террасах трава, мховый ковёр и азалии,
+     * пол террасами (мох на сухих, глина и вода в бассейнах), на сухих террасах трава, мховый ковёр, азалии и светящийся лишайник (вместо пустого воздуха),
      * на воде кувшинки. Геометрия (потолок, пол, вода, длина лиан) берётся из тех же функций, что у LOD-модели
      * {@code AeroColumnModel}; трава, ковёр, азалии и кувшинки есть только в реальных чанках (в LOD их нет).
      */
@@ -676,6 +679,8 @@ public class Layer1TerrainGenerator {
                         writer.setBlockState(wx, py, wz, BS_AZALEA);
                     } else if (roll < 0.40) {
                         writer.setBlockState(wx, py, wz, BS_FLOWERING_AZALEA);
+                    } else if (roll < 0.75) {
+                        writer.setBlockState(wx, py, wz, BS_GLOW_LICHEN_FLOOR);
                     }
                 }
             }
