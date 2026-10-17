@@ -378,23 +378,18 @@ public class Layer1TerrainGenerator {
     }
 
     /**
-     * Биом джунглей в точке по той же карте, что у реальных чанков и LOD. Без {@code BIOME_SYNC} это экземпляр из поля
-     * {@code ChunkGenerator}: сид по умолчанию и фиксированные континентальность 0.2, эрозия 0, хребет 0, плато 0, без
-     * глубокого озера. С {@code BIOME_SYNC} источник настроен сидом мира и Layer1, поэтому берём реальные значения.
+     * Биом джунглей в точке по той же карте, что у реальных чанков и LOD: без {@code BIOME_SYNC} это поле
+     * {@code ChunkGenerator} (сид по умолчанию, реальными из рельефа остаются только слои {@code biomeOverlay}), с
+     * {@code BIOME_SYNC} источник настроен сидом мира и Layer1, поэтому берём всё реальное (overlay = null).
+     * Формула общая с источником биомов ({@link AeroBiomeSource#resolveFieldBiomeAt}).
      */
     private boolean isJungle(int wx, int wz) {
         double qx = (wx >> 2) << 2;
         double qz = (wz >> 2) << 2;
-        double temp = cenoteTempNoise.fbm2D(qx * 0.0008, qz * 0.0008, 3, 2.0, 0.5);
-        double humid = cenoteHumidNoise.fbm2D(qx * 0.0010, qz * 0.0010, 3, 2.0, 0.5);
-        double cont = 0.2, eros = 0.0, ridge = 0.0, plateau = 0.0;
-        if (AeroWorldChunkGenerator.BIOME_SYNC) {
-            cont = getContinentality(qx, qz);
-            eros = getErosion(qx, qz);
-            ridge = getRidgeStrength((int) qx, (int) qz);
-            plateau = getPlateauMask((int) qx, (int) qz, cont, ridge);
-        }
-        return "jungle".equals(AeroBiomeSource.resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, false));
+        double temp = AeroBiomeSource.temperature(cenoteTempNoise, qx, qz);
+        double humid = AeroBiomeSource.humidity(cenoteHumidNoise, qx, qz);
+        var overlay = AeroWorldChunkGenerator.BIOME_SYNC ? null : AeroBiomeSource.OVERLAY;
+        return "jungle".equals(AeroBiomeSource.resolveFieldBiomeAt(this, overlay, qx, qz, temp, humid));
     }
 
     /**

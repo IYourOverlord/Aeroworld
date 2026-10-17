@@ -58,10 +58,18 @@ public class AeroBiomeSource extends BiomeSource {
         final AeroNoise tempNoise;
         final AeroNoise humidityNoise;
         final AeroNoise deepDarkNoise;
+        /** Какие реальные входы рельефа брать; null = все (настроенная копия). У поля: набор из {@link #OVERLAY}. */
+        final java.util.Set<BiomeOverlay> overlay;
 
         Params(long seed, org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1) {
+            this(seed, layer1, null);
+        }
+
+        Params(long seed, org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1,
+               java.util.Set<BiomeOverlay> overlay) {
             this.seed          = seed;
             this.layer1        = layer1;
+            this.overlay       = overlay;
             this.tempNoise     = new AeroNoise(seed ^ TEMP_SALT);
             this.humidityNoise = new AeroNoise(seed ^ HUMID_SALT);
             this.deepDarkNoise = new AeroNoise(seed ^ 0x9A4B1C2DL);
@@ -106,6 +114,45 @@ public class AeroBiomeSource extends BiomeSource {
     /** Сид источника, созданного в поле ChunkGenerator (по нему считает биомы реальная генерация). */
     public static final long DEFAULT_SEED = 0xAE40F9C3L;
 
+    /**
+     * Замороженные входы карты реальных чанков (поле ChunkGenerator без Layer1): суша без хребта и плато.
+     * Для cont >= 0 {@link #resolveLayer1Biome} от cont не зависит, поэтому раскладка суши от этих значений не меняется.
+     */
+    public static final double FIELD_CONT = 0.2, FIELD_EROSION = 0.0, FIELD_RIDGE = 0.0, FIELD_PLATEAU = 0.0;
+
+    /**
+     * Единая формула температуры/влажности. wx/wz - координаты кварт-ячейки (quart*4): так считает
+     * {@link #getNoiseBiome}, а аналитические пути приводят блок к ней через {@code (b >> 2) << 2}.
+     */
+    public static double temperature(AeroNoise n, double wx, double wz) {
+        return n.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
+    }
+
+    public static double humidity(AeroNoise n, double wx, double wz) {
+        return n.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+    }
+
+    private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
+
+    /**
+     * Включённые слои рельефа для поля ({@code -Daeroworld.biomeOverlay=water,plateau,...}); по умолчанию {@code water},
+     * {@code none} выключает всё.
+     * <p>WATER даёт реальные континентальность и маску глубокого озера: океаны, пляжи, deep_lake. На суше (cont >= 0)
+     * при замороженных эрозии, хребте и плато {@link #resolveLayer1Biome} от cont не зависит, поэтому раскладка суши прежняя;
+     * исключение: deep_lake перекрывает сушу там, где реально есть глубокое озеро. {@code stony_shore} недостижим
+     * (нужна эрозия < -0.2, а она заморожена в 0): на берегу будут только beach и snowy_beach.
+     */
+    public static final java.util.Set<BiomeOverlay> OVERLAY =
+            BiomeOverlay.fromProperty(System.getProperty("aeroworld.biomeOverlay"), m -> LOGGER.warn(m));
+
+    private static final BiomeOverlay.Inputs FIELD_INPUTS =
+            new BiomeOverlay.Inputs(FIELD_CONT, FIELD_EROSION, FIELD_RIDGE, FIELD_PLATEAU, false);
+
+    /** Биом карты реальных чанков по замороженным входам (без океанов, гор и deep_lake). */
+    public static String resolveFieldBiome(double temp, double humid) {
+        return resolveLayer1Biome(FIELD_CONT, FIELD_EROSION, FIELD_RIDGE, FIELD_PLATEAU, temp, humid, false);
+    }
+
     public AeroBiomeSource(MultiNoiseBiomeSource delegate) {
         this(delegate, DEFAULT_SEED);
     }
@@ -133,6 +180,55 @@ public class AeroBiomeSource extends BiomeSource {
         Params p = params;
         if (p.seed == newSeed && p.layer1 == newLayer1) return;
         params = new Params(newSeed, newLayer1);
+    }
+
+    /**
+     * Привязывает рельеф к ЭТОМУ экземпляру, сид не трогает (в отличие от {@link #reconfigure}): температура и влажность
+     * остаются по {@link #DEFAULT_SEED}, раскладка суши прежняя, реальные входы берутся только для слоёв из {@link #OVERLAY}.
+     * Потокобезопасно: {@code Params} неизменяем, подмена одним volatile-присваиванием; читатели берут {@code params}
+     * один раз на вызов, а потоковый кэш колонок сбрасывается при {@code cache.owner != p}.
+     */
+    public synchronized void attachTerrain(org.example.aeroworld.worldgen.layer.Layer1FlatGenerator newLayer1) {
+        Params p = params;
+        if (p.layer1 == newLayer1 && p.overlay == OVERLAY) return;
+        params = new Params(p.seed, newLayer1, OVERLAY);
+    }
+
+    /** Реальные входы рельефа в точке; cont и ridge считаются один раз (нужны и плато). */
+    private static final class TerrainReal implements BiomeOverlay.Real {
+        private final Layer1TerrainGenerator t;
+        private final double wx, wz;
+        private double cont = Double.NaN, ridge = Double.NaN;
+
+        TerrainReal(Layer1TerrainGenerator t, double wx, double wz) { this.t = t; this.wx = wx; this.wz = wz; }
+
+        public double cont() { if (Double.isNaN(cont)) cont = t.getContinentality(wx, wz); return cont; }
+        public double eros() { return t.getErosion(wx, wz); }
+        public double ridge() { if (Double.isNaN(ridge)) ridge = t.getRidgeStrength((int) wx, (int) wz); return ridge; }
+        public double plateau() { return t.getPlateauMask((int) wx, (int) wz, cont(), ridge()); }
+        public boolean deepLake() { return t.isDeepLake((int) wx, (int) wz); }
+    }
+
+    /** Входы формулы биома в точке: замороженные без рельефа, иначе реальные с учётом overlay (null = все). */
+    private static BiomeOverlay.Inputs inputs(Layer1TerrainGenerator terrain, java.util.Set<BiomeOverlay> overlay,
+                                              double wx, double wz) {
+        if (terrain == null) return FIELD_INPUTS;
+        return BiomeOverlay.select(overlay, new TerrainReal(terrain, wx, wz), FIELD_INPUTS);
+    }
+
+    private static BiomeOverlay.Inputs inputs(Params p, double wx, double wz) {
+        return inputs(p.layer1 != null ? p.layer1.getTerrainGenerator() : null, p.overlay, wx, wz);
+    }
+
+    /**
+     * Биом карты реальных чанков в точке (wx, wz кварт-ячейки) при заданном overlay (null = всё реальное, как у настроенной
+     * копии). Одна формула для источника и для {@code Layer1TerrainGenerator.isJungle}, чтобы сенот не оказался в клетке,
+     * которую источник называет океаном.
+     */
+    public static String resolveFieldBiomeAt(Layer1TerrainGenerator terrain, java.util.Set<BiomeOverlay> overlay,
+                                             double wx, double wz, double temp, double humid) {
+        BiomeOverlay.Inputs in = inputs(terrain, overlay, wx, wz);
+        return resolveLayer1Biome(in.cont(), in.eros(), in.ridge(), in.plateau(), temp, humid, in.deepLake());
     }
 
     @Override
@@ -199,19 +295,14 @@ public class AeroBiomeSource extends BiomeSource {
             hasDD = dd > DEEP_DARK_THRESHOLD;
             ddBiome = hasDD ? findAeroBiome("deep_dark").orElse(null) : null;
 
-            double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-            double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+            double temp = temperature(p.tempNoise, wx, wz);
+            double humid = humidity(p.humidityNoise, wx, wz);
             String islandName = resolveIslandBiome(temp, humid);
             islandBiome = findAeroBiome(islandName).orElseGet(() -> delegateWithSafety(x, 20, z, sampler, true));
 
-            Layer1TerrainGenerator terrain = (p.layer1 != null) ? p.layer1.getTerrainGenerator() : null;
-            double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
-            double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
-            double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
-
-            double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
-
-            boolean deepLake = terrain != null && terrain.isDeepLake((int) wx, (int) wz);
+            BiomeOverlay.Inputs in = inputs(p, wx, wz);
+            double cont = in.cont(), eros = in.eros(), ridge = in.ridge(), plateau = in.plateau();
+            boolean deepLake = in.deepLake();
             String biomeName = resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, deepLake);
             layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
             // Пятно deep_dark на Y <= -8 не должно заменять биом на дне озера: ванильная проверка биома старта
@@ -342,38 +433,30 @@ public class AeroBiomeSource extends BiomeSource {
 
     public String getLayer1BiomeName(int blockX, int blockZ) {
         Params p = params;
-        Layer1TerrainGenerator terrain = (p.layer1 != null) ? p.layer1.getTerrainGenerator() : null;
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
-        double cont = (terrain != null) ? terrain.getContinentality(wx, wz) : 0.2;
-        double eros = (terrain != null) ? terrain.getErosion(wx, wz) : 0.0;
-        double ridge = (terrain != null) ? terrain.getRidgeStrength((int) wx, (int) wz) : 0.0;
-
-        double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-        double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
-
-        double plateau = (terrain != null) ? terrain.getPlateauMask((int) wx, (int) wz, cont, ridge) : 0.0;
-
-        boolean deepLake = terrain != null && terrain.isDeepLake((int) wx, (int) wz);
-        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, deepLake);
+        BiomeOverlay.Inputs in = inputs(p, wx, wz);
+        double temp = temperature(p.tempNoise, wx, wz);
+        double humid = humidity(p.humidityNoise, wx, wz);
+        return resolveLayer1Biome(in.cont(), in.eros(), in.ridge(), in.plateau(), temp, humid, in.deepLake());
     }
 
     public boolean isDeepDark(int blockX, int blockZ) {
+        Params p = params;
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
-        double dd = params.deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
+        double dd = p.deepDarkNoise.fbm2D(wx * DEEP_DARK_NOISE_SCALE, wz * DEEP_DARK_NOISE_SCALE, 3, 2.0, 0.5);
         if (dd <= DEEP_DARK_THRESHOLD) return false;
         // как в getNoiseBiome: на дне глубокого озера deep_dark не перекрывает biom озера
-        Layer1TerrainGenerator terrain = (params.layer1 != null) ? params.layer1.getTerrainGenerator() : null;
-        return terrain == null || !terrain.isDeepLake((int) wx, (int) wz);
+        return p.layer1 == null || !inputs(p, wx, wz).deepLake();
     }
 
     public String getIslandBiomeName(int blockX, int blockZ) {
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
         Params p = params;
-        double temp = p.tempNoise.fbm2D(wx * 0.0008, wz * 0.0008, 3, 2.0, 0.5);
-        double humid = p.humidityNoise.fbm2D(wx * 0.0010, wz * 0.0010, 3, 2.0, 0.5);
+        double temp = temperature(p.tempNoise, wx, wz);
+        double humid = humidity(p.humidityNoise, wx, wz);
         return resolveIslandBiome(temp, humid);
     }
 
