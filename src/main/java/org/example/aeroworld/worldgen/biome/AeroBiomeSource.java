@@ -145,6 +145,10 @@ public class AeroBiomeSource extends BiomeSource {
     public static final java.util.Set<BiomeOverlay> OVERLAY =
             BiomeOverlay.fromProperty(System.getProperty("aeroworld.biomeOverlay"), m -> LOGGER.warn(m));
 
+    /** Разрешённые биомы суши ({@code -Daeroworld.biomeLand}, по умолчанию пусто), см. {@link BiomeOverlay#LAND_BIOMES}. */
+    public static final java.util.Set<String> LAND =
+            BiomeOverlay.parseLand(System.getProperty("aeroworld.biomeLand"), m -> LOGGER.warn(m));
+
     private static final BiomeOverlay.Inputs FIELD_INPUTS =
             new BiomeOverlay.Inputs(FIELD_CONT, FIELD_EROSION, FIELD_RIDGE, FIELD_PLATEAU, false);
 
@@ -207,6 +211,7 @@ public class AeroBiomeSource extends BiomeSource {
         public double ridge() { if (Double.isNaN(ridge)) ridge = t.getRidgeStrength((int) wx, (int) wz); return ridge; }
         public double plateau() { return t.getPlateauMask((int) wx, (int) wz, cont(), ridge()); }
         public boolean deepLake() { return t.isDeepLake((int) wx, (int) wz); }
+        public boolean river() { return t.isRiverChannel((int) wx, (int) wz); }
     }
 
     /** Входы формулы биома в точке: замороженные без рельефа, иначе реальные с учётом overlay (null = все). */
@@ -227,8 +232,11 @@ public class AeroBiomeSource extends BiomeSource {
      */
     public static String resolveFieldBiomeAt(Layer1TerrainGenerator terrain, java.util.Set<BiomeOverlay> overlay,
                                              double wx, double wz, double temp, double humid) {
-        BiomeOverlay.Inputs in = inputs(terrain, overlay, wx, wz);
-        return resolveLayer1Biome(in.cont(), in.eros(), in.ridge(), in.plateau(), temp, humid, in.deepLake());
+        if (terrain == null) return resolveFieldBiome(temp, humid);
+        TerrainReal real = new TerrainReal(terrain, wx, wz);
+        String biome = BiomeOverlay.resolveWithLand(overlay, LAND, real, FIELD_INPUTS,
+                in -> resolveLayer1Biome(in.cont(), in.eros(), in.ridge(), in.plateau(), temp, humid, in.deepLake()));
+        return BiomeOverlay.withRiver(overlay, real, biome, temp);
     }
 
     @Override
@@ -300,10 +308,9 @@ public class AeroBiomeSource extends BiomeSource {
             String islandName = resolveIslandBiome(temp, humid);
             islandBiome = findAeroBiome(islandName).orElseGet(() -> delegateWithSafety(x, 20, z, sampler, true));
 
-            BiomeOverlay.Inputs in = inputs(p, wx, wz);
-            double cont = in.cont(), eros = in.eros(), ridge = in.ridge(), plateau = in.plateau();
-            boolean deepLake = in.deepLake();
-            String biomeName = resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, deepLake);
+            String biomeName = resolveFieldBiomeAt(p.layer1 != null ? p.layer1.getTerrainGenerator() : null,
+                    p.overlay, wx, wz, temp, humid);
+            boolean deepLake = DEEP_LAKE.equals(biomeName);
             layer1Biome = findAeroBiome(biomeName).orElseGet(() -> delegate.getNoiseBiome(x, y, z, sampler));
             // Пятно deep_dark на Y <= -8 не должно заменять биом на дне озера: ванильная проверка биома старта
             // монумента берёт биом на высоте дна и иначе отклоняла бы его.
@@ -435,10 +442,9 @@ public class AeroBiomeSource extends BiomeSource {
         Params p = params;
         double wx = quartSnap(blockX);
         double wz = quartSnap(blockZ);
-        BiomeOverlay.Inputs in = inputs(p, wx, wz);
         double temp = temperature(p.tempNoise, wx, wz);
         double humid = humidity(p.humidityNoise, wx, wz);
-        return resolveLayer1Biome(in.cont(), in.eros(), in.ridge(), in.plateau(), temp, humid, in.deepLake());
+        return resolveFieldBiomeAt(p.layer1 != null ? p.layer1.getTerrainGenerator() : null, p.overlay, wx, wz, temp, humid);
     }
 
     public boolean isDeepDark(int blockX, int blockZ) {

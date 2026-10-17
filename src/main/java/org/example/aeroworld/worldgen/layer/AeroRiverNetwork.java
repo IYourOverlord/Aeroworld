@@ -61,6 +61,17 @@ public final class AeroRiverNetwork {
     static final double VALLEY_RAMP = 110.0;
     static final double VALLEY_OUTER_MAX = 120.0;
 
+    /** Сила реки, с которой колонка может считаться руслом для биома river. */
+    public static final double RIVER_BIOME_MIN = 0.5;
+
+    /**
+     * Колонка в русле реки: река достаточно сильная, это не чаша озера и вода там реально стоит (высота дна ниже
+     * уровня моря: заливка Layer 1 идёт ровно по {@code surfaceY < SEA_LEVEL}). Критерий не зависит от континентальности.
+     */
+    public static boolean isChannel(double river, double lake, int height, int seaLevel) {
+        return river >= RIVER_BIOME_MIN && lake < river && height < seaLevel;
+    }
+
     /** Доля глубоких среди сток-озёр. */
     static final double DEEP_LAKE_SHARE = 0.10;
 

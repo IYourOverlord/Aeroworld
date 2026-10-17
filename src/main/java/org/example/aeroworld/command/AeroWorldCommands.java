@@ -792,6 +792,15 @@ public final class AeroWorldCommands {
             sb.append(" | configured source (structures): aeroworld:").append(cs.getLayer1BiomeName(x, z));
         }
 
+        // Три источника в одной строке; MISMATCH = разный тип (океан/суша/deep_lake), структура и реальный чанк разойдутся.
+        if (fieldSrc instanceof org.example.aeroworld.worldgen.biome.AeroBiomeSource fs
+                && aeroGen.getBiomeSource() instanceof org.example.aeroworld.worldgen.biome.AeroBiomeSource cs2) {
+            String f = fs.getLayer1BiomeName(x, z), c = cs2.getLayer1BiomeName(x, z);
+            String mark = org.example.aeroworld.worldgen.biome.BiomeOverlay.compareSources(f, c);
+            sb.append("\n  Sources: field=").append(f).append(" | configured=").append(c)
+                    .append(" | formula=").append(formulaBiome).append(mark.isEmpty() ? "" : "  <" + mark + ">");
+        }
+
         // Реальные блоки из сгенерированного чанка (getHeight форсирует генерацию): верхний блок и «земля» под деревьями/травой.
         // Это то, с чем надо сравнивать строки detailLevel выше: LOD должен рисовать именно эту землю и этот биом.
         try {

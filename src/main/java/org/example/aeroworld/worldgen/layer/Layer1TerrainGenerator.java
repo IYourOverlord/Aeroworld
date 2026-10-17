@@ -580,6 +580,13 @@ public class Layer1TerrainGenerator {
         return getHeight(wx, wz) <= SEA_LEVEL - DEEP_LAKE_MIN_DEPTH;
     }
 
+    /** Колонка в русле реки (биом {@code river}): см. {@link AeroRiverNetwork#isChannel}. Дорогой getHeight зовётся только у реки. */
+    public boolean isRiverChannel(int wx, int wz) {
+        AeroRiverNetwork.Sample net = rivers.sample(wx, wz, getContinentality(wx, wz));
+        return net.river() >= AeroRiverNetwork.RIVER_BIOME_MIN
+                && AeroRiverNetwork.isChannel(net.river(), net.lake(), getHeight(wx, wz), SEA_LEVEL);
+    }
+
     /**
      * Центр глубокого озера в чанке: {@code {x, z}} или {@code null}. Центр отдаётся, только если дно там
      * действительно на {@link #DEEP_LAKE_FLOOR_Y} (плоская чаша), иначе монументу не на чем стоять.
@@ -1110,7 +1117,9 @@ public class Layer1TerrainGenerator {
             type = SurfaceType.DESERT;
         } else if (path.contains("badlands")) {
             type = SurfaceType.BADLANDS;
-        } else if (path.contains("beach")) {
+        } else if (path.contains("beach") || path.contains("ocean")) {
+            // Океанский биом начинается при cont < -0.05, а высота там ещё >= 0 до cont ≈ -0.068 (см. AeroShoreSelfCheck):
+            // сухая кромка под океаном получала траву. Песок; подводная часть выбирается по высоте в surfaceBlocks.
             type = SurfaceType.BEACH;
         } else if (path.contains("stony")) {
             type = SurfaceType.STONY;

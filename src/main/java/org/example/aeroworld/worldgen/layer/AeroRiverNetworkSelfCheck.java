@@ -88,6 +88,19 @@ public final class AeroRiverNetworkSelfCheck {
         }
         assert sinks > 20 && deepLakes >= 1 && deepLakes <= sinks / 2 : sinks + " " + deepLakes;
 
+        // isChannel: вода стоит (высота < море), река сильная, не чаша озера; от континентальности не зависит
+        assert AeroRiverNetwork.isChannel(0.8, 0.0, -5, 0) : "русло";
+        assert !AeroRiverNetwork.isChannel(0.8, 0.0, 3, 0) : "суша над рекой (долина без воды)";
+        assert !AeroRiverNetwork.isChannel(0.3, 0.0, -5, 0) : "слабая река: берег русла";
+        assert !AeroRiverNetwork.isChannel(0.6, 0.9, -5, 0) : "чаша озера";
+        int channels = 0;
+        for (int x = 0; x < 6000; x += 16) for (int z = -6000; z < 6000; z += 16) {
+            AeroRiverNetwork.Sample sm = net.sample(x, z, cont.applyAsDouble(x, z));
+            if (!AeroRiverNetwork.isChannel(sm.river(), sm.lake(), -5, 0)) continue;
+            channels++;
+            assert sm.river() >= AeroRiverNetwork.RIVER_BIOME_MIN && sm.lake() < sm.river() : "русло только по реке";
+        }
+        assert channels > 0 : "на синтетической карте есть русла";
         System.out.println("AeroRiverNetworkSelfCheck: all checks passed (shown=" + shown + ", lakes=" + lakes + ", ends=" + ends
                 + ", sinks=" + sinks + ", deepLakes=" + deepLakes + ", centres=" + centres + ")");
     }

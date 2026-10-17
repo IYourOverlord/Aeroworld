@@ -177,7 +177,7 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
         }
         // Поле (его читают createBiomes и LOD) получает рельеф без смены сида, но только если включён хоть один слой
         // -Daeroworld.biomeOverlay: при пустом наборе поле остаётся ровно прежним.
-        if (!BIOME_SYNC && !AeroBiomeSource.OVERLAY.isEmpty() && super.getBiomeSource() instanceof AeroBiomeSource field) {
+        if (!BIOME_SYNC && (!AeroBiomeSource.OVERLAY.isEmpty() || !AeroBiomeSource.LAND.isEmpty()) && super.getBiomeSource() instanceof AeroBiomeSource field) {
             field.attachTerrain(layer1);
         }
     }
