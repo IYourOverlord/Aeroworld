@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 
 /**
  * Слои «реального» рельефа, которые подмешиваются в полевой {@link AeroBiomeSource} поверх замороженных входов
- * ({@code AeroBiomeSource.FIELD_*}). Включаются {@code -Daeroworld.biomeOverlay=water,peaks,...}; по умолчанию {@code water}.
+ * ({@code AeroBiomeSource.FIELD_*}). Включаются {@code -Daeroworld.biomeOverlay=water,peaks,...}; по умолчанию {@code water,plateau,rivers}.
  * Чистый класс (без Minecraft), чтобы проверяться self-check'ом.
  */
 public enum BiomeOverlay {
@@ -37,8 +37,12 @@ public enum BiomeOverlay {
         boolean river();
     }
 
-    /** Значение свойства по умолчанию: слой воды включён. {@code none} (или пустое значение) выключает всё. */
-    public static final String DEFAULT = "water";
+    /**
+     * Значение свойства по умолчанию: вода, плато и реки. Без PLATEAU/RIVERS биомов ashen_plateau и river в поле нет, и
+     * {@code /locate biome} их не находит, хотя рельеф плато и русел генерируется всегда. {@code none} (или пустое
+     * значение) выключает всё; чтобы вернуть прежнее, {@code -Daeroworld.biomeOverlay=water}.
+     */
+    public static final String DEFAULT = "water,plateau,rivers";
 
     /** То же, что {@link #parse}, но отсутствующее свойство (null) означает {@link #DEFAULT}. */
     public static Set<BiomeOverlay> fromProperty(String value, Consumer<String> warn) {

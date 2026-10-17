@@ -38,7 +38,9 @@ public final class BiomeOverlaySelfCheck {
         } catch (UnsupportedOperationException expected) { /* ok */ }
 
         // свойство: по умолчанию water, none и пустое значение выключают всё
-        assert BiomeOverlay.fromProperty(null, warns::add).equals(Set.of(BiomeOverlay.WATER)) : "по умолчанию water";
+        assert BiomeOverlay.fromProperty(null, warns::add)
+                .equals(Set.of(BiomeOverlay.WATER, BiomeOverlay.PLATEAU, BiomeOverlay.RIVERS)) : "по умолчанию water,plateau,rivers";
+        assert BiomeOverlay.fromProperty("water", warns::add).equals(Set.of(BiomeOverlay.WATER)) : "явный water отключает плато и реки";
         assert BiomeOverlay.fromProperty("none", warns::add).isEmpty() : "none";
         assert BiomeOverlay.fromProperty("NONE", warns::add).isEmpty() : "NONE";
         assert BiomeOverlay.fromProperty("water,none", warns::add).isEmpty() : "none гасит всё";

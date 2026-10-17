@@ -135,8 +135,8 @@ public class AeroBiomeSource extends BiomeSource {
     private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
 
     /**
-     * Включённые слои рельефа для поля ({@code -Daeroworld.biomeOverlay=water,plateau,...}); по умолчанию {@code water},
-     * {@code none} выключает всё.
+     * Включённые слои рельефа для поля ({@code -Daeroworld.biomeOverlay=water,plateau,...}); по умолчанию
+     * {@code water,plateau,rivers}, {@code none} выключает всё.
      * <p>WATER даёт реальные континентальность и маску глубокого озера: океаны, пляжи, deep_lake. На суше (cont >= 0)
      * при замороженных эрозии, хребте и плато {@link #resolveLayer1Biome} от cont не зависит, поэтому раскладка суши прежняя;
      * исключение: deep_lake перекрывает сушу там, где реально есть глубокое озеро. {@code stony_shore} недостижим
@@ -196,6 +196,7 @@ public class AeroBiomeSource extends BiomeSource {
         Params p = params;
         if (p.layer1 == newLayer1 && p.overlay == OVERLAY) return;
         params = new Params(p.seed, newLayer1, OVERLAY);
+        LOGGER.info("[Biome] рельеф привязан к полю: overlay={}, land={}", OVERLAY, LAND);
     }
 
     /** Реальные входы рельефа в точке; cont и ridge считаются один раз (нужны и плато). */
@@ -203,6 +204,7 @@ public class AeroBiomeSource extends BiomeSource {
         private final Layer1TerrainGenerator t;
         private final double wx, wz;
         private double cont = Double.NaN, ridge = Double.NaN;
+        private Boolean lake; // select() зовёт deepLake() и для legacy, и для full: считаем один раз
 
         TerrainReal(Layer1TerrainGenerator t, double wx, double wz) { this.t = t; this.wx = wx; this.wz = wz; }
 
@@ -210,7 +212,7 @@ public class AeroBiomeSource extends BiomeSource {
         public double eros() { return t.getErosion(wx, wz); }
         public double ridge() { if (Double.isNaN(ridge)) ridge = t.getRidgeStrength((int) wx, (int) wz); return ridge; }
         public double plateau() { return t.getPlateauMask((int) wx, (int) wz, cont(), ridge()); }
-        public boolean deepLake() { return t.isDeepLake((int) wx, (int) wz); }
+        public boolean deepLake() { if (lake == null) lake = t.isDeepLake((int) wx, (int) wz); return lake; }
         public boolean river() { return t.isRiverChannel((int) wx, (int) wz); }
     }
 
