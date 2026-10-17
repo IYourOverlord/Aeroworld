@@ -789,7 +789,7 @@ public final class AeroWorldCommands {
                 .append(" plateauMask=").append(String.format(Locale.ROOT, "%.2f", l1Terrain.getPlateauMask(x, z)))
                 .append(" deepLake=").append(l1Terrain.isDeepLake(x, z));
         if (aeroGen.getBiomeSource() instanceof org.example.aeroworld.worldgen.biome.AeroBiomeSource cs) {
-            sb.append(" | configured source (/locate): aeroworld:").append(cs.getLayer1BiomeName(x, z));
+            sb.append(" | configured source (structures): aeroworld:").append(cs.getLayer1BiomeName(x, z));
         }
 
         // Реальные блоки из сгенерированного чанка (getHeight форсирует генерацию): верхний блок и «земля» под деревьями/травой.

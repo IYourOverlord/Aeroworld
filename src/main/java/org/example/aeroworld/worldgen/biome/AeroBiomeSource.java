@@ -103,8 +103,11 @@ public class AeroBiomeSource extends BiomeSource {
         this.params   = new Params(seed, layer1);
     }
 
+    /** Сид источника, созданного в поле ChunkGenerator (по нему считает биомы реальная генерация). */
+    public static final long DEFAULT_SEED = 0xAE40F9C3L;
+
     public AeroBiomeSource(MultiNoiseBiomeSource delegate) {
-        this(delegate, 0xAE40F9C3L);
+        this(delegate, DEFAULT_SEED);
     }
 
     public AeroBiomeSource withSeed(long newSeed) {
