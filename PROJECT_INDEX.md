@@ -1,6 +1,6 @@
 # AeroWorld - Project Index
 
-Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-15 (git ddfdc78). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
+Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-17 (git ddfdc78). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
 
 ## How to read this file
 
@@ -218,11 +218,11 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: IslandVaultTrialGenerator, Layer2StructurePlacer, Layer2VaultTrialPlacer, LowerIslandGenerator
 
 ### worldgen/layer  - Per-layer terrain and island generators
-- **AeroRiverNetwork** [gen-layer1] class, 227L - Pure function of seed and coordinates producing river channels, lake bowls and deep-lake mask (cell/node graph draining to ocean). Only carves; water fill comes from Layer 1 sea fill. DEEP_LAKE_SHARE = 10% of sink lakes.
-   - api: sample(wx,wz,cont) -> Sample(river,lake,deep); deepLakeCentre(chunkX,chunkZ)
+- **AeroRiverNetwork** [gen-layer1] class, 246L - Pure function of seed and coordinates producing river channels, lake bowls, deep-lake mask and a valley allowance (cell/node graph draining to ocean). Only carves; water fill comes from Layer 1 sea fill. DEEP_LAKE_SHARE = 10% of sink lakes. Sample.valley is 0 at a river channel and grows smoothly to 1 at a distance of at most VALLEY_OUTER_MAX = 120 blocks (kept below 0.2 x CELL so edges outside the 3x3 cell window cannot cause seams); lakes do not produce a valley.
+   - api: sample(wx,wz,cont) -> Sample(river,lake,deep,valley); deepLakeCentre(chunkX,chunkZ)
    - uses: AeroNoise
    - usedBy: Layer1TerrainGenerator
-- **AeroRiverNetworkSelfCheck** [selfcheck] class, 92L - Standalone `main` self-check (javac + java -ea) for AeroRiverNetwork. Not part of the mod runtime.
+- **AeroRiverNetworkSelfCheck** [selfcheck] class, 94L - Standalone `main` self-check (javac + java -ea) for AeroRiverNetwork. Not part of the mod runtime.
 - **HighIslandGenerator** [gen-layer] class, 762L - Layer 3 (Y 1000..1100, LAYER_ID 1): hollow meteorites and solid planets with three asteroid rings. IslandData via IslandPlacer. fillChunk has ChunkAccess and ChunkWriter overloads; ring helpers for LOD.
    - api: getIslandData; getIslandYBounds; getIslandRadius; fillChunk; getRingYRange; LAYER_MIN_Y/MAX_Y/ID
    - uses: AeroNoise, BodyType, ChunkAccessWriter, ChunkIslandCache, ChunkKey, ChunkWriter, IslandCache, IslandData, IslandPlacer, Layer3Settings
@@ -231,7 +231,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: getTerrainGenerator(); surfaceHeight; topmostHeight
    - uses: Layer1TerrainGenerator
    - usedBy: AeroBiomeSource, AeroWorldChunkGenerator, StructureCategoryResolver, StructureSupportValidator, TerrainColumnSampler
-- **Layer1TerrainGenerator** [gen-layer1] class, 846L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges, river valleys), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface. Nested records SurfaceBlocks, BiomeSurfaceInfo.
+- **Layer1TerrainGenerator** [gen-layer1] class, 860L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges), river valleys (relief above Y 8 is scaled towards the river by Sample.valley, 15% of it stays at the channel; applied before the plateau and before the channel carve), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface. Nested records SurfaceBlocks, BiomeSurfaceInfo.
    - api: getHeight/getTopmostHeight(wx,wz); fillTerrain(ChunkWriter,cx,cz); buildSurface(chunk,biomeFn); isDeepLake; getDeepLakeCentre; getContinentality/getErosion; computeCaveTop/Bottom; getPlateauMask
    - uses: AeroNoise, AeroRiverNetwork, ChunkWriter, Layer1ColumnCache, PlateauTerrace
    - usedBy: AeroBiomeSource, AeroColumnModel, AeroSeedWorldGenerator, AeroTreeCover, AeroWorldChunkGenerator, AncientCityIslandSupportPlacer, DeepLakeMonumentPlacement, Layer1ColumnCache, Layer1FlatGenerator, OceanMonumentBuildingMixin, OceanMonumentStructureMixin, StructureSupportValidator
