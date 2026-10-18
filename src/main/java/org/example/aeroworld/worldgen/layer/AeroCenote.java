@@ -24,9 +24,9 @@ public record AeroCenote(int cx, int cz, int radius, int waterY) {
      */
     public record Column(int clayLo, int airLo, int airHi, int clayHi, int waterY) {}
 
-    /** Высота среза над центром шара: отверстие радиуса {@code sqrt(R² - h²)} = 0.6 R. */
+    /** Высота среза над центром шара: отверстие радиуса {@code sqrt(R² - h²)} ~ 0.44 R, выше стенки сужаются куполом. */
     public int cutHeight() {
-        return radius * 4 / 5;
+        return radius * 9 / 10;
     }
 
     /** Радиус отверстия в квадрате. */

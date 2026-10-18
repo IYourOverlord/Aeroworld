@@ -216,18 +216,14 @@ public class Layer1TerrainGenerator {
 
     private static final int CENOTE_CELL = 512;
     /** Отступ центра от края ячейки (больше радиуса + волны + запаса), чтобы шахта не вышла за ячейку. */
-    private static final int CENOTE_MARGIN = 96;
+    private static final int CENOTE_MARGIN = 32;
     /** Доля ячеек джунглей, в которых есть сенот. */
     private static final double CENOTE_CHANCE = 1;
     private static final int CENOTE_RADIUS_MIN = 9;
     private static final int CENOTE_RADIUS_RANGE = 5;
-    /** Срез шара (верх отверстия) лежит на столько ниже самой низкой точки колец вокруг сенота: 1 блок, чтобы над сенотом не было шахты-кратера. */
-    private static final int CENOTE_ROOF = 1;
-    /** Кольцо вокруг шахты: самая низкая точка не ниже CENOTE_MIN_RIM, перепад не больше CENOTE_MAX_SPREAD (холмистые джунгли). */
+    /** Кольцо вокруг шахты: самая низкая точка не ниже CENOTE_MIN_RIM, перепад не больше CENOTE_MAX_SPREAD (срез шара лежит на самой высокой точке, поэтому земли над шаром не больше перепада). */
     private static final int CENOTE_MIN_RIM = 2;
-    private static final int CENOTE_MAX_SPREAD = 4;
-    /** Самая высокая точка колец не выше CENOTE_MAX_RIM: сенот стоит на низкой равнине, а не на склоне горы. */
-    private static final int CENOTE_MAX_RIM = 10;
+    private static final int CENOTE_MAX_SPREAD = 1;
     /** Низ глиняной оболочки не ниже потолка гигантской пещеры + 1 (иначе вода шара граничит с пустотой пещеры). */
     private static final int CENOTE_FLOOR_MIN = CAVE_TOP_Y + 4;
     /** Сколько случайных мест в ячейке пробуем, прежде чем отказаться. */
@@ -357,13 +353,10 @@ public class Layer1TerrainGenerator {
             int cz = gz * CENOTE_CELL + CENOTE_MARGIN + (int) (((h2 >>> 27) & 0xFFFF) % span);
             int r = CENOTE_RADIUS_MIN + (int) (((h2 >>> 43) & 0xFFFF) % CENOTE_RADIUS_RANGE);
             if (!isJungle(cx, cz)) continue;
-            // Горы отсекаем одним вызовом высоты, до 16 вызовов колец (биом дешевле высоты, поэтому он первый).
-            if (getHeight(cx, cz) > CENOTE_MAX_RIM) continue;
-
-            // Кольца у отверстия и у экватора шара (над потолком по всей ширине шара должен остаться камень).
+            // Центр, кольцо по краю отверстия и кольцо у экватора шара.
             AeroCenote probe = new AeroCenote(cx, cz, r, 0);
-            int opening = (int) Math.ceil(Math.sqrt(probe.openingRadius2())) + 3;
-            int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+            int opening = (int) Math.ceil(Math.sqrt(probe.openingRadius2()));
+            int min = getHeight(cx, cz), max = min;
             for (int k = 0; k < 16; k++) {
                 double a = k * Math.PI / 4.0;
                 int ring = k < 8 ? opening : r + 2;
@@ -371,9 +364,9 @@ public class Layer1TerrainGenerator {
                 min = Math.min(min, y);
                 max = Math.max(max, y);
             }
-            if (min < CENOTE_MIN_RIM || max > CENOTE_MAX_RIM || max - min > CENOTE_MAX_SPREAD) continue;
-            // Центр шара (= уровень воды): срез на 4/5 радиуса выше центра, CENOTE_ROOF блоков под самой низкой точкой колец.
-            int waterY = min - CENOTE_ROOF - probe.cutHeight();
+            if (min < CENOTE_MIN_RIM || max - min > CENOTE_MAX_SPREAD) continue;
+            // Центр шара (= уровень воды): срез на 9/10 радиуса выше центра лежит на самой высокой точке, шар заменяет собой землю.
+            int waterY = max - probe.cutHeight();
             if (waterY - r < CENOTE_FLOOR_MIN) continue;
             LOGGER.info("[Cenote] cell ({},{}) accepted on try {}: centre ({},{}) r={} waterY={} rimMin={} rimMax={}",
                     gx, gz, i, cx, cz, r, waterY, min, max);
@@ -805,7 +798,7 @@ public class Layer1TerrainGenerator {
 
                 // Потолок: сталактит длиной 1..2 блока висит на глиняной оболочке (над водой есть воздух).
                 int ceilY = cn.airHi();
-                if (ceilY == AeroCenote.OPEN || ceilY <= waterY + 1) continue;
+                if (ceilY == AeroCenote.OPEN || ceilY <= waterY + 1 || ceilY >= cache.surfaceY[idx]) continue;
                 long dh = lushHash(wx, wz, 0x0D21B570L);
                 if (((dh >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_DRIPSTONE_CHANCE) continue;
                 dripColumns++;
@@ -1191,6 +1184,8 @@ public class Layer1TerrainGenerator {
 
                 for (int d = 1; d <= depth; d++) {
                     int y = surfaceY - d;
+                    // Сенот: слои земли не забивают шар и глиняную оболочку.
+                    if (cn != null && y >= cn.clayLo() && y <= cn.clayHi()) continue;
                     if (y > MIN_Y + BEDROCK_LAYERS) {
                         pos.set(wx, y, wz);
                         BlockState bandBlock = hasBands ? getBadlandsBand(y)

@@ -11,9 +11,9 @@ public final class AeroCenoteSelfCheck {
     private static int kind(AeroCenote c, int x, int y, int z) {
         int dx = x - c.cx(), dy = y - c.waterY(), dz = z - c.cz();
         int d2 = dx * dx + dz * dz, h = c.cutHeight(), r = c.radius();
-        boolean air = (dy <= h && d2 + dy * dy < r * r) || (dy > h && d2 < c.openingRadius2());
+        boolean air = (dy <= 0 && d2 + dy * dy < r * r) || (dy > 0 && dy <= h && d2 < r * r) || (dy > h && d2 < c.openingRadius2());
         if (air) return 1;
-        return d2 + dy * dy < r * r + 3 * r + 2 ? 2 : 0;
+        return (dy <= 0 ? d2 + dy * dy < r * r + 3 * r + 2 : dy <= h && d2 < r * r + 3 * r + 2) ? 2 : 0;
     }
 
     private static int kindFromColumn(AeroCenote.Column k, int y) {
@@ -37,8 +37,7 @@ public final class AeroCenoteSelfCheck {
             assert mid.airLo() == c.waterY() - r + 1 || mid.airLo() == c.waterY() - r : "дно шара: " + mid.airLo();
             assert mid.clayLo() < mid.airLo() : "под дном глина";
             AeroCenote.Column side = c.column(100 + r - 1, -40);
-            assert side.airHi() < AeroCenote.OPEN && side.airHi() > c.waterY() : "у стены потолок есть и выше воды";
-            assert side.clayHi() > side.airHi() : "над потолком глина";
+            assert side.airHi() == c.waterY() + c.cutHeight() : "потолок на срезе, выше только поверхность";
             assert c.column(100 + r + 3, -40) == null : "вне оболочки";
             // герметичность: у каждого блока пустоты на уровне воды и ниже все 6 соседей - пустота или глина
             for (int x = 100 - r; x <= 100 + r; x++) for (int z = -40 - r; z <= -40 + r; z++) for (int y = lo; y <= c.waterY(); y++) {
