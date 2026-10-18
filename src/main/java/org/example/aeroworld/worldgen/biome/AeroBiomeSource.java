@@ -44,14 +44,14 @@ public class AeroBiomeSource extends BiomeSource {
     public static final String DEEP_LAKE = "deep_lake";
 
     private final MultiNoiseBiomeSource delegate;
-    /**
-     * Всё, что зависит от сида мира и Layer1, одним неизменяемым блоком: {@link #reconfigure} подменяет его целиком,
-     * поэтому читатели (потоки генерации чанков и LOD) всегда видят согласованный набор.
-     */
     /** Соли шума температуры и влажности: их же использует {@code Layer1TerrainGenerator} для проверки биома jungle. */
     public static final long TEMP_SALT = 0x11223344L;
     public static final long HUMID_SALT = 0x55667788L;
 
+    /**
+     * Всё, что зависит от сида, Layer1 и overlay, одним неизменяемым блоком: {@link #reconfigure} и {@link #attachTerrain}
+     * подменяют его целиком, поэтому читатели (потоки генерации чанков и LOD) всегда видят согласованный набор.
+     */
     private static final class Params {
         final long seed;
         final org.example.aeroworld.worldgen.layer.Layer1FlatGenerator layer1;
@@ -340,10 +340,6 @@ public class AeroBiomeSource extends BiomeSource {
         }
 
         return layer1Biome;
-    }
-
-    public static String resolveLayer1Biome(double cont, double eros, double ridge, double plateau, double temp, double humid) {
-        return resolveLayer1Biome(cont, eros, ridge, plateau, temp, humid, false);
     }
 
     /** То же, но {@code deepLake} (маска {@code Layer1TerrainGenerator.isDeepLake}) даёт биом {@link #DEEP_LAKE}. */

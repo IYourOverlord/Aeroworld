@@ -9,7 +9,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.SeaPickleBlock;
-import net.minecraft.world.level.block.VineBlock;
+import net.minecraft.world.level.block.PointedDripstoneBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -216,27 +216,24 @@ public class Layer1TerrainGenerator {
 
     private static final int CENOTE_CELL = 128;
     /** Отступ центра от края ячейки (больше радиуса + волны + запаса), чтобы шахта не вышла за ячейку. */
-    private static final int CENOTE_MARGIN = 13;
+    private static final int CENOTE_MARGIN = 16;
     /** Доля ячеек джунглей, в которых есть сенот. */
     private static final double CENOTE_CHANCE = 0.5;
-    private static final int CENOTE_RADIUS_MIN = 6;
-    private static final int CENOTE_RADIUS_RANGE = 4;
-    /** Уровень воды: на столько ниже самой низкой точки кольца вокруг шахты. */
-    private static final int CENOTE_DROP = 8;
+    private static final int CENOTE_RADIUS_MIN = 9;
+    private static final int CENOTE_RADIUS_RANGE = 5;
+    /** Срез шара (верх отверстия) лежит на столько ниже самой низкой точки колец вокруг сенота: над потолком остаётся камень. */
+    private static final int CENOTE_ROOF = 6;
     /** Кольцо вокруг шахты: самая низкая точка не ниже CENOTE_MIN_RIM, перепад не больше CENOTE_MAX_SPREAD (холмистые джунгли). */
     private static final int CENOTE_MIN_RIM = 6;
     private static final int CENOTE_MAX_SPREAD = 14;
     /** Радиус (от радиуса шахты) каменного кольца вокруг неё, где lush-полость горы не вырезается. */
     private static final int CENOTE_PILLAR = 5;
     private static final int CENOTE_CACHE_LIMIT = 4096;
-    /** Максимальная длина лианы на стене шахты - 3 (длина 3..11). */
-    private static final int CENOTE_VINE_SPAN = 9;
-    /** Доли колонок дна под морской огурец и морскую траву, доля воздушных блоков стены под светящийся лишайник. */
+    /** Доли колонок дна под морской огурец и морскую траву, доля колонок потолка под сталактит. */
     private static final double CENOTE_PICKLE_CHANCE = 0.08;
     private static final double CENOTE_SEAGRASS_CHANCE = 0.30;
-    private static final double CENOTE_LICHEN_CHANCE = 0.12;
+    private static final double CENOTE_DRIPSTONE_CHANCE = 0.25;
     private static final BlockState BS_SEA_PICKLE = Blocks.SEA_PICKLE.defaultBlockState();
-    private static final BlockState BS_VINE = Blocks.VINE.defaultBlockState();
 
     private final long seed;
     private final AeroNoise continentNoise;
@@ -248,7 +245,6 @@ public class Layer1TerrainGenerator {
     private final AeroNoise caveLushNoise;
     private final AeroNoise lushFloorNoise;
     private final AeroNoise lushVineNoise;
-    private final AeroNoise cenoteWobble;
     private final AeroNoise cenoteTempNoise;
     private final AeroNoise cenoteHumidNoise;
     private final ConcurrentHashMap<Long, AeroCenote> cenotes = new ConcurrentHashMap<>();
@@ -270,7 +266,6 @@ public class Layer1TerrainGenerator {
         this.caveLushNoise    = new AeroNoise(seed ^ 0x2468ACE0L);
         this.lushFloorNoise   = new AeroNoise(seed ^ 0x6D2B79F5L);
         this.lushVineNoise    = new AeroNoise(seed ^ 0x3C6EF372L);
-        this.cenoteWobble     = new AeroNoise(seed ^ 0x2F6B1A93L);
         // Реальные чанки читают источник биомов из поля ChunkGenerator (сид по умолчанию), см. BIOME_SYNC.
         long biomeSeed = AeroWorldChunkGenerator.BIOME_SYNC ? seed : AeroBiomeSource.DEFAULT_SEED;
         this.cenoteTempNoise  = new AeroNoise(biomeSeed ^ AeroBiomeSource.TEMP_SALT);
@@ -326,19 +321,14 @@ public class Layer1TerrainGenerator {
         return c;
     }
 
-    /** Дно озера сенота в колонке или {@link AeroCenote#NONE}, если колонка вне шахты. */
-    public int cenoteFloorY(int wx, int wz) {
-        AeroCenote c = cenoteAt(wx, wz);
-        if (c.radius() == 0) return AeroCenote.NONE;
-        int dx = wx - c.cx(), dz = wz - c.cz();
-        int reach = c.radius() + 2;
-        if (dx * dx + dz * dz > reach * reach) return AeroCenote.NONE;
-        return c.floorY(wx, wz, cenoteWobble.noise2D(wx * 0.2, wz * 0.2) * 1.2);
+    /** Профиль колонки сенота (см. {@link AeroCenote#column}) или null, если колонка вне сенота. */
+    public AeroCenote.Column cenoteColumn(int wx, int wz) {
+        return cenoteAt(wx, wz).column(wx, wz);
     }
 
     /**
-     * Колонка в шахте сенота или в каменном кольце вокруг неё: lush-полость горы здесь не вырезается, иначе вода озера
-     * граничила бы с воздухом полости. Джунгли лежат и на горах (поверхность >= LUSH_MIN_SURFACE), поэтому сенот
+     * Колонка над шаром сенота или в каменном кольце вокруг него: lush-полость горы здесь не вырезается, иначе вода
+     * озера граничила бы с воздухом полости. Джунгли лежат и на горах (поверхность >= LUSH_MIN_SURFACE), поэтому сенот
      * там стоит каменным столбом внутри полости.
      */
     public boolean cenoteBuffer(int wx, int wz) {
@@ -359,10 +349,13 @@ public class Layer1TerrainGenerator {
         int r = CENOTE_RADIUS_MIN + (int) (((h2 >>> 43) & 0xFFFF) % CENOTE_RADIUS_RANGE);
         if (!isJungle(cx, cz)) return AeroCenote.ABSENT;
 
-        int ring = r + 3;
+        // Кольца у отверстия и у экватора шара (над потолком по всей ширине шара должен остаться камень).
+        AeroCenote probe = new AeroCenote(cx, cz, r, 0);
+        int opening = (int) Math.ceil(Math.sqrt(probe.openingRadius2())) + 3;
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 16; i++) {
             double a = i * Math.PI / 4.0;
+            int ring = i < 8 ? opening : r + 2;
             int y = getHeight(cx + (int) Math.round(Math.cos(a) * ring), cz + (int) Math.round(Math.sin(a) * ring));
             min = Math.min(min, y);
             max = Math.max(max, y);
@@ -372,9 +365,11 @@ public class Layer1TerrainGenerator {
                     gx, gz, cx, cz, r, min, max, max - min, CENOTE_MIN_RIM, CENOTE_MAX_SPREAD);
             return AeroCenote.ABSENT;
         }
+        // Центр шара (= уровень воды): срез на 4/5 радиуса выше центра, CENOTE_ROOF блоков под самой низкой точкой колец.
+        int waterY = min - CENOTE_ROOF - probe.cutHeight();
         LOGGER.info("[Cenote] cell ({},{}) accepted: centre ({},{}) r={} waterY={} rimMin={} rimMax={}",
-                gx, gz, cx, cz, r, min - CENOTE_DROP, min, max);
-        return new AeroCenote(cx, cz, r, min - CENOTE_DROP);
+                gx, gz, cx, cz, r, waterY, min, max);
+        return new AeroCenote(cx, cz, r, waterY);
     }
 
     /**
@@ -703,7 +698,7 @@ public class Layer1TerrainGenerator {
                 int caveBottom = cache.caveBottom[idx];
                 int lushTop = cache.lushAirTop[idx];
                 int lushFloor = cache.lushFloor[idx];
-                int cenoteFloor = cache.cenoteFloor[idx];
+                AeroCenote.Column cenote = cache.cenote[idx];
 
                 // Бедрок на дне (0..4 слоя от MIN_Y)
                 for (int y = MIN_Y; y < MIN_Y + BEDROCK_LAYERS; y++) {
@@ -728,9 +723,13 @@ public class Layer1TerrainGenerator {
                         continue;
                     }
 
-                    // Сенот: шахта до дна озера (воду, дно и лианы ставит decorateCenote)
-                    if (cenoteFloor != AeroCenote.NONE && y > cenoteFloor) {
-                        continue;
+                    // Сенот: пустота шара (воду и сталактиты ставит decorateCenote), вокруг неё глиняная оболочка
+                    if (cenote != null) {
+                        if (y >= cenote.airLo() && y <= cenote.airHi()) continue;
+                        if (y >= cenote.clayLo() && y <= cenote.clayHi()) {
+                            writer.setBlockState(wx, y, wz, BS_CLAY);
+                            continue;
+                        }
                     }
 
                     if (y < -8) {
@@ -759,94 +758,69 @@ public class Layer1TerrainGenerator {
     }
 
     /**
-     * Оформляет сенот: глина на дне, вода до {@code waterY}, на стенах шахты лианы (vine) и светящийся лишайник,
-     * на дне морская трава и морские огурцы. Дно и вода совпадают с LOD-моделью {@code AeroColumnModel}; растения и
-     * лишайник есть только в реальных чанках.
+     * Оформляет сенот: вода до {@code waterY} (центр шара), на дне морская трава и морские огурцы, с потолка свисают
+     * сталактиты. Глиняную оболочку ставит fillTerrain. Вода совпадает с LOD-моделью {@code AeroColumnModel};
+     * растения и сталактиты есть только в реальных чанках.
      */
     private void decorateCenote(ChunkWriter writer, int chunkX, int chunkZ, Layer1ColumnCache cache) {
         int startX = chunkX << 4;
         int startZ = chunkZ << 4;
-        Direction[] dirs = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
-        int cenoteColumns = 0, vineColumns = 0;
+        int cenoteColumns = 0, dripColumns = 0;
 
         for (int lx = 0; lx < 16; lx++) {
             int wx = startX + lx;
             for (int lz = 0; lz < 16; lz++) {
                 int wz = startZ + lz;
                 int idx = (lx << 4) | lz;
-                int floorY = cache.cenoteFloor[idx];
-                if (floorY == AeroCenote.NONE) continue;
+                AeroCenote.Column cn = cache.cenote[idx];
+                if (cn == null || cn.airLo() > cn.airHi()) continue;
                 cenoteColumns++;
-                int waterY = cache.cenoteWater[idx];
+                int waterY = cn.waterY();
+                int floorY = cn.airLo();
 
-                writer.setBlockState(wx, floorY, wz, BS_CLAY);
-                for (int y = floorY + 1; y <= waterY; y++) {
+                for (int y = floorY; y <= waterY; y++) {
                     writer.setBlockState(wx, y, wz, BS_WATER);
                 }
 
-                // Дно: морская трава и морские огурцы на глине (глина всегда под водой: waterY >= floorY + 2).
-                double fr = ((lushHash(wx, wz, 0x5EA64A55L) >>> 11) & 0xFFFF) / 65536.0;
-                if (fr < CENOTE_PICKLE_CHANCE) {
-                    writer.setBlockState(wx, floorY + 1, wz, BS_SEA_PICKLE.setValue(SeaPickleBlock.PICKLES,
-                            1 + (int) (((lushHash(wx, wz, 0x71C41E5L) >>> 29) & 0xFFFF) % 4)));
-                } else if (fr < CENOTE_PICKLE_CHANCE + CENOTE_SEAGRASS_CHANCE) {
-                    writer.setBlockState(wx, floorY + 1, wz, BS_SEAGRASS);
-                }
-
-                // Стены: соседние колонки вне шахты. Лиана и лишайник цепляются к стороне соседнего твёрдого блока.
-                boolean[] wall = new boolean[4];
-                int[] wallTop = new int[4];
-                int top = Integer.MIN_VALUE;
-                for (int i = 0; i < 4; i++) {
-                    int nx = wx + dirs[i].getStepX(), nz = wz + dirs[i].getStepZ();
-                    if (cenoteFloorY(nx, nz) != AeroCenote.NONE) continue;
-                    int lnx = lx + dirs[i].getStepX(), lnz = lz + dirs[i].getStepZ();
-                    wall[i] = true;
-                    wallTop[i] = (lnx >= 0 && lnx < 16 && lnz >= 0 && lnz < 16) ? cache.surfaceY[(lnx << 4) | lnz] : getHeight(nx, nz);
-                    top = Math.max(top, wallTop[i]);
-                }
-                if (top == Integer.MIN_VALUE) continue;
-
-                long vh = lushHash(wx, wz, 0x7E11C0DEL);
-                int vineBottom = top + 1; // выше этого Y лианы нет
-                if (((vh >>> 11) & 0xFFFF) / 65536.0 < 0.8) {
-                    vineColumns++;
-                    int len = 3 + (int) (((vh >>> 29) & 0xFFFF) % CENOTE_VINE_SPAN);
-                    vineBottom = Math.max(top - len + 1, waterY + 1);
-                    for (int y = top; y >= vineBottom; y--) {
-                        BlockState vine = BS_VINE;
-                        for (int i = 0; i < 4; i++) {
-                            if (wall[i] && y <= wallTop[i]) vine = vine.setValue(vineFace(dirs[i]), true);
-                        }
-                        writer.setBlockState(wx, y, wz, vine);
+                // Дно: морская трава и морские огурцы на глине (нужны вода над блоком и глина под ним).
+                if (floorY < waterY) {
+                    double fr = ((lushHash(wx, wz, 0x5EA64A55L) >>> 11) & 0xFFFF) / 65536.0;
+                    if (fr < CENOTE_PICKLE_CHANCE) {
+                        writer.setBlockState(wx, floorY, wz, BS_SEA_PICKLE.setValue(SeaPickleBlock.PICKLES,
+                                1 + (int) (((lushHash(wx, wz, 0x71C41E5L) >>> 29) & 0xFFFF) % 4)));
+                    } else if (fr < CENOTE_PICKLE_CHANCE + CENOTE_SEAGRASS_CHANCE) {
+                        writer.setBlockState(wx, floorY, wz, BS_SEAGRASS);
                     }
                 }
-                // Светящийся лишайник в оставшихся воздушных блоках стены (над водой, не поверх лиан).
-                for (int y = Math.min(top, vineBottom - 1); y > waterY; y--) {
-                    double lr = ((lushHash(wx, wz * 1024 + y, 0x61077E11L) >>> 11) & 0xFFFF) / 65536.0;
-                    if (lr >= CENOTE_LICHEN_CHANCE) continue;
-                    BlockState lichen = Blocks.GLOW_LICHEN.defaultBlockState();
-                    for (int i = 0; i < 4; i++) {
-                        if (wall[i] && y <= wallTop[i]) lichen = lichen.setValue(MultifaceBlock.getFaceProperty(dirs[i]), true);
-                    }
-                    writer.setBlockState(wx, y, wz, lichen);
+
+                // Потолок: сталактит длиной 1..2 блока висит на глиняной оболочке (над водой есть воздух).
+                int ceilY = cn.airHi();
+                if (ceilY == AeroCenote.OPEN || ceilY <= waterY + 1) continue;
+                long dh = lushHash(wx, wz, 0x0D21B570L);
+                if (((dh >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_DRIPSTONE_CHANCE) continue;
+                dripColumns++;
+                boolean twoLong = ceilY - 1 > waterY + 1 && ((dh >>> 29) & 1) == 0;
+                writer.setBlockState(wx, ceilY, wz, dripstone(twoLong
+                        ? net.minecraft.world.level.block.state.properties.DripstoneThickness.FRUSTUM
+                        : net.minecraft.world.level.block.state.properties.DripstoneThickness.TIP));
+                if (twoLong) {
+                    writer.setBlockState(wx, ceilY - 1, wz,
+                            dripstone(net.minecraft.world.level.block.state.properties.DripstoneThickness.TIP));
                 }
             }
         }
         if (cenoteColumns > 0) {
             AeroCenote c = cenoteAt(startX, startZ);
-            LOGGER.info("[Cenote] chunk ({},{}) decorated: {} shaft columns, {} vine columns (cell centre ({},{}) r={} waterY={})",
-                    chunkX, chunkZ, cenoteColumns, vineColumns, c.cx(), c.cz(), c.radius(), c.waterY());
+            LOGGER.info("[Cenote] chunk ({},{}) decorated: {} sphere columns, {} dripstone columns (cell centre ({},{}) r={} waterY={})",
+                    chunkX, chunkZ, cenoteColumns, dripColumns, c.cx(), c.cz(), c.radius(), c.waterY());
         }
     }
 
-    private static net.minecraft.world.level.block.state.properties.BooleanProperty vineFace(Direction d) {
-        return switch (d) {
-            case NORTH -> VineBlock.NORTH;
-            case EAST -> VineBlock.EAST;
-            case SOUTH -> VineBlock.SOUTH;
-            default -> VineBlock.WEST;
-        };
+    /** Сталактит (остриё вниз) заданной толщины. */
+    private static BlockState dripstone(net.minecraft.world.level.block.state.properties.DripstoneThickness t) {
+        return Blocks.POINTED_DRIPSTONE.defaultBlockState()
+                .setValue(PointedDripstoneBlock.TIP_DIRECTION, Direction.DOWN)
+                .setValue(PointedDripstoneBlock.THICKNESS, t);
     }
 
     /**
@@ -1179,8 +1153,9 @@ public class Layer1TerrainGenerator {
                 int wz = startZ + lz;
                 int idx = xOffset | lz;
 
-                // Сенот: дно и стены уже оформлены в fillTerrain, поверхностный слой здесь не нужен
-                if (cache.cenoteFloor[idx] != AeroCenote.NONE) continue;
+                // Сенот: в отверстии поверхности нет (шар и вода уже в fillTerrain); кольцо вокруг отверстия - обычная земля
+                AeroCenote.Column cn = cache.cenote[idx];
+                if (cn != null && cn.airHi() >= cache.surfaceY[idx]) continue;
 
                 int surfaceY = cache.surfaceY[idx];
                 Holder<Biome> biomeHolder = biomeGetter.apply(wx, wz);

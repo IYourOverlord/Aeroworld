@@ -20,10 +20,9 @@ public final class Layer1ColumnCache {
     /** Верхний блок пола lush-полости (имеет смысл только при lushAirTop != LUSH_NONE). */
     public final short[] lushFloor = new short[256];
 
-    /** Дно озера сенота в колонке или {@link org.example.aeroworld.worldgen.layer.AeroCenote#NONE}. */
-    public final short[] cenoteFloor = new short[256];
-    /** Уровень воды сенота (имеет смысл только при cenoteFloor != NONE). */
-    public final short[] cenoteWater = new short[256];
+    /** Профиль колонки сенота или null, если колонка вне сенота. */
+    public final org.example.aeroworld.worldgen.layer.AeroCenote.Column[] cenote =
+            new org.example.aeroworld.worldgen.layer.AeroCenote.Column[256];
 
     public boolean isForChunk(int cx, int cz) {
         return this.chunkX == cx && this.chunkZ == cz;
@@ -48,10 +47,7 @@ public final class Layer1ColumnCache {
                 int sY = generator.getHeight(wx, wz);
                 this.surfaceY[idx] = (short) sY;
 
-                int cf = generator.cenoteFloorY(wx, wz);
-                this.cenoteFloor[idx] = (short) cf;
-                this.cenoteWater[idx] = (short) (cf == org.example.aeroworld.worldgen.layer.AeroCenote.NONE
-                        ? cf : generator.cenoteAt(wx, wz).waterY());
+                this.cenote[idx] = generator.cenoteColumn(wx, wz);
 
                 if (sY >= Layer1TerrainGenerator.SEA_LEVEL) {
                     this.caveTop[idx] = (short) generator.computeCaveTop(wx, wz);

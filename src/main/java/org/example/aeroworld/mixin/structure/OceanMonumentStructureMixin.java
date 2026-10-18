@@ -54,7 +54,8 @@ public abstract class OceanMonumentStructureMixin {
     /**
      * Ванильная проверка «вокруг только океан» ({@code required_ocean_monument_surrounding}) идёт по экземпляру
      * биом-источника из поля {@code ChunkGenerator}, а там сид и Layer1 не применены (см. {@code BIOME_SYNC}):
-     * {@code deep_lake} там не выставляется, и старт всегда отклонялся. Пропускаем её, когда старт уже принят
+     * без слоя {@code water} в {@code biomeOverlay} {@code deep_lake} там не выставляется, и старт всегда отклонялся.
+     * Пропускаем её, когда старт уже принят
      * хэдом выше (центр глубокого озера, {@code MONUMENT_MIN_Y != null}); биом самой точки старта ванильный
      * {@code Structure.generate} проверит по настроенной копии ({@code getBiomeSource()}).
      */

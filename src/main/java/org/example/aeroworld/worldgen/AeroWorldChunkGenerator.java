@@ -110,13 +110,19 @@ public class AeroWorldChunkGenerator extends NoiseBasedChunkGenerator {
     public Layer1TerrainGenerator getLayer1Terrain() { return layer1Terrain; }
     public AeroWorldSettings getSettings() { return settings; }
     /**
-     * По умолчанию (false) реальная генерация биомов НЕ тронута, как и до адаптации под DH: ванильный {@code createBiomes}
-     * читает экземпляр из поля {@code ChunkGenerator}, а {@link #applySeed} подменяет только копию в {@code aeroSource}
-     * (её используют структуры). Палитра поверхности, снег на горах и расстановка биомов в мире настроены под это поведение.
-     * LOD при этом берёт тот же экземпляр, что реальные чанки (см. {@link #getAeroBiomeSource()}), чтобы картинка совпадала.
+     * Две карты биомов. Поле: экземпляр в {@code ChunkGenerator}, его читают {@code createBiomes} (реальные чанки), LOD
+     * ({@link #getAeroBiomeSource()}) и {@code /locate} (LocateBiomeSourceMixin); температура и влажность по
+     * {@link AeroBiomeSource#DEFAULT_SEED}, раскладка суши прежняя. Настроенная копия {@code aeroSource} (сид мира и Layer1,
+     * все входы рельефа реальные) отдаётся из {@link #getBiomeSource()} и нужна структурам.
      * <p>
-     * {@code -Daeroworld.biomeSync=true} — экспериментальный режим: сид мира и Layer1 применяются к экземпляру на месте, и
-     * реальные чанки меняют биомы (кальцит вместо снега на горах и т.п.). Не включать на существующих мирах.
+     * По умолчанию (false) сид поля не меняется: {@link #applySeed} подменяет только копию, а полю
+     * ({@link AeroBiomeSource#attachTerrain}) добавляет рельеф для слоёв {@code -Daeroworld.biomeOverlay} (по умолчанию
+     * {@code water,plateau,rivers}: океаны, пляжи, deep_lake, ashen_plateau, реки) и биомов {@code -Daeroworld.biomeLand}.
+     * При {@code biomeOverlay=none} и пустом {@code biomeLand} поле остаётся ровно таким, как до слоёв (см. docs/BIOME_OVERLAY.md).
+     * <p>
+     * {@code -Daeroworld.biomeSync=true} - экспериментальный режим: сид мира и Layer1 применяются к полю на месте
+     * ({@code reconfigure}), слои overlay не действуют, раскладка суши и палитра гор меняются (кальцит вместо снега и т.п.).
+     * Не включать на существующих мирах.
      */
     public static final boolean BIOME_SYNC = "true".equalsIgnoreCase(System.getProperty("aeroworld.biomeSync"));
 

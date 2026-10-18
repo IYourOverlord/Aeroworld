@@ -1,6 +1,6 @@
 # AeroWorld - Project Index
 
-Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-17 (git ddfdc78). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
+Code card catalog and dependency graph of everything under `src/`. Verified against the code on 2026-10-18 (git 31108e6, working tree). Minecraft 1.21.1, NeoForge 21.1.x, Java 21, root package `org.example.aeroworld`.
 
 ## How to read this file
 
@@ -31,24 +31,24 @@ Direct `.java` files per folder (not recursive), checked by section D of `check-
 | `org.example.aeroworld.config` | 7 файлов |
 | `org.example.aeroworld.event` | 4 файла |
 | `org.example.aeroworld.mixin.dh` | 21 файл |
-| `org.example.aeroworld.mixin.structure` | 5 файлов |
+| `org.example.aeroworld.mixin.structure` | 6 файлов |
 | `org.example.aeroworld.registry` | 4 файла |
 | `org.example.aeroworld.spawning` | 1 файл |
 | `org.example.aeroworld.structure` | 4 файла |
 | `org.example.aeroworld.worldgen` | 1 файл |
-| `org.example.aeroworld.worldgen.biome` | 2 файла |
+| `org.example.aeroworld.worldgen.biome` | 4 файла |
 | `org.example.aeroworld.worldgen.cache` | 6 файлов |
 | `org.example.aeroworld.worldgen.carver` | 1 файл |
 | `org.example.aeroworld.worldgen.column` | 6 файлов |
 | `org.example.aeroworld.worldgen.dh` | 30 файлов |
 | `org.example.aeroworld.worldgen.feature` | 1 файл |
 | `org.example.aeroworld.worldgen.feature.vault` | 7 файлов |
-| `org.example.aeroworld.worldgen.layer` | 13 файлов |
+| `org.example.aeroworld.worldgen.layer` | 15 файлов |
 | `org.example.aeroworld.worldgen.noise` | 3 файла |
 | `org.example.aeroworld.worldgen.structure` | 9 файлов |
 | `org.example.aeroworld.worldgen.util` | 3 файла |
 
-The root package holds 1 file (AeroWorld, not checkable by the script because its pattern needs a sub-package); `mixin` has no files of its own. Total under `src`: 131 `.java` files, the same number the script prints as "Your .java files".
+The root package holds 1 file (AeroWorld, not checkable by the script because its pattern needs a sub-package); `mixin` has no files of its own. Total under `src`: 136 `.java` files, the same number the script prints as "Your .java files".
 
 ## Layers (values verified in code)
 
@@ -68,6 +68,22 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 3. Structure starts: `createStructures` -> `StructureSupportValidator.validate` (-> `StructureCategoryResolver`, `TerrainColumnSampler`, `ValidationResult`); vanilla structure mixins in `mixin/structure` change End City, Nether fortress and ocean monument placement.
 4. Physical structure placement (tank21 on RICH Layer 2 islands): worldgen thread `IslandStructureScheduler.enqueue` -> server thread `flushToPersistence` -> `PendingStructureData` -> `ProximityTriggerHandler` (player within 96 XZ / 128 Y; `StructurePlacementHelper`, `StructureSizeCache`) -> `PhysicalStructures` -> `AeroStructureListener`. Forced by `/aeroworld forcePlacePending`.
 5. Distant Horizons LOD: `AeroSeedWorldGenBinding` -> `AeroSeedWorldGenerator.generateLod`. Detail-0 leaves near a player (`AeroPlayerAnchors`, realChunkRadius) are handed to DH's real chunk generator (single-phase by default, `AeroLeafLedger` with dhTwoPhase); all other sections are analytic: `AeroColumnModel.buildSpans` -> `AeroColumnModel.buildSpans` (-> `AeroStructureCover`, `AeroTreeCover`, `Layer1ColumnCache`, the layer generators, `AeroBiomeSource`) -> `AeroStructureMarkers` / `SliceVote` merge -> `AeroColumnWriter` data points. Limits and pacing: `AeroThroughputLimits` + `mixin/dh`. Caches: `AeroAdjacencyCache`, `AeroCompleteSectionCache`. Validation: `AeroSeedGenValidation` (`/aeroworld validateSeedGen`).
+
+## Biome maps (field and configured copy)
+
+`AeroWorldChunkGenerator` holds two `AeroBiomeSource` instances. The user-facing description (flags, old worlds, rollback, checklist) is in `docs/BIOME_OVERLAY.md`; this is the code map.
+
+| | Field | Configured copy |
+|---|---|---|
+| Created | super call in the `AeroWorldChunkGenerator` constructor | `applySeed`: `withSeed(seed).withRingChecker(layer1)` of the field |
+| Read through | `createBiomes` (real chunks), `getAeroBiomeSource` (LOD, `biomeAt`), `fieldBiomeSource` (`/locate biome`, via `LocateBiomeSourceMixin`) | `getBiomeSource()` (structure start checks, monument surroundings) |
+| Temperature, humidity | `DEFAULT_SEED` | world seed |
+| Terrain inputs | frozen `FIELD_*` (continentality 0.2, erosion, ridge and plateau 0), real only for the layers in `OVERLAY` and the biomes in `LAND` (after `attachTerrain`) | all real, overlay null (no river layer) |
+
+- One formula: `AeroBiomeSource.resolveFieldBiomeAt`, used by `getNoiseBiome`, `getLayer1BiomeName` and `Layer1TerrainGenerator.isJungle`, so cenotes follow the field map. For continentality >= 0 with frozen erosion, ridge and plateau the ladder does not depend on continentality, which is why the layer `water` leaves the land layout unchanged.
+- `biomeOverlay=none` with an empty `biomeLand`: the field is never given terrain and equals the map from before the layers (the parity self-check compares it with the old inline formulas).
+- `biomeSync=true`: the field is reconfigured in place (world seed, Layer 1, all inputs real); `OVERLAY` and `LAND` are not used.
+- `/aeroworld biomeAt` prints the formula, field and configured results and marks a difference of type (ocean, lake, land) as MISMATCH.
 
 ## Java cards
 
@@ -115,9 +131,9 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: onScreenInit(ScreenEvent.Init.Post)
 
 ### command  - /aeroworld commands
-- **AeroWorldCommands** [command] class, 827L - Brigadier command tree `/aeroworld`: forcePlacePending, findIsland2 <islandType> <tier>, findIsland3 meteorite|planet, findIsland4, validateSeedGen <count>, DHopt enable|disable, biomeAt <x> <z>. Dev/ops tooling only.
+- **AeroWorldCommands** [command] class, 836L - Brigadier command tree `/aeroworld`: forcePlacePending, findIsland2 <islandType> <tier>, findIsland3 meteorite|planet, findIsland4, validateSeedGen <count>, DHopt enable|disable, biomeAt <x> <z> (LOD formula and top blocks per detail level, real biome and blocks, field and configured source results with a MISMATCH mark). Dev/ops tooling only.
    - api: register(RegisterCommandsEvent)
-   - uses: AeroBiomeSource, AeroColumnModel, AeroFastDistantTerrain, AeroSeedGenValidation, AeroSeedWorldGenerator, AeroWorldChunkGenerator, BodyType, ChunkKey, HighIslandGenerator, IslandData, IslandPlacer, Layer2VaultTrialPlacer, LowerIslandGenerator, ProximityTriggerHandler, UpperIslandGenerator, VaultTrialSpawnTier
+   - uses: AeroBiomeSource, AeroColumnModel, AeroFastDistantTerrain, AeroSeedGenValidation, AeroSeedWorldGenerator, AeroWorldChunkGenerator, BiomeOverlay, BodyType, ChunkKey, HighIslandGenerator, IslandData, IslandPlacer, Layer2VaultTrialPlacer, LowerIslandGenerator, ProximityTriggerHandler, UpperIslandGenerator, VaultTrialSpawnTier
    - usedBy: AeroWorld
 
 ### event  - Game-bus tick/placement handlers
@@ -157,20 +173,23 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: AeroWorld, ProximityTriggerHandler
 
 ### worldgen  - Dimension ChunkGenerator
-- **AeroWorldChunkGenerator** [gen-core] class extends NoiseBasedChunkGenerator, 487L - The dimension ChunkGenerator (extends NoiseBasedChunkGenerator; super is invoked only in createState, createBiomes, createStructures and applyBiomeDecoration). Owns all layer generators and caches, lazily seeded via createState/initializeWithSeed; applying a seed also recreates AeroWorld.structureScheduler. Pipeline: fillFromNoise -> Layer1 fillTerrain, then lower/high/upper fillChunk per Y overlap (Layer 2 also calls Layer2StructurePlacer); buildSurface is a separate stage -> Layer1 buildSurface; applyBiomeDecoration -> vanilla decoration, structure postPlacementCleanup, Layer1OreFilter, Layer 2 island trees (clearVanillaVegetationInCentralZone + placeTreesInRegion), Layer2/3/4 vault/trial placers, Ancient City support. createStructures runs vanilla generation with the IS_GENERATING thread-local set, then validates every start and reference via StructureSupportValidator. minY -64, genDepth 2164, seaLevel 0. Flag -Daeroworld.biomeSync.
-   - api: getLowerIslands/getHighIslands/getUpperIslands/getLayer1Terrain/getSettings/getAeroBiomeSource; getBaseColumn; initializeWithSeed(long); CODEC
+- **AeroWorldChunkGenerator** [gen-core] class extends NoiseBasedChunkGenerator, 498L - The dimension ChunkGenerator (extends NoiseBasedChunkGenerator; super is invoked only in createState, createBiomes, createStructures and applyBiomeDecoration). Owns all layer generators and caches, lazily seeded via createState/initializeWithSeed; applying a seed also recreates AeroWorld.structureScheduler. Pipeline: fillFromNoise -> Layer1 fillTerrain, then lower/high/upper fillChunk per Y overlap (Layer 2 also calls Layer2StructurePlacer); buildSurface is a separate stage -> Layer1 buildSurface; applyBiomeDecoration -> vanilla decoration, structure postPlacementCleanup, Layer1OreFilter, Layer 2 island trees (clearVanillaVegetationInCentralZone + placeTreesInRegion), Layer2/3/4 vault/trial placers, Ancient City support. createStructures runs vanilla generation with the IS_GENERATING thread-local set, then validates every start and reference via StructureSupportValidator. minY -64, genDepth 2164, seaLevel 0. Holds two biome source instances, the field and the configured copy (see Biome maps above). Flags -Daeroworld.biomeSync, biomeOverlay, biomeLand.
+   - api: getLowerIslands/getHighIslands/getUpperIslands/getLayer1Terrain/getSettings/getAeroBiomeSource/fieldBiomeSource; getBaseColumn; initializeWithSeed(long); CODEC
    - uses: AeroBiomeSource, AeroColumnModel, AeroWorld, AeroWorldSettings, AncientCityIslandSupportPlacer, ChunkAccessWriter, ChunkIslandCache, ChunkKey, ChunkWriter, HighIslandGenerator, IslandData, IslandStructureScheduler, IslandVaultTrialCache, Layer1FlatGenerator, Layer1OreFilter, Layer1TerrainGenerator, Layer2StructurePlacer, Layer2VaultTrialPlacer, Layer3VaultTrialPlacer, Layer4VaultTrialPlacer, LowerIslandGenerator, SectionDirectChunkWriter, StructureSupportValidator, UpperIslandGenerator, ValidationResult
-   - usedBy: AeroDimensions, AeroSeedGenValidation, AeroSeedWorldGenBinding, AeroSeedWorldGenerator, AeroStructureMarkers, AeroWorldCommands, DeepLakeMonumentPlacement, EndCityStructureMixin, NetherFortressStructureMixin, OceanMonumentStructureMixin
+   - usedBy: AeroDimensions, AeroSeedGenValidation, AeroSeedWorldGenBinding, AeroSeedWorldGenerator, AeroStructureMarkers, AeroWorldCommands, DeepLakeMonumentPlacement, EndCityStructureMixin, Layer1TerrainGenerator, LocateBiomeSourceMixin, NetherFortressStructureMixin, OceanMonumentStructureMixin
 
 ### worldgen/biome  - Biome source and registry cache
 - **AeroBiomeRegistryCache** [biome] class, 108L - Caches the full dynamic biome registry (including aeroworld:* clones) when the server is about to start so biome lookup works off the main thread; get(id) caches found holders only. The server, render and main threads get an empty result while the registry is not ready, other threads wait for it. Cleared on server stop.
    - api: get(ResourceLocation) -> Optional<Holder<Biome>>
    - usedBy: AeroBiomeSource, AeroWorld
-- **AeroBiomeSource** [biome] class extends BiomeSource, 456L - BiomeSource: Layer 1 biomes chosen from continentality/erosion/ridge/plateau/temperature noise (resolveLayer1Biome), deep_lake and deep_dark by position, aeroworld:* biomes for islands. Reconfigurable per seed; wraps a vanilla multi-noise biome source delegate. Nested Params, BiomeColumnCache.
-   - api: getNoiseBiome; static resolveLayer1Biome(...); withSeed; reconfigure; CODEC
-   - uses: AeroBiomeRegistryCache, AeroNoise, Layer1FlatGenerator, Layer1TerrainGenerator, PlateauTerrace
-   - usedBy: AeroColumnModel, AeroRegistries, AeroSeedWorldGenerator, AeroWorldChunkGenerator, AeroWorldCommands
-
+- **AeroBiomeSource** [biome] class extends BiomeSource, 550L - BiomeSource in two roles (see Biome maps above). Field instance: temperature and humidity from DEFAULT_SEED, land layout from frozen terrain inputs (FIELD_*), real terrain inputs only for the layers of -Daeroworld.biomeOverlay (OVERLAY) and the biomes of -Daeroworld.biomeLand (LAND), attached by attachTerrain. Configured copy: world seed, Layer 1, every input real. resolveFieldBiomeAt is the single formula for both (also used by Layer1TerrainGenerator.isJungle); resolveLayer1Biome is the pure ladder (deep_lake, ocean, beach, plateau, ridge, peaks, climate). Also deep_dark by position and aeroworld:* biomes for islands. Reconfigurable per seed; wraps a vanilla multi-noise delegate. Nested Params, TerrainReal, BiomeColumnCache.
+   - api: getNoiseBiome; getLayer1BiomeName; static resolveLayer1Biome(7 args), resolveFieldBiome, resolveFieldBiomeAt, resolveIslandBiome, temperature, humidity; withSeed; withRingChecker; reconfigure; attachTerrain; OVERLAY, LAND, DEFAULT_SEED, TEMP_SALT, HUMID_SALT; CODEC
+   - uses: AeroBiomeRegistryCache, AeroNoise, BiomeOverlay, Layer1FlatGenerator, Layer1TerrainGenerator, PlateauTerrace
+   - usedBy: AeroColumnModel, AeroRegistries, AeroSeedWorldGenerator, AeroWorldChunkGenerator, AeroWorldCommands, Layer1TerrainGenerator
+- **BiomeOverlay** [biome] enum, 163L - Pure (no Minecraft) logic of the field biome map layers: WATER, PLATEAU, PEAKS, RIDGES, RIVERS. Parses the properties (default water,plateau,rivers; none or an empty value disables all; unknown values warn and are ignored), picks which terrain inputs are real (lazily, WATER does not compute erosion, ridge or plateau), resolves biomeLand (a listed biome is taken from the real map, otherwise the frozen-input result), adds river and frozen_river in land channels, and compares the two sources for biomeAt.
+   - api: fromProperty; parse; parseLand; select; resolveWithLand; withRiver; compareSources; LAND_BIOMES; DEFAULT; nested record Inputs and interface Real
+   - usedBy: AeroBiomeSource, AeroWorldCommands
+- **BiomeOverlaySelfCheck** [selfcheck] class, 159L - Standalone `main` self-check (javac + java -ea) for BiomeOverlay: property parsing, none and default, lazy inputs, biomeLand resolution on a synthetic grid, rivers, source comparison. Not part of the mod runtime.
 ### worldgen/cache  - Island data/caches and key packing
 - **BodyType** [data] enum, 14L - Enum METEORITE | PLANET for Layer 3 bodies; chosen 50/50 from the island centre in HighIslandGenerator.
    - usedBy: AeroColumnModel, AeroStructureCover, AeroWorldCommands, EndCityStructureMixin, HighIslandGenerator, IslandData, IslandVaultTrialGenerator
@@ -188,9 +207,9 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: ctor overloads per layer; height(); centerY(); getEffectiveRadius()
    - uses: BodyType
    - usedBy: HUB, 14 referrers - grep the name
-- **Layer1ColumnCache** [cache] class, 86L - Plain per-chunk holder of 256-column arrays (surfaceY, caveTop, caveBottom, lush cave top and floor) for Layer 1 height, giant cave range and mountain cave. The lush arrays are filled in a second pass from the column and its four side neighbours (neighbours outside the chunk are read directly, only for columns above the mountain threshold). Layer1TerrainGenerator keeps one per thread (ThreadLocal); DH code creates its own instance per task. Saves recomputing the same noise across fillTerrain, cave decoration and buildSurface.
+- **Layer1ColumnCache** [cache] class, 92L - Plain per-chunk holder of 256-column arrays (surfaceY, caveTop, caveBottom, lush cave top and floor) plus the cenote Column profile per column for Layer 1 height, giant cave range and mountain cave. The lush arrays are filled in a second pass from the column and its four side neighbours (neighbours outside the chunk are read directly, only for columns above the mountain threshold). Layer1TerrainGenerator keeps one per thread (ThreadLocal); DH code creates its own instance per task. Saves recomputing the same noise across fillTerrain, cave decoration and buildSurface.
    - api: isForChunk; initForChunk(cx,cz,Layer1TerrainGenerator)
-   - uses: Layer1TerrainGenerator
+   - uses: AeroCenote, Layer1TerrainGenerator
    - usedBy: AeroColumnModel, AeroSeedWorldGenerator, Layer1TerrainGenerator
 
 ### worldgen/util  - ChunkWriter abstractions
@@ -218,15 +237,17 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: IslandVaultTrialGenerator, Layer2StructurePlacer, Layer2VaultTrialPlacer, LowerIslandGenerator
 
 ### worldgen/layer  - Per-layer terrain and island generators
-- **AeroCenote** [gen-layer1] record, 30L - Geometry of a jungle sinkhole (cenote): centre, radius, lake water level; floorY gives the lake bed in a column (bowl 2..7 blocks under the water, edge widened by a wobble) or NONE outside the shaft. Pure, no Minecraft classes.
-   - api: floorY(wx,wz,wobble); NONE; ABSENT
+- **AeroBiomeParitySelfCheck** [selfcheck] class, 159L - Standalone `main` self-check (java -ea from the repository root, JDK needed) for AeroBiomeSource: cuts the real static methods out of the source and compares the field map with the old inline formulas, then checks that the layer water changes only cells with continentality < 0. Not part of the mod runtime.
+- **AeroCenote** [gen-layer1] record, 57L - Geometry of a jungle sinkhole (cenote): a sphere (centre, radius, waterY = height of the sphere centre) with its top cut off at 4/5 R above the centre, which leaves a round opening of radius 0.6 R; the inner layer is a 1.5-block clay shell. `column(wx, wz)` returns a Column profile (clayLo, airLo, airHi, clayHi, waterY; airHi = OPEN above the opening) or null outside the shell. Pure, no Minecraft classes.
+   - api: column(wx,wz); cutHeight; openingRadius2; OPEN; ABSENT; nested record Column
    - usedBy: AeroColumnModel, Layer1ColumnCache, Layer1TerrainGenerator
-- **AeroCenoteSelfCheck** [selfcheck] class, 28L - Standalone `main` self-check (javac + java -ea) for AeroCenote. Not part of the mod runtime.
-- **AeroRiverNetwork** [gen-layer1] class, 246L - Pure function of seed and coordinates producing river channels, lake bowls, deep-lake mask and a valley allowance (cell/node graph draining to ocean). Only carves; water fill comes from Layer 1 sea fill. DEEP_LAKE_SHARE = 10% of sink lakes. Sample.valley is 0 at a river channel and grows smoothly to 1 at a distance of at most VALLEY_OUTER_MAX = 120 blocks (kept below 0.2 x CELL so edges outside the 3x3 cell window cannot cause seams); lakes do not produce a valley.
+- **AeroCenoteSelfCheck** [selfcheck] class, 53L - Standalone `main` self-check (javac + java -ea) for AeroCenote: column profile vs per-block sphere formula, opening, ceiling and a watertight clay shell. Not part of the mod runtime.
+- **AeroRiverNetwork** [gen-layer1] class, 257L - Pure function of seed and coordinates producing river channels, lake bowls, deep-lake mask and a valley allowance (cell/node graph draining to ocean). Only carves; water fill comes from Layer 1 sea fill. DEEP_LAKE_SHARE = 10% of sink lakes. Sample.valley is 0 at a river channel and grows smoothly to 1 at a distance of at most VALLEY_OUTER_MAX = 120 blocks (kept below 0.2 x CELL so edges outside the 3x3 cell window cannot cause seams); lakes do not produce a valley.
    - api: sample(wx,wz,cont) -> Sample(river,lake,deep,valley); deepLakeCentre(chunkX,chunkZ)
    - uses: AeroNoise
    - usedBy: Layer1TerrainGenerator
-- **AeroRiverNetworkSelfCheck** [selfcheck] class, 94L - Standalone `main` self-check (javac + java -ea) for AeroRiverNetwork. Not part of the mod runtime.
+- **AeroRiverNetworkSelfCheck** [selfcheck] class, 107L - Standalone `main` self-check (javac + java -ea) for AeroRiverNetwork. Not part of the mod runtime.
+- **AeroShoreSelfCheck** [selfcheck] class, 36L - Standalone `main` self-check (java Файл.java, no Minecraft) of the shore strip: under an ocean biome the relief is still above sea level, so the strip must be painted as beach. Formulas are copied from Layer1TerrainGenerator. Not part of the mod runtime.
 - **HighIslandGenerator** [gen-layer] class, 762L - Layer 3 (Y 1000..1100, LAYER_ID 1): hollow meteorites and solid planets with three asteroid rings. IslandData via IslandPlacer. fillChunk has ChunkAccess and ChunkWriter overloads; ring helpers for LOD.
    - api: getIslandData; getIslandYBounds; getIslandRadius; fillChunk; getRingYRange; LAYER_MIN_Y/MAX_Y/ID
    - uses: AeroNoise, BodyType, ChunkAccessWriter, ChunkIslandCache, ChunkKey, ChunkWriter, IslandCache, IslandData, IslandPlacer, Layer3Settings
@@ -235,9 +256,9 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: getTerrainGenerator(); surfaceHeight; topmostHeight
    - uses: Layer1TerrainGenerator
    - usedBy: AeroBiomeSource, AeroWorldChunkGenerator, StructureCategoryResolver, StructureSupportValidator, TerrainColumnSampler
-- **Layer1TerrainGenerator** [gen-layer1] class, 1049L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges), river valleys (relief above Y 8 is scaled towards the river by Sample.valley, 15% of it stays at the channel; applied before the plateau and before the channel carve), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, lush cave inside every mountain (column and its four side neighbours at surface Y >= LUSH_MIN_SURFACE 36: 2-block crust on top = surface block + one under it, then a moss block ceiling, air down to a terraced floor on Y 12..20 in 1-block steps, pools filled with water to LUSH_WATER_Y 15 over clay, dry terraces moss with grass/moss carpet/azalea, lily pads on water, cave vines with glow berries 1..9 long hanging from the moss; the air top is cut at the neighbour minimum so it never touches outside air; the geometry functions are shared with AeroColumnModel; grass, carpet, azalea and lily pads exist in real chunks only), jungle cenote (one candidate per 128-block cell in the jungle biome, checked with the same noises and resolver as the biome source; a 6..9 block shaft cut down to a clay lake bed under water, water level 8 below the lowest rim point, vines on the shaft wall in real chunks only; the shaft is dropped when the rim is under Y 6 or the rim spread exceeds 14; in mountain jungle the lush cave is not cut within the shaft radius + 5, so the shaft stands as a stone pillar inside the cavity), bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface (on lush columns the layers under the top block are limited to the crust). Nested records SurfaceBlocks, BiomeSurfaceInfo.
-   - api: getHeight/getTopmostHeight(wx,wz); fillTerrain(ChunkWriter,cx,cz); buildSurface(chunk,biomeFn); isDeepLake; getDeepLakeCentre; getContinentality/getErosion; computeCaveTop/Bottom; lush cave geometry (static lushAirTopFromMin, lushIsWet; per column lushAirTop, lushFloorY, lushVineLength; constants LUSH_NONE, LUSH_MIN_SURFACE, LUSH_CRUST, LUSH_WATER_Y, BS_VINE_PLANT_BERRIES); getPlateauMask
-   - uses: AeroNoise, AeroRiverNetwork, ChunkWriter, Layer1ColumnCache, PlateauTerrace
+- **Layer1TerrainGenerator** [gen-layer1] class, 1269L - Layer 1 (Y -64..300, SEA_LEVEL 0): custom noise terrain (continentality, erosion, ridges), river valleys (relief above Y 8 is scaled towards the river by Sample.valley, 15% of it stays at the channel; applied before the plateau and before the channel carve), ashen plateau canyons via PlateauTerrace, giant cave Y -50..-25, lush cave inside every mountain (column and its four side neighbours at surface Y >= LUSH_MIN_SURFACE 36: 2-block crust on top = surface block + one under it, then a moss block ceiling, air down to a terraced floor on Y 12..20 in 1-block steps, pools filled with water to LUSH_WATER_Y 15 over clay, dry terraces moss with grass/moss carpet/azalea, lily pads on water, cave vines with glow berries 1..9 long hanging from the moss; the air top is cut at the neighbour minimum so it never touches outside air; the geometry functions are shared with AeroColumnModel; grass, carpet, azalea and lily pads exist in real chunks only), jungle cenote (one candidate per 128-block cell in the jungle biome, checked with the same noises and resolver as the biome source; a clay-lined sphere of radius 9..13 with its top cut off to leave an opening, sphere centre = water level = lowest of 16 rim samples minus 6 minus 4/5 R, lake to the sphere centre, pointed dripstone hanging from the ceiling and sea pickles/seagrass on the floor in real chunks only; the cenote is dropped when the rim is under Y 6 or the rim spread exceeds 14; in mountain jungle the lush cave is not cut within the sphere radius + 5, so the sphere stands as a stone pillar inside the cavity), bedrock, deep-lake dig to DEEP_LAKE_FLOOR_Y -50, surface block selection (strata/badlands/stonesky bands). Biome-aware buildSurface (on lush columns the layers under the top block are limited to the crust). Nested records SurfaceBlocks, BiomeSurfaceInfo.
+   - api: getHeight/getTopmostHeight(wx,wz); fillTerrain(ChunkWriter,cx,cz); buildSurface(chunk,biomeFn); isDeepLake; getDeepLakeCentre; getContinentality/getErosion; getRidgeStrength; isRiverChannel; cenoteAt/cenoteColumn/cenoteBuffer; computeCaveTop/Bottom; lush cave geometry (static lushAirTopFromMin, lushIsWet; per column lushAirTop, lushFloorY, lushVineLength; constants LUSH_NONE, LUSH_MIN_SURFACE, LUSH_CRUST, LUSH_WATER_Y, BS_VINE_PLANT_BERRIES); getPlateauMask
+   - uses: AeroBiomeSource, AeroCenote, AeroNoise, AeroRiverNetwork, AeroWorldChunkGenerator, ChunkWriter, Layer1ColumnCache, PlateauTerrace
    - usedBy: AeroBiomeSource, AeroColumnModel, AeroSeedWorldGenerator, AeroTreeCover, AeroWorldChunkGenerator, AncientCityIslandSupportPlacer, DeepLakeMonumentPlacement, Layer1ColumnCache, Layer1FlatGenerator, OceanMonumentBuildingMixin, OceanMonumentStructureMixin, StructureSupportValidator
 - **Layer2StructurePlacer** [gen-layer] class, 88L - During chunk fill enqueues `physical_structures:tank21` at the centre of every standalone Layer 2 island (archipelago centres and satellites are skipped) whose tier (Layer2VaultTrialPlacer.pickTierStatic) is RICH, via AeroWorld.structureScheduler.
    - api: placeForChunk(chunk, LowerIslandGenerator, RandomSource)
@@ -329,9 +350,9 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - usedBy: AeroWorldChunkGenerator, StructureSupportValidator
 
 ### worldgen/column  - Analytic column model for LOD + helpers
-- **AeroColumnModel** [lod-core] class, 595L - Analytic vertical-column model of all four layers: buildSpans(x,z,minY,levelMax,...) returns a bottom-to-top Span list (state, optional biome). Single source of truth for DH LOD generation and for validation against the real generator. Layer 1: stone/strata/surface layers (depth 3, stony/karst/strata 8, badlands 15), giant cave split with deep_dark biome below, mountain lush cave columns (crust, moss ceiling, one representative cave vine span, terraced floor, pool water; same geometry as Layer1TerrainGenerator; no grass, carpet, azalea or lily pads), trees (not on plateau), ocean fill with kelp/seagrass and ice; Layer 2: island columns, trees, bridges; Layer 3: ellipsoid bodies, planet rings, meteorite cavities, planet End City column; Layer 4: dome cap and tentacle ranges. Adjacent same-state same-biome spans are merged.
+- **AeroColumnModel** [lod-core] class, 623L - Analytic vertical-column model of all four layers: buildSpans(x,z,minY,levelMax,...) returns a bottom-to-top Span list (state, optional biome). Single source of truth for DH LOD generation and for validation against the real generator. Layer 1: stone/strata/surface layers (depth 3, stony/karst/strata 8, badlands 15), giant cave split with deep_dark biome below, mountain lush cave columns (crust, moss ceiling, one representative cave vine span, terraced floor, pool water; same geometry as Layer1TerrainGenerator; no grass, carpet, azalea or lily pads), trees (not on plateau), ocean fill with kelp/seagrass and ice; Layer 2: island columns, trees, bridges; Layer 3: ellipsoid bodies, planet rings, meteorite cavities, planet End City column; Layer 4: dome cap and tentacle ranges. Adjacent same-state same-biome spans are merged.
    - api: record Span; buildSpans(...) overloads; mergeSpans; getBaseHeight (used by AeroWorldChunkGenerator.getBaseHeight)
-   - uses: AeroBiomeSource, AeroStructureCover, AeroTreeCover, BodyType, ChunkKey, HighIslandGenerator, IslandData, Layer1ColumnCache, Layer1TerrainGenerator, LowerIslandGenerator, UpperIslandGenerator
+   - uses: AeroBiomeSource, AeroCenote, AeroStructureCover, AeroTreeCover, BodyType, ChunkKey, HighIslandGenerator, IslandData, Layer1ColumnCache, Layer1TerrainGenerator, LowerIslandGenerator, UpperIslandGenerator
    - usedBy: AeroColumnWriter, AeroSeedGenValidation, AeroSeedWorldGenerator, AeroStructureMarkers, AeroWorldChunkGenerator, AeroWorldCommands
 - **AeroColumnWriter** [lod-dh] class, 216L - Converts AeroColumnModel spans into DH DhApiTerrainDataPoint lists (top to bottom, gaps filled with air, sky light 14 below water/ice and 15 elsewhere) with cached block/biome wrappers; biome falls back to aeroworld:plains.
    - api: toDataPoints(spans,minY,maxY[,yOffset]); getBlockStateWrapper; getBiomeWrapper
@@ -367,7 +388,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
    - api: isConfirmedComplete; markComplete; invalidate; clear; logSummary
    - uses: AeroWorldConfig
    - usedBy: CompleteSectionCacheMixin, SqliteTuningMixin
-- **AeroExecutorSampler** [dh-diag] class, 56L - Package-private. Daemon thread started once (by AeroThroughputLimits when dhPoolStats is on) that samples the DH world-generation, update-propagator, render-loading, file-handler and chunk-to-LOD-builder executors every second into AeroPoolStats.
+- **AeroExecutorSampler** [dh-diag] class, 82L - Package-private. Daemon thread started once (by AeroThroughputLimits when dhPoolStats is on) that samples the DH world-generation, update-propagator, render-loading, file-handler and chunk-to-LOD-builder executors every second into AeroPoolStats.
    - api: startOnce()
    - uses: AeroPoolStats
    - usedBy: AeroThroughputLimits
@@ -390,10 +411,10 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **AeroPlayerAnchors** [dh-core] class, 53L - Every 20 game ticks of each ServerLevel, snapshots packed player block XZ per dimension for DH worker threads (reading ServerLevel.players() off-thread is unsafe). nearestChebyshev and isWithin (square box) are used by AeroSeedWorldGenerator to decide which leaves get real chunks.
    - api: onLevelTick; nearestChebyshev(dim,x,z); isWithin(dim,x,z,radius)
    - usedBy: AeroSeedWorldGenerator, AeroWorld
-- **AeroPoolStats** [dh-diag] class, 156L - Package-private, one instance per AeroThroughputLimits. Measures DH pool task wait/body/after-body times per detail level and receives the AeroExecutorSampler pool samples; on with -Daeroworld.dhPoolStats=true.
+- **AeroPoolStats** [dh-diag] class, 180L - Package-private, one instance per AeroThroughputLimits. Measures DH pool task wait/body/after-body times per detail level and receives the AeroExecutorSampler pool samples; on with -Daeroworld.dhPoolStats=true.
    - api: wrap(Executor,detail,submitNs,body); sample(...); record; drain
    - usedBy: AeroExecutorSampler, AeroThroughputLimits
-- **AeroPoolStatsSelfCheck** [selfcheck] class, 54L - Standalone `main` self-check (javac + java -ea) for AeroPoolStats. Not part of the mod runtime.
+- **AeroPoolStatsSelfCheck** [selfcheck] class, 60L - Standalone `main` self-check (javac + java -ea) for AeroPoolStats. Not part of the mod runtime.
 - **AeroPropStats** [dh-diag] class, 92L - Measures DH propagator tasks (kind 0 up / 1 down, per detail), wait/run times and repeat share. -Daeroworld.dhPoolStats.
    - api: notePending(pos,detail); wrap(kind,task); drain
    - usedBy: AeroThroughputLimits, PropagateStatsMixin
@@ -438,13 +459,16 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 - **EndCityStructureMixin** [mixin] class, 259L - Overrides EndCityStructure.findGenerationPoint (HEAD, cancellable): in AeroWorld places exactly one End City (no ship) at the exact centre of each Layer 3 PLANET, reusing vanilla piece generation through the accessor.
    - api: target: EndCityStructure#findGenerationPoint; config: aeroworld_structures.mixins.json
    - uses: AeroWorldChunkGenerator, BodyType, ChunkKey, EndCityStructureAccessor, HighIslandGenerator, IslandData, IslandPlacer
+- **LocateBiomeSourceMixin** [mixin] class, 28L - Redirects the getBiomeSource() call inside ServerLevel.findClosestBiome3d to AeroWorldChunkGenerator.fieldBiomeSource(), so /locate biome searches the same map as real chunks and LOD; the configured copy that structures use is not touched.
+   - api: target: ServerLevel#findClosestBiome3d (@Redirect); config: aeroworld_structures.mixins.json
+   - uses: AeroWorldChunkGenerator
 - **NetherFortressStructureMixin** [mixin] class, 71L - Redirect in NetherFortressStructure.generatePieces: pins the fortress to Y -55..-50 (inside the Layer 1 giant cave).
    - api: target: NetherFortressStructure#generatePieces; config: aeroworld_structures.mixins.json
    - uses: AeroWorldChunkGenerator
 - **OceanMonumentBuildingMixin** [mixin] class, 41L - Adapts the main building of the ocean monument (nested class of OceanMonumentPieces, named in the @Mixin targets string): the constructor constant 39 (vanilla bottom Y) is replaced by DeepLakeMonumentPlacement.MONUMENT_MIN_Y when it is set, and in postProcess the water fill top becomes the Layer 1 sea level when the piece's bounding box starts below Y 0 (deep-lake monument), otherwise vanilla.
    - api: @ModifyConstant on <init> (constant 39), @Redirect of Math.max in postProcess; config: aeroworld_structures.mixins.json
    - uses: DeepLakeMonumentPlacement, Layer1TerrainGenerator
-- **OceanMonumentStructureMixin** [mixin] class, 71L - Overrides OceanMonumentStructure.findGenerationPoint: monuments exist only at the deep-lake centre chunk, one per lake, base at the flat lake floor.
+- **OceanMonumentStructureMixin** [mixin] class, 72L - Overrides OceanMonumentStructure.findGenerationPoint: monuments exist only at the deep-lake centre chunk, one per lake, base at the flat lake floor.
    - api: target: OceanMonumentStructure#findGenerationPoint; config: aeroworld_structures.mixins.json
    - uses: AeroWorldChunkGenerator, DeepLakeMonumentPlacement, Layer1TerrainGenerator
 
@@ -517,7 +541,7 @@ Dimension: min_y -64, height 2096, `getGenDepth` 2164, `getSeaLevel` 0 (dimensio
 | Config (resources/) | Package | required | Plugin | Entries |
 |---|---|---|---|---|
 | aeroworld.mixins.json | mixin.dh | false | DhWorldGenBorderMixinPlugin | BatchGenerationEnvironmentNeoforgeMixin, LodRenderSectionAdjDiagMixin, TranslucentAdjWallMixin, RetrievalQueueLimitMixin, CanQueueStatsMixin, RenderLoaderPriorityMixin, GeneratorBusyMixin, WorldGenSpeedGateMixin, SaveDelayMixin, SqliteTuningMixin, StandInTerrainMixin, CompleteSectionCacheMixin, WorldGenUtilRegenRadiusMixin, PropagateStatsMixin, AdjReadStatsMixin, ReloadStatsMixin, ReloadCoalesceMixin |
-| aeroworld_structures.mixins.json | mixin.structure | true | none | NetherFortressStructureMixin, EndCityStructureMixin, EndCityStructureAccessor, OceanMonumentStructureMixin, OceanMonumentBuildingMixin |
+| aeroworld_structures.mixins.json | mixin.structure | true | none | NetherFortressStructureMixin, EndCityStructureMixin, EndCityStructureAccessor, OceanMonumentStructureMixin, OceanMonumentBuildingMixin, LocateBiomeSourceMixin |
 
 Both are listed in `templates/META-INF/neoforge.mods.toml`. Classes in `mixin/dh` missing from the table (LodQuadTreeRealRadiusMixin, QueueOrderStatsMixin, RegenGateStatsMixin) are not registered and never apply (the plugin's `getMixins()` returns null). All DH targets live under `com.seibel.distanthorizons.*`.
 
@@ -539,7 +563,9 @@ Both are listed in `templates/META-INF/neoforge.mods.toml`. Classes in `mixin/dh
 | dhReloadExemptBelowDetail | 7 | AeroReloadCoalescer | sections with a lower detail level are reloaded without delay |
 | dhCascadeLeafRadius | 0 | AeroCascadeLeaf | experiment radius; 0 = off (class unwired) |
 | dhStructures | true | AeroStructureMarkers | `false` disables structure icons on LOD |
-| biomeSync | false | AeroWorldChunkGenerator | experimental. `false`: seeding replaces only a copy of the biome source and real chunks and LOD read the field instance. `true`: seed and Layer 1 ring checker are applied to that instance in place, which changes real-chunk biomes; do not enable on existing worlds |
+| biomeOverlay | water,plateau,rivers | AeroBiomeSource (OVERLAY), AeroWorldChunkGenerator | terrain layers of the field biome map: comma list of water (oceans, beaches, deep_lake), plateau (ashen_plateau, same as listing it in biomeLand), peaks and ridges (mountain biomes, these change the land layout), rivers (river and frozen_river in land channels). `none` or an empty value turns all off; an unknown value is ignored with a warning |
+| biomeLand | empty | AeroBiomeSource (LAND) | comma list of land biomes taken from the real map: frozen_peaks, jagged_peaks, stony_peaks, windswept_hills, alpine_meadow, karst_highlands, volcanic_wastes, ashen_plateau; an unknown name is ignored with a warning |
+| biomeSync | false | AeroWorldChunkGenerator | experimental. `false`: seeding replaces only a copy of the biome source and real chunks and LOD read the field instance (with the layers of biomeOverlay and biomeLand). `true`: seed and Layer 1 ring checker are applied to that instance in place, which changes real-chunk biomes and ignores biomeOverlay and biomeLand; do not enable on existing worlds |
 
 ## Resource and data files
 

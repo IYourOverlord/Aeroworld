@@ -784,7 +784,7 @@ public final class AeroWorldCommands {
             sb.append(" | formula via FIELD source: aeroworld:").append(fs.getLayer1BiomeName(x, z));
         }
 
-        // Рельеф и настроенная копия источника (её читает /locate; поле выше, см. fieldBiomeSource, плато не знает).
+        // Рельеф и настроенная копия источника (её читают структуры; /locate, реальные чанки и LOD читают поле, см. fieldBiomeSource).
         sb.append("\n  Terrain: height=").append(l1Terrain.getHeight(x, z))
                 .append(" plateauMask=").append(String.format(Locale.ROOT, "%.2f", l1Terrain.getPlateauMask(x, z)))
                 .append(" deepLake=").append(l1Terrain.isDeepLake(x, z));
