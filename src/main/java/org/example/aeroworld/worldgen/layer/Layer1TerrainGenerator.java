@@ -214,18 +214,24 @@ public class Layer1TerrainGenerator {
     /** Размер ячейки сетки: в каждой не больше одного сенота. */
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    private static final int CENOTE_CELL = 128;
+    private static final int CENOTE_CELL = 512;
     /** Отступ центра от края ячейки (больше радиуса + волны + запаса), чтобы шахта не вышла за ячейку. */
-    private static final int CENOTE_MARGIN = 16;
+    private static final int CENOTE_MARGIN = 96;
     /** Доля ячеек джунглей, в которых есть сенот. */
-    private static final double CENOTE_CHANCE = 0.5;
+    private static final double CENOTE_CHANCE = 1;
     private static final int CENOTE_RADIUS_MIN = 9;
     private static final int CENOTE_RADIUS_RANGE = 5;
-    /** Срез шара (верх отверстия) лежит на столько ниже самой низкой точки колец вокруг сенота: над потолком остаётся камень. */
-    private static final int CENOTE_ROOF = 6;
+    /** Срез шара (верх отверстия) лежит на столько ниже самой низкой точки колец вокруг сенота: 1 блок, чтобы над сенотом не было шахты-кратера. */
+    private static final int CENOTE_ROOF = 1;
     /** Кольцо вокруг шахты: самая низкая точка не ниже CENOTE_MIN_RIM, перепад не больше CENOTE_MAX_SPREAD (холмистые джунгли). */
-    private static final int CENOTE_MIN_RIM = 6;
-    private static final int CENOTE_MAX_SPREAD = 14;
+    private static final int CENOTE_MIN_RIM = 2;
+    private static final int CENOTE_MAX_SPREAD = 4;
+    /** Самая высокая точка колец не выше CENOTE_MAX_RIM: сенот стоит на низкой равнине, а не на склоне горы. */
+    private static final int CENOTE_MAX_RIM = 10;
+    /** Низ глиняной оболочки не ниже потолка гигантской пещеры + 1 (иначе вода шара граничит с пустотой пещеры). */
+    private static final int CENOTE_FLOOR_MIN = CAVE_TOP_Y + 4;
+    /** Сколько случайных мест в ячейке пробуем, прежде чем отказаться. */
+    private static final int CENOTE_TRIES = 64;
     /** Радиус (от радиуса шахты) каменного кольца вокруг неё, где lush-полость горы не вырезается. */
     private static final int CENOTE_PILLAR = 5;
     private static final int CENOTE_CACHE_LIMIT = 4096;
@@ -342,34 +348,38 @@ public class Layer1TerrainGenerator {
     private AeroCenote computeCenote(int gx, int gz) {
         long h = lushHash(gx, gz, 0x0CE07E01L);
         if (((h >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_CHANCE) return AeroCenote.ABSENT;
-        long h2 = lushHash(gz, gx, 0x5A17B0C3L);
         int span = CENOTE_CELL - 2 * CENOTE_MARGIN;
-        int cx = gx * CENOTE_CELL + CENOTE_MARGIN + (int) (((h >>> 27) & 0xFFFF) % span);
-        int cz = gz * CENOTE_CELL + CENOTE_MARGIN + (int) (((h2 >>> 27) & 0xFFFF) % span);
-        int r = CENOTE_RADIUS_MIN + (int) (((h2 >>> 43) & 0xFFFF) % CENOTE_RADIUS_RANGE);
-        if (!isJungle(cx, cz)) return AeroCenote.ABSENT;
+        // Несколько кандидатов на ячейку: берём первый в джунглях на ровном низком месте (горы обходим).
+        for (int i = 0; i < CENOTE_TRIES; i++) {
+            long h1 = lushHash(gx, gz, 0x7E57A000L + i);
+            long h2 = lushHash(gz, gx, 0x5A17B0C3L + i);
+            int cx = gx * CENOTE_CELL + CENOTE_MARGIN + (int) (((h1 >>> 27) & 0xFFFF) % span);
+            int cz = gz * CENOTE_CELL + CENOTE_MARGIN + (int) (((h2 >>> 27) & 0xFFFF) % span);
+            int r = CENOTE_RADIUS_MIN + (int) (((h2 >>> 43) & 0xFFFF) % CENOTE_RADIUS_RANGE);
+            if (!isJungle(cx, cz)) continue;
+            // Горы отсекаем одним вызовом высоты, до 16 вызовов колец (биом дешевле высоты, поэтому он первый).
+            if (getHeight(cx, cz) > CENOTE_MAX_RIM) continue;
 
-        // Кольца у отверстия и у экватора шара (над потолком по всей ширине шара должен остаться камень).
-        AeroCenote probe = new AeroCenote(cx, cz, r, 0);
-        int opening = (int) Math.ceil(Math.sqrt(probe.openingRadius2())) + 3;
-        int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
-        for (int i = 0; i < 16; i++) {
-            double a = i * Math.PI / 4.0;
-            int ring = i < 8 ? opening : r + 2;
-            int y = getHeight(cx + (int) Math.round(Math.cos(a) * ring), cz + (int) Math.round(Math.sin(a) * ring));
-            min = Math.min(min, y);
-            max = Math.max(max, y);
+            // Кольца у отверстия и у экватора шара (над потолком по всей ширине шара должен остаться камень).
+            AeroCenote probe = new AeroCenote(cx, cz, r, 0);
+            int opening = (int) Math.ceil(Math.sqrt(probe.openingRadius2())) + 3;
+            int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+            for (int k = 0; k < 16; k++) {
+                double a = k * Math.PI / 4.0;
+                int ring = k < 8 ? opening : r + 2;
+                int y = getHeight(cx + (int) Math.round(Math.cos(a) * ring), cz + (int) Math.round(Math.sin(a) * ring));
+                min = Math.min(min, y);
+                max = Math.max(max, y);
+            }
+            if (min < CENOTE_MIN_RIM || max > CENOTE_MAX_RIM || max - min > CENOTE_MAX_SPREAD) continue;
+            // Центр шара (= уровень воды): срез на 4/5 радиуса выше центра, CENOTE_ROOF блоков под самой низкой точкой колец.
+            int waterY = min - CENOTE_ROOF - probe.cutHeight();
+            if (waterY - r < CENOTE_FLOOR_MIN) continue;
+            LOGGER.info("[Cenote] cell ({},{}) accepted on try {}: centre ({},{}) r={} waterY={} rimMin={} rimMax={}",
+                    gx, gz, i, cx, cz, r, waterY, min, max);
+            return new AeroCenote(cx, cz, r, waterY);
         }
-        if (min < CENOTE_MIN_RIM || max - min > CENOTE_MAX_SPREAD) {
-            LOGGER.info("[Cenote] cell ({},{}) rejected: candidate ({},{}) r={} rimMin={} rimMax={} spread={} (need rimMin>={} spread<={})",
-                    gx, gz, cx, cz, r, min, max, max - min, CENOTE_MIN_RIM, CENOTE_MAX_SPREAD);
-            return AeroCenote.ABSENT;
-        }
-        // Центр шара (= уровень воды): срез на 4/5 радиуса выше центра, CENOTE_ROOF блоков под самой низкой точкой колец.
-        int waterY = min - CENOTE_ROOF - probe.cutHeight();
-        LOGGER.info("[Cenote] cell ({},{}) accepted: centre ({},{}) r={} waterY={} rimMin={} rimMax={}",
-                gx, gz, cx, cz, r, waterY, min, max);
-        return new AeroCenote(cx, cz, r, waterY);
+        return AeroCenote.ABSENT;
     }
 
     /**
