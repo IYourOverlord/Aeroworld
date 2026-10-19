@@ -341,6 +341,28 @@ public class Layer1TerrainGenerator {
         return dx * dx + dz * dz <= reach * reach;
     }
 
+    /** Колонка земли у края отверстия (случайный угол) с соседом-отверстием: туда ставится источник воды. */
+    private AeroCenote withWaterSpot(AeroCenote c, long h) {
+        int open = (int) Math.ceil(Math.sqrt(c.openingRadius2()));
+        double a0 = ((h >>> 11) & 0xFFFF) / 65536.0 * 2 * Math.PI;
+        for (int k = 0; k < 8; k++) {
+            double a = a0 + k * Math.PI / 4;
+            for (int d = open; d <= open + 4; d++) {
+                int sx = c.cx() + (int) Math.round(Math.cos(a) * d), sz = c.cz() + (int) Math.round(Math.sin(a) * d);
+                AeroCenote.Column col = c.column(sx, sz);
+                if (col == null || col.airHi() >= getHeight(sx, sz)) continue;
+                if (isCenoteHole(c, sx + 1, sz) || isCenoteHole(c, sx - 1, sz)
+                        || isCenoteHole(c, sx, sz + 1) || isCenoteHole(c, sx, sz - 1)) return c.withSpot(sx, sz);
+            }
+        }
+        return c;
+    }
+
+    private boolean isCenoteHole(AeroCenote c, int wx, int wz) {
+        AeroCenote.Column col = c.column(wx, wz);
+        return col != null && col.airHi() >= getHeight(wx, wz);
+    }
+
     private AeroCenote computeCenote(int gx, int gz) {
         long h = lushHash(gx, gz, 0x0CE07E01L);
         if (((h >>> 11) & 0xFFFF) / 65536.0 >= CENOTE_CHANCE) return AeroCenote.ABSENT;
@@ -370,7 +392,7 @@ public class Layer1TerrainGenerator {
             if (waterY - r < CENOTE_FLOOR_MIN) continue;
             LOGGER.info("[Cenote] cell ({},{}) accepted on try {}: centre ({},{}) r={} waterY={} rimMin={} rimMax={}",
                     gx, gz, i, cx, cz, r, waterY, min, max);
-            return new AeroCenote(cx, cz, r, waterY);
+            return withWaterSpot(new AeroCenote(cx, cz, r, waterY), lushHash(gx, gz, 0x5B07A1EL));
         }
         return AeroCenote.ABSENT;
     }
@@ -1193,6 +1215,16 @@ public class Layer1TerrainGenerator {
                                 : hasStrataBands ? getStrataBand(y)
                                 : surfaceBlocks.under();
                         chunk.setBlockState(pos, bandBlock, false);
+                    }
+                }
+
+                // Сенот: источник воды вровень с землёй у края отверстия, стекает внутрь (flow запускает postprocess чанка).
+                if (cn != null) {
+                    AeroCenote c = cenoteAt(wx, wz);
+                    if (wx == c.spotX() && wz == c.spotZ()) {
+                        pos.set(wx, surfaceY, wz);
+                        chunk.setBlockState(pos, BS_WATER, false);
+                        chunk.markPosForPostprocessing(pos);
                     }
                 }
 

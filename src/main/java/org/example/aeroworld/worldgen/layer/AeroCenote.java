@@ -6,7 +6,19 @@ package org.example.aeroworld.worldgen.layer;
  * {@code Layer1TerrainGenerator.cenoteAt}, профиль колонки считает {@link #column}. Общая для реальных чанков и
  * LOD-модели {@code AeroColumnModel}.
  */
-public record AeroCenote(int cx, int cz, int radius, int waterY) {
+public record AeroCenote(int cx, int cz, int radius, int waterY, int spotX, int spotZ) {
+
+    /** Нет колонки для источника воды. */
+    public static final int NO_SPOT = Integer.MIN_VALUE;
+
+    public AeroCenote(int cx, int cz, int radius, int waterY) {
+        this(cx, cz, radius, waterY, NO_SPOT, NO_SPOT);
+    }
+
+    /** Тот же сенот с колонкой земли у края отверстия, где стоит источник воды (стекает в сенот). */
+    public AeroCenote withSpot(int x, int z) {
+        return new AeroCenote(cx, cz, radius, waterY, x, z);
+    }
 
     /** В ячейке сенота нет (радиус 0). */
     public static final AeroCenote ABSENT = new AeroCenote(0, 0, 0, 0);
